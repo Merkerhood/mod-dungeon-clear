@@ -1,0 +1,57 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#ifndef _PLAYERBOT_DUNGEONCLEARTRIGGERCONTEXT_H
+#define _PLAYERBOT_DUNGEONCLEARTRIGGERCONTEXT_H
+
+#include "ChatCommandTrigger.h"
+#include "NamedObjectContext.h"
+#include "Ai/Dungeon/DungeonClear/Trigger/DungeonClearTriggers.h"
+
+class DungeonClearTriggerContext : public NamedObjectContext<Trigger>
+{
+public:
+    DungeonClearTriggerContext()
+    {
+        // Engine triggers (state predicates).
+        creators["dungeon clear idle"] = &DungeonClearTriggerContext::idle;
+        creators["dungeon clear at boss"] = &DungeonClearTriggerContext::at_boss;
+        creators["dungeon clear blocking trash"] = &DungeonClearTriggerContext::blocking_trash;
+        creators["dungeon clear party died"] = &DungeonClearTriggerContext::party_died;
+        creators["dungeon clear all cleared"] = &DungeonClearTriggerContext::all_cleared;
+        creators["dungeon clear stalled"] = &DungeonClearTriggerContext::stalled;
+        creators["dungeon clear follow tank"] = &DungeonClearTriggerContext::follow_tank;
+        creators["dungeon clear door blocked"] = &DungeonClearTriggerContext::door_blocked;
+
+        // Chat-command triggers (one per keyword/alias).
+        creators["dc on"] = &DungeonClearTriggerContext::dc_on;
+        creators["dungeon clear on"] = &DungeonClearTriggerContext::dungeon_clear_on;
+        creators["dc off"] = &DungeonClearTriggerContext::dc_off;
+        creators["dungeon clear off"] = &DungeonClearTriggerContext::dungeon_clear_off;
+        creators["dc skip"] = &DungeonClearTriggerContext::dc_skip;
+        creators["dc status"] = &DungeonClearTriggerContext::dc_status;
+        creators["dc bosses"] = &DungeonClearTriggerContext::dc_bosses;
+    }
+
+private:
+    static Trigger* idle(PlayerbotAI* ai) { return new DungeonClearIdleTrigger(ai); }
+    static Trigger* at_boss(PlayerbotAI* ai) { return new DungeonClearAtBossTrigger(ai); }
+    static Trigger* blocking_trash(PlayerbotAI* ai) { return new DungeonClearBlockingTrashTrigger(ai); }
+    static Trigger* party_died(PlayerbotAI* ai) { return new DungeonClearPartyDiedTrigger(ai); }
+    static Trigger* all_cleared(PlayerbotAI* ai) { return new DungeonClearAllClearedTrigger(ai); }
+    static Trigger* stalled(PlayerbotAI* ai) { return new DungeonClearStalledTrigger(ai); }
+    static Trigger* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankTrigger(ai); }
+    static Trigger* door_blocked(PlayerbotAI* ai) { return new DungeonClearDoorBlockedTrigger(ai); }
+
+    static Trigger* dc_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc on"); }
+    static Trigger* dungeon_clear_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear on"); }
+    static Trigger* dc_off(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc off"); }
+    static Trigger* dungeon_clear_off(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear off"); }
+    static Trigger* dc_skip(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc skip"); }
+    static Trigger* dc_status(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc status"); }
+    static Trigger* dc_bosses(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc bosses"); }
+};
+
+#endif

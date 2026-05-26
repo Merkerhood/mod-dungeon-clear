@@ -1,0 +1,32 @@
+[worldserver]
+
+########################################
+# mod-dungeon-clear configuration
+########################################
+#
+# This module has no behavioural settings — dungeon clearing is controlled at
+# runtime with the `.dc on|off|skip|status|bosses` command or the in-party chat
+# keywords (`dc on`, `dungeon clear on`, …).
+#
+# The only settings here are for the dedicated DungeonClear log channel
+# (playerbots.dungeonclear). These keys are merged into the global logging
+# config, so they configure AzerothCore's logging system directly.
+
+#
+#    Appender.DungeonClear
+#        Writes the DungeonClear log channel to its own file.
+#        Format: Type,LogLevel,Flags,File
+#        Type 2 = File. LogLevel 5 = Debug, 6 = Trace.
+#
+
+Appender.DungeonClear=2,5,0,DungeonClear.log
+
+#
+#    Logger.playerbots.dungeonclear
+#        Routes the DungeonClear channel. Format: LogLevel,AppenderList
+#        Default 4 (Info): milestone/state-change lines only; routine per-tick
+#        DEBUG (5) is suppressed. Raise to 5 (Debug) or 6 (Trace) to diagnose
+#        pathfinding/stall issues, then route to the DungeonClear appender.
+#
+
+Logger.playerbots.dungeonclear=4,Console DungeonClear

@@ -1,0 +1,182 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#include "NextDungeonBossValue.h"
+
+#include <algorithm>
+#include <unordered_set>
+#include <vector>
+
+#include "Creature.h"
+#include "Player.h"
+#include "InstanceScript.h"
+#include "Map.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
+#include "Playerbots.h"
+
+namespace
+{
+    // A boss "exists alive" on the current map if any spawned creature with the
+    // matching entry is alive. Returns:
+    //   present=true,  alive=true   — at least one live instance
+    //   present=true,  alive=false  — instance(s) exist but all are dead
+    //   present=false, alive=false  — no spawned instance found at all
+    struct BossLiveState
+    {
+        bool present;
+        bool alive;
+    };
+
+    BossLiveState CheckBossLive(Map* map, uint32 entry)
+    {
+        BossLiveState state{false, false};
+        if (!map)
+            return state;
+
+        auto const& store = map->GetCreatureBySpawnIdStore();
+        for (auto const& kv : store)
+        {
+            Creature* c = kv.second;
+            if (!c || c->GetEntry() != entry)
+                continue;
+            state.present = true;
+            if (c->IsAlive())
+            {
+                state.alive = true;
+                return state;
+            }
+        }
+        return state;
+    }
+
+    // From a same-tier candidate list (all currently fightable, or all
+    // not-yet-spawned), pick the boss to head toward. `stickyEntry` is the boss
+    // chosen on the previous computation.
+    //
+    // COMMIT-AND-HOLD. Once we've committed to a boss we return it unchanged
+    // for as long as it remains in this candidate tier — no per-tick re-ranking
+    // by distance, no per-tick reachability re-probe. Both of those signals are
+    // noisy near a decision boundary: straight-line distance swings as the bot
+    // rounds corners, and the bounded 2-stride IsReachable probe flickers when
+    // the bot is wedged. Re-deciding on them every recompute makes the target
+    // (and the long-path rebuilt from it) flip-flop between two bosses, which
+    // wedges the bot between competing routes. The commit is released only when
+    // the boss leaves `cands` entirely — killed (mask bit set), skipped, or
+    // despawned — all handled by the caller's partitioning, so a gone boss
+    // simply isn't here to match.
+    //
+    // The initial pick (no valid commit) prefers the nearest boss the bounded
+    // probe confirms reachable, falling back to the nearest overall. Picking
+    // reachable up front, then committing, satisfies "nearest reachable" at
+    // selection time without paying for it in stability afterward. A boss that
+    // turns out to be unreachable after commit is handled by Advance's
+    // stall/skip path, not by silently re-targeting.
+    std::optional<DungeonBossInfo> PickTarget(Player* bot,
+                                              std::vector<DungeonBossInfo>& cands,
+                                              uint32 stickyEntry)
+    {
+        if (cands.empty())
+            return std::nullopt;
+
+        // Hold the commit if the boss is still a candidate in this tier.
+        if (stickyEntry)
+            for (DungeonBossInfo const& info : cands)
+                if (info.entry == stickyEntry)
+                    return info;
+
+        // Fresh selection. Stable sort keeps DBC encounter order among
+        // near-equal distances so the initial pick is deterministic.
+        std::stable_sort(cands.begin(), cands.end(),
+                         [bot](DungeonBossInfo const& a, DungeonBossInfo const& b)
+                         {
+                             return bot->GetDistance(a.x, a.y, a.z) <
+                                    bot->GetDistance(b.x, b.y, b.z);
+                         });
+
+        for (DungeonBossInfo const& info : cands)
+            if (DungeonClearUtil::IsReachable(bot, info.x, info.y, info.z))
+                return info;
+
+        return cands.front();  // nearest; reachability unconfirmed
+    }
+}
+
+std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
+{
+    if (!bot || !bot->IsInWorld())
+        return std::nullopt;
+
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return std::nullopt;
+
+    std::vector<DungeonBossInfo> const& bosses =
+        AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
+
+    std::unordered_set<uint32> const& skipped =
+        AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
+
+    // The completed-encounter mask is the authoritative kill signal. It is
+    // set by Map::UpdateEncounterState from the same KillRewarder path that
+    // grants loot and quest credit (KillRewarder.cpp -> UpdateEncounterState),
+    // flipping bit (1 << DungeonEncounter.dbc encounterIndex). BossSpawnIndex
+    // stores that exact DBC encounterIndex, so the bit lines up directly.
+    //
+    // Do NOT use InstanceScript::GetBossState(encounterIndex) here: that
+    // indexes the script's internal bosses[] vector by its own DATA_*
+    // constants — a different index space that only aligns with the DBC
+    // encounterIndex by coincidence. When it doesn't align, a misaligned slot
+    // reading DONE silently skips a live boss, and a slot that never reads
+    // DONE leaves a freshly-killed boss looking alive (the symptom: party
+    // kills a boss but never advances to the next one). The mask is reliable
+    // for every dungeon whose encounters are ENCOUNTER_CREDIT_KILL_CREATURE,
+    // which is precisely the set BossSpawnIndex indexes.
+    InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+    uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
+
+    // Partition the uncleared bosses by liveness instead of returning the
+    // first one in DBC encounter order. `alive` bosses can be fought right
+    // now; `missing` bosses have no spawn on the map yet (far grid not loaded,
+    // or a boss that only spawns after an event). We never engage a corpse —
+    // a present-but-dead boss whose completion bit hasn't flipped yet is
+    // transient and is skipped, matching the prior fall-through behavior and
+    // keeping the empty-result == all-cleared contract that AllClearedTrigger
+    // relies on.
+    std::vector<DungeonBossInfo> alive;
+    std::vector<DungeonBossInfo> missing;
+    for (DungeonBossInfo const& info : bosses)
+    {
+        if (skipped.count(info.entry))
+            continue;
+
+        // Authoritative: this encounter is already complete in this instance.
+        if (info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
+            continue;
+
+        BossLiveState const state = CheckBossLive(map, info.entry);
+        if (state.alive)
+            alive.push_back(info);
+        else if (!state.present)
+            missing.push_back(info);
+    }
+
+    // Prefer a boss we can fight now over one that hasn't spawned: this stops
+    // the bot from locking onto an early-indexed unspawned boss (and stalling
+    // with "not spawned, use dc skip" in Advance) while a later-indexed boss
+    // is alive and killable. Within each tier we commit to the previously
+    // chosen boss until it leaves the candidate set (see PickTarget).
+    uint32 const stickyEntry = AI_VALUE(uint32, "dungeon clear sticky boss");
+
+    std::optional<DungeonBossInfo> pick = PickTarget(bot, alive, stickyEntry);
+    if (!pick)
+        pick = PickTarget(bot, missing, stickyEntry);
+
+    // Record the commit so the next computation holds it. Storing 0 on an empty
+    // result releases the commit cleanly when the dungeon is cleared or every
+    // boss is skipped.
+    context->GetValue<uint32>("dungeon clear sticky boss")->Set(pick ? pick->entry : 0u);
+    return pick;
+}

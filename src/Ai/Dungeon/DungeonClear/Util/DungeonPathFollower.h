@@ -1,0 +1,120 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#ifndef _PLAYERBOT_DUNGEONPATHFOLLOWER_H
+#define _PLAYERBOT_DUNGEONPATHFOLLOWER_H
+
+#include <optional>
+#include <vector>
+
+#include "Common.h"
+#include "G3D/Vector3.h"
+#include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+
+class Player;
+
+// Where along the cached long-path the bot is currently walking. Indexes
+// segments[segmentIdx].polyline[pointIdx]. (0, 0, 0) is the freshly-built
+// state — start of the first segment, no off-path history.
+//
+// Reset whenever the cache is rebuilt (boss change, TTL expiry, forced
+// rebuild). The follower never reads stale state across path lifetimes.
+struct DungeonFollowerState
+{
+    uint32 segmentIdx{0};
+    uint32 pointIdx{0};
+    uint32 offPathTicks{0};
+};
+
+// Drives the bot along a precomputed long-path (the v3 polyline-walking
+// consumer of StridedPathfinder). Pure helper — no member state; all
+// per-bot state lives in AiObjectContext values (DungeonFollowerState).
+//
+// The follower issues short MoveTos to consecutive polyline points so the
+// engine's per-MoveTo re-path stays well inside PathGenerator's safe
+// output envelope. This is what stops the bot from wall-clipping when the
+// engine returns PATHFIND_SHORT for a long destination.
+class DungeonPathFollower
+{
+public:
+    // Distance at which the current polyline target is considered reached
+    // and the follower advances pointIdx.
+    static constexpr float POINT_REACHED = 3.0f;
+
+    // Perpendicular-distance threshold for off-path detection.
+    static constexpr float OFF_PATH_THRESHOLD = 6.0f;
+
+    // Consecutive off-path ticks before Resnap fires.
+    static constexpr uint32 OFF_PATH_TICK_LIMIT = 3;
+
+    // Resnap window — flattened polyline points searched ahead/behind the
+    // current state when the bot has drifted off the corridor. Sized so the
+    // point-count search reaches RESNAP_RADIUS even where the polyline is
+    // sparse (~4yd spacing → 24 points ≈ 96yd of route), making the 3D
+    // RESNAP_RADIUS the true binding limit rather than the point count.
+    static constexpr size_t RESNAP_WINDOW = 24;
+
+    // Max 3D distance from the bot to a candidate polyline point during
+    // Resnap; beyond this the bot is too far to safely re-anchor its cursor
+    // to that point — caller should rebuild instead.
+    //
+    // Widened from 25 to 45: the dominant drift source is a TRASH CHASE.
+    // EngageDirect walks the tank to the mob and the combat engine's
+    // MoveChase then follows it as it repositions, so when a pack dies the
+    // tank routinely ends 30-40yd off the planned line. At 25yd that fell
+    // through to a full from-scratch rebuild from the off-route position —
+    // the "wanders off and doesn't stick to the path" behavior. 45yd lets
+    // the tank re-anchor onto the EXISTING route and resume instead. The
+    // per-candidate LOS gate (BotCanSee) keeps the wider radius from snapping
+    // across a wall into the wrong corridor.
+    static constexpr float RESNAP_RADIUS = 45.0f;
+
+    // Upper bound on control points fed to a single continuous-spline
+    // issuance (see BuildSplineWindow). Caps spline/packet size on very
+    // long routes; the bot pauses ~one tick at the boundary and the next
+    // Advance tick extends the spline. Comfortably covers the legs between
+    // most trash packs, so combat almost always interrupts first.
+    static constexpr size_t MAX_SPLINE_WINDOW_POINTS = 100;
+
+    struct Hop
+    {
+        G3D::Vector3 point;
+        bool isJump{false};   // current segment carries jumpDown/jumpGap AND we're targeting its last point
+        bool isDone{false};   // path complete; no further hops
+    };
+
+    // Advances state past reached polyline points and returns the next
+    // point to walk to. Sets isDone=true when the path is fully walked.
+    static Hop NextHop(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
+
+    // Returns true if the bot's 2D perpendicular distance to the current
+    // polyline segment exceeds OFF_PATH_THRESHOLD. Updates
+    // state.offPathTicks (incremented on off-path, reset on on-path).
+    static bool IsOffPath(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
+
+    // Walks a window of polyline points around the current state, picks
+    // the one closest to the bot in 3D, and updates state.segmentIdx /
+    // state.pointIdx to it. Returns false if no candidate within
+    // RESNAP_RADIUS — caller should rebuild from current position.
+    // Clears offPathTicks on success.
+    static bool Resnap(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
+
+    // Collects a run of upcoming polyline points, starting at the follower's
+    // current cursor, for one continuous-spline issuance (MoveSplinePath).
+    // The returned array's [0] is the bot's live position (the escort
+    // convention; MoveSplineInit::Launch overwrites path[0] with the live
+    // position regardless), and [1..] are consecutive polyline points up to
+    // MAX_SPLINE_WINDOW_POINTS. The run STOPS at the first jump leg
+    // (jumpDown/jumpGap) — jumps need MoveJump, not a spline — so callers
+    // still drive jump points through the per-hop JumpTo branch.
+    //
+    // Pure read of `state` (does not mutate the cursor). Returns fewer than 2
+    // points when the immediate next leg is a jump or the route is exhausted,
+    // signalling the caller to fall back to single-hop movement.
+    static std::vector<G3D::Vector3> BuildSplineWindow(Player* bot,
+        ChunkedPathfinder::Result const& path, DungeonFollowerState const& state);
+};
+
+#endif
