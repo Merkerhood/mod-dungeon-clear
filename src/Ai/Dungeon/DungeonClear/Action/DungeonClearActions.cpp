@@ -1417,9 +1417,37 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
 
 bool DungeonClearFollowTankAction::Execute(Event /*event*/)
 {
+    ObjectGuid& followedTank =
+        context->GetValue<ObjectGuid>("dungeon clear followed tank")->RefGet();
+
     Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
     if (!tank || tank == bot)
+    {
+        // No DC tank: tear down the leftover continuous MoveFollow we
+        // installed while following. MoveFollow is a persistent MotionMaster
+        // order; once the tank's DC flag clears, this action stops being
+        // selected and nothing else cancels it for a self-bot (its ordinary
+        // follow targets itself and no-ops without clearing), so it would
+        // stay glued to the tank. Clear it once, forget the tank, and let the
+        // bot revert to stock behavior (a self-bot then stands still as the
+        // leader; normal bots fall back to following their master).
+        if (!followedTank.IsEmpty())
+        {
+            if (bot->GetMotionMaster() &&
+                bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            {
+                if (bot->isMoving())
+                    bot->StopMoving();
+                bot->GetMotionMaster()->Clear();
+            }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] follow-tank: released (DC tank gone) -> cleared "
+                     "follow generator (selfRealPlayer={})",
+                     bot->GetName(), botAI && botAI->IsRealPlayer() ? 1 : 0);
+            followedTank = ObjectGuid::Empty;
+        }
         return false;
+    }
 
     // Loot yield (with commit-timeout). Followers run ONLY this action while DC
     // is active (their own DC is never enabled — `dc on` is tank-only — so the
@@ -1479,5 +1507,8 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // of mob aggro-radius arcs during the advance. Default followDistance
     // (~10yd) had them strung out by the time the tank engaged.
     float const dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
+    // Remember who we're chasing so the teardown branch above can cancel this
+    // continuous MoveFollow once the DC tank goes away.
+    followedTank = tank->GetGUID();
     return Follow(tank, dist);
 }

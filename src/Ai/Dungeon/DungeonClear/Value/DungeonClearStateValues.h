@@ -136,6 +136,26 @@ public:
     }
 };
 
+// GUID of the tank this (non-tank) bot is currently follow-following during
+// dungeon clear. Set by DungeonClearFollowTankAction each time it issues the
+// continuous MoveFollow; reset to empty once the follow has been torn down.
+// Needed because MoveFollow is a persistent MotionMaster generator: when the
+// DC tank goes away (dc off / death / all-cleared), the follow-tank trigger
+// stops being selected and nothing would otherwise cancel the leftover
+// "chase the tank" order. A self-bot can't self-heal that the way a normal
+// bot does (its ordinary follow targets itself and no-ops without clearing),
+// so it stays glued to the tank. This GUID lets the trigger fire one final
+// teardown tick to Clear() the generator. Empty = not currently following a
+// DC tank, nothing to tear down.
+class DungeonClearFollowedTankValue : public ManualSetValue<ObjectGuid>
+{
+public:
+    DungeonClearFollowedTankValue(PlayerbotAI* botAI)
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear followed tank")
+    {
+    }
+};
+
 // Boss entry NextDungeonBossValue committed to on its previous computation
 // (0 = none). Read back as a commit-and-hold anchor: the value keeps returning
 // the same boss until it leaves the candidate set (killed, skipped, or

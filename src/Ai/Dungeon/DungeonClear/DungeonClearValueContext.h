@@ -46,6 +46,7 @@ public:
         creators["dungeon clear follower state"] = &DungeonClearValueContext::dungeon_clear_follower_state;
         creators["dungeon clear loot yield start"] = &DungeonClearValueContext::dungeon_clear_loot_yield_start;
         creators["dungeon clear done-not-engaged ticks"] = &DungeonClearValueContext::dungeon_clear_done_not_engaged_ticks;
+        creators["dungeon clear followed tank"] = &DungeonClearValueContext::dungeon_clear_followed_tank;
     }
 
 private:
@@ -74,6 +75,7 @@ private:
     static UntypedValue* dungeon_clear_follower_state(PlayerbotAI* ai) { return new DungeonClearFollowerStateValue(ai); }
     static UntypedValue* dungeon_clear_loot_yield_start(PlayerbotAI* ai) { return new DungeonClearLootYieldStartValue(ai); }
     static UntypedValue* dungeon_clear_done_not_engaged_ticks(PlayerbotAI* ai) { return new DungeonClearDoneNotEngagedTicksValue(ai); }
+    static UntypedValue* dungeon_clear_followed_tank(PlayerbotAI* ai) { return new DungeonClearFollowedTankValue(ai); }
 };
 
 #endif

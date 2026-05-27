@@ -291,13 +291,22 @@ bool DungeonClearFollowTankTrigger::IsActive()
         return false;
 
     Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
-    if (!tank || tank == bot)
-        return false;
+    if (tank && tank != bot)
+    {
+        // No distance gate: while DC is active on the tank, the follow-tank
+        // action runs every non-combat tick. MovementAction::Follow yields a
+        // no-op when already in range, so this is cheap. Without it, the
+        // follower's `move from group` (anti-collision) preempts the default
+        // `follow` strategy at melee range and they drift backward each tick.
+        return true;
+    }
 
-    // No distance gate: while DC is active on the tank, the follow-tank
-    // action runs every non-combat tick. MovementAction::Follow yields a
-    // no-op when already in range, so this is cheap. Without it, the
-    // follower's `move from group` (anti-collision) preempts the default
-    // `follow` strategy at melee range and they drift backward each tick.
-    return true;
+    // No DC tank anymore. Keep firing for the one teardown tick needed to
+    // cancel the leftover continuous MoveFollow this bot installed while it
+    // was following the tank — MoveFollow is a persistent MotionMaster order,
+    // and a self-bot (master == itself) never replaces it via its ordinary
+    // follow, so without this it stays glued to the tank after dc off. The
+    // action clears that GUID once it tears the follow down, so this stops
+    // firing immediately after.
+    return !AI_VALUE(ObjectGuid, "dungeon clear followed tank").IsEmpty();
 }
