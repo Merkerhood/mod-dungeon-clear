@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_DUNGEONCLEARSTATEVALUES_H
 #define _PLAYERBOT_DUNGEONCLEARSTATEVALUES_H
 
+#include <map>
 #include <string>
 #include <unordered_set>
 
@@ -271,6 +272,31 @@ public:
         : ManualSetValue<uint32>(botAI, 0u, "dungeon clear done-not-engaged ticks")
     {
     }
+};
+
+// Per-corpse loot give-up list: maps a loot GUID whose pickup the bot
+// abandoned (its loot-yield timed out on it) to the ms timestamp at which the
+// skip expires. Each DC tick the still-live entries are stripped from the stock
+// "available loot" stack and cleared from "loot target" (see
+// DungeonClearUtil::StripSkippedLoot), so neither the loot flags nor stock's
+// nearest-target pick can re-commit to it. This is what breaks the
+// corpse<->tank / chest<->path ping-pong that arose when an un-finishable loot
+// (group-roll leftover, bags full, party clustered on it) kept re-arming the
+// loot yield every time the bot drifted back within LootDistance. Self-expiring
+// so loot that later becomes takeable (a pending roll resolves) is retried once
+// more; also cleared on dc on/off / party death via DisableDungeonClear.
+class DungeonClearLootSkipValue : public ManualSetValue<std::map<ObjectGuid, uint32>&>
+{
+public:
+    DungeonClearLootSkipValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::map<ObjectGuid, uint32>&>(botAI, data, "dungeon clear loot skip")
+    {
+    }
+
+    void Reset() override { data.clear(); }
+
+private:
+    std::map<ObjectGuid, uint32> data;
 };
 
 // Cursor into the cached long-path's flattened polyline plus the

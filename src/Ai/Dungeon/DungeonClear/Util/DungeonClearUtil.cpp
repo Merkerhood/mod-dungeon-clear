@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #include "Creature.h"
 #include "Group.h"
 #include "InstanceScript.h"
+#include "LootObjectStack.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
 #include "PathGenerator.h"
@@ -24,6 +26,7 @@
 #include "PlayerbotAI.h"
 #include "Chat.h"
 #include "ServerFacade.h"
+#include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 
@@ -473,6 +476,63 @@ bool DungeonClearUtil::IsAnyPartyMemberLooting(Player* bot)
             return true;
     }
     return false;
+}
+
+void DungeonClearUtil::StripSkippedLoot(PlayerbotAI* botAI)
+{
+    if (!botAI)
+        return;
+
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+    std::map<ObjectGuid, uint32>& skip =
+        ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get();
+    if (skip.empty())
+        return;  // happy path: nothing was ever given up on.
+
+    uint32 const now = getMSTime();
+    LootObjectStack* stack = ctx->GetValue<LootObjectStack*>("available loot")->Get();
+
+    for (auto it = skip.begin(); it != skip.end();)
+    {
+        if (now >= it->second)
+        {
+            // Expired — drop it so the loot becomes eligible again (a pending
+            // group roll may have resolved while we were away).
+            it = skip.erase(it);
+            continue;
+        }
+        if (stack)
+            stack->Remove(it->first);  // keep it out of "has available loot"
+        ++it;
+    }
+
+    // can-loot reads "loot target", not the stack, so a bot parked within 3yd
+    // of a skipped corpse would keep can-loot true (and keep yielding) unless we
+    // also drop the committed target here.
+    LootObject const target = ctx->GetValue<LootObject>("loot target")->Get();
+    if (!target.guid.IsEmpty() && skip.find(target.guid) != skip.end())
+        ctx->GetValue<LootObject>("loot target")->Set(LootObject());
+}
+
+void DungeonClearUtil::GiveUpCurrentLoot(PlayerbotAI* botAI, uint32 ttlMs)
+{
+    if (!botAI)
+        return;
+
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+
+    // Prefer the target stock already committed to; otherwise the nearest loot
+    // we'd pick next. Either is what kept the yield armed.
+    ObjectGuid guid = ctx->GetValue<LootObject>("loot target")->Get().guid;
+    if (guid.IsEmpty())
+        if (LootObjectStack* stack = ctx->GetValue<LootObjectStack*>("available loot")->Get())
+            guid = stack->GetLoot(sPlayerbotAIConfig.lootDistance).guid;
+    if (guid.IsEmpty())
+        return;  // nothing of our own to give up on (tank waiting on a follower)
+
+    std::map<ObjectGuid, uint32>& skip =
+        ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get();
+    skip[guid] = getMSTime() + ttlMs;
 }
 
 void DungeonClearUtil::SendAddonMessage(PlayerbotAI* botAI, std::string const& msg)

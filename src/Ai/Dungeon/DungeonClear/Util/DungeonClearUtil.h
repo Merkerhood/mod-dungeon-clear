@@ -76,6 +76,26 @@ public:
     // looting; the caller bounds the wait with a commit-timeout.
     static bool IsAnyPartyMemberLooting(Player* bot);
 
+    // --- Per-corpse loot give-up list ---------------------------------------
+    // Prunes expired give-up entries and strips the still-live ones from the
+    // stock "available loot" stack, additionally clearing "loot target" when it
+    // points at a skipped GUID (can-loot reads the target, not the stack). Call
+    // at the top of every DC loot-yield decision — because the advance /
+    // follow-tank actions run at higher relevance than the loot pipeline, this
+    // executes before stock picks its nearest target, so both the loot flags
+    // AND stock's target selection skip loot the bot already gave up on. No-op
+    // when the give-up list is empty (the happy path is untouched). Module-only:
+    // it mutates the stock loot values, never stock code.
+    static void StripSkippedLoot(PlayerbotAI* botAI);
+
+    // Marks the loot the bot is currently committed to — the stock "loot
+    // target" if set, else the nearest entry in the available-loot stack — as
+    // given-up for `ttlMs`. Called when a loot yield times out so the bot stops
+    // re-committing to a corpse/chest it can't finish. No-op when nothing of the
+    // bot's own is resolvable (e.g. a tank whose yield is only IsAnyPartyMember-
+    // Looting waiting on a follower — that follower gives up its own loot).
+    static void GiveUpCurrentLoot(PlayerbotAI* botAI, uint32 ttlMs);
+
     // Returns true if at least one navigable chunk of the path to (x, y, z)
     // exists. Delegates to ChunkedPathfinder::IsReachable, which is more
     // permissive than the legacy strict-PATHFIND_NORMAL check — partial

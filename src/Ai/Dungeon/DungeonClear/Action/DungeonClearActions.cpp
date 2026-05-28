@@ -6,6 +6,7 @@
 #include "DungeonClearActions.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -93,6 +94,13 @@ namespace
     // corridor half-width, so this stays inside that band.
     constexpr float DC_DOOR_STOP_DISTANCE = 4.0f;
 
+    // Stretch goal: once parked at a blocking door, make a single best-effort
+    // attempt to open it ourselves via GameObject::Use (the same path a player
+    // click takes). A plain click-to-open door swings; a script/lever-gated one
+    // ignores the Use entirely. We deliberately never force the GO state, which
+    // would fight the instance's own door scripting. Flip to false to disable.
+    constexpr bool DC_ATTEMPT_DOOR_OPEN = true;
+
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
     // creatures in LOADED grids; grids stream in within ~MAX_VISIBILITY_DISTANCE
     // (250yd) of a moving player. Beyond this distance, a boss simply not being
@@ -142,6 +150,16 @@ namespace
     // (15yd / ~7yd/s ≈ 2s) and grabbing multiple items, while still bounding a
     // wedge. This is the "reasonable timeout, then move on" window.
     constexpr uint32 DC_LOOT_YIELD_TIMEOUT_MS = 15 * 1000;
+
+    // How long a loot the bot abandoned (its yield above timed out on it) stays
+    // on the per-corpse give-up list. While listed, DungeonClearUtil::Strip-
+    // SkippedLoot keeps it out of both the loot flags and stock's nearest-target
+    // pick, so the bot walks away (follow/advance) instead of re-committing to
+    // it the instant it drifts back within lootDistance — the corpse<->tank /
+    // chest<->path ping-pong. Long enough that the party has moved on by the
+    // time it lapses; short enough to retry once in case a pending group roll
+    // resolved in the meantime.
+    constexpr uint32 DC_LOOT_GIVEUP_TTL_MS = 60 * 1000;
 
     // Recovery moves run when the bot is wedged off the navmesh or has
     // failed to make progress for DC_STUCK_TICK_LIMIT consecutive ticks.
@@ -230,6 +248,7 @@ namespace
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
+        ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
         ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
@@ -573,6 +592,13 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // (group-loot rolls pending, bags full): after DC_LOOT_YIELD_TIMEOUT_MS we
     // force-advance; when no one is looting any more the flags clear and the
     // timer resets (so the next pull gets a fresh full window).
+    //
+    // Before reading the flags, drop any loot we already gave up on from the
+    // stock stack/target (see StripSkippedLoot). Running here — at advance's
+    // relevance, above the loot pipeline — means stock can't re-pick a skipped
+    // corpse this tick, so the flags below and the timeout's give-up stay in
+    // sync and the yield doesn't re-arm on something we just abandoned.
+    DungeonClearUtil::StripSkippedLoot(botAI);
     uint32& lootYieldStart =
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =
@@ -586,11 +612,14 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 
         if (now - lootYieldStart >= DC_LOOT_YIELD_TIMEOUT_MS)
         {
-            // Waited long enough — give up on this corpse and advance past it.
-            // Don't reset lootYieldStart here: keep it expired so we keep
-            // advancing each tick until we clear lootDistance (which resets it).
+            // Waited long enough — give up on THIS corpse so we stop re-arming
+            // the yield on it (the corpse<->path ping-pong), then advance past.
+            // GiveUpCurrentLoot blacklists our committed loot; StripSkippedLoot
+            // next tick removes it so the flags clear. Don't reset lootYieldStart
+            // here: keep it expired so we keep advancing until the flags drop.
+            DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
             LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] loot-yield timed out after {}ms -> force-advancing past corpse",
+                     "[DC:{}] loot-yield timed out after {}ms -> giving up on corpse, advancing",
                      bot->GetName(), now - lootYieldStart);
         }
         else
@@ -1366,22 +1395,37 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
+    std::string const stallReason =
+        "A door blocks the path to " + target + ". Open it and I'll resume; 'dc off' to stop.";
 
+    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
+    GameObject* door = doorGuid.IsEmpty() ? nullptr : botAI->GetGameObject(doorGuid);
+
+    // Stop here and wait for the door to open. On the FIRST tick we settle at a
+    // given door (the stall reason isn't being announced yet) take one
+    // best-effort swing at opening it ourselves — see DC_ATTEMPT_DOOR_OPEN.
+    // Throttling on the stall-reason transition keeps us from spamming Use()
+    // every tick on a door that won't budge.
     auto parkAndStall = [&]()
     {
         if (bot->isMoving())
             bot->StopMoving();
-        StallDungeonClear(botAI,
-            "A door blocks the path to " + target + ". Open it and I'll resume; 'dc off' to stop.");
+        if (door && DC_ATTEMPT_DOOR_OPEN)
+        {
+            std::string const& lastSaid =
+                context->GetValue<std::string&>("dungeon clear last said reason")->Get();
+            if (lastSaid != stallReason)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] door-blocked: attempting to open {} via Use()",
+                         bot->GetName(), door->GetGUID().ToString());
+                door->Use(bot);
+            }
+        }
+        StallDungeonClear(botAI, stallReason);
         return true;
     };
 
-    // The door is detected as much as 80yd ahead along the corridor (see
-    // DungeonClearBlockingDoorValue). Walk up to it first so the tank waits
-    // AT the door instead of parking wherever it happened to be when the door
-    // entered look-ahead.
-    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
-    GameObject* door = doorGuid.IsEmpty() ? nullptr : botAI->GetGameObject(doorGuid);
     if (!door)
     {
         // Door vanished/opened between the value poll and now, or its grid
@@ -1394,28 +1438,134 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
     }
 
     float const distToDoor = bot->GetExactDist(door);
-    if (distToDoor > DC_DOOR_STOP_DISTANCE)
+    if (distToDoor <= DC_DOOR_STOP_DISTANCE)
     {
-        // A stale escort glide from Advance would keep driving the OLD boss
-        // route (past where the door sits) and the splineRunning guard would
-        // mistake it for healthy movement — drop it before issuing our MoveTo.
-        StopActiveSplineGlide(bot);
-        // NORMAL priority so a hostile aggro'd en route still interrupts the
-        // walk-in and gets fought (engage triggers outrank this action anyway).
-        bool const moving = MoveTo(door, DC_DOOR_STOP_DISTANCE, MovementPriority::MOVEMENT_NORMAL);
         LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] door-blocked: walking to door at {:.1f}yd (stop {:.0f}yd) moved={}",
-                  bot->GetName(), distToDoor, DC_DOOR_STOP_DISTANCE, moving ? 1 : 0);
-        if (moving)
-            return true;
-        // MoveTo refused (already in range per its own threshold, or no path)
-        // — fall through and park where we are.
+                  "[DC:{}] door-blocked: at door ({:.1f}yd) -> parking, waiting for it to open",
+                  bot->GetName(), distToDoor);
+        return parkAndStall();
     }
 
-    LOG_DEBUG("playerbots.dungeonclear",
-              "[DC:{}] door-blocked: at door ({:.1f}yd) -> parking, waiting for it to open",
-              bot->GetName(), distToDoor);
-    return parkAndStall();
+    // --- Walk the WHOLE corridor up to the door --------------------------
+    // The door is detected as much as 80yd ahead along the route, so we must
+    // close that whole gap before parking. The cached long-path to the next
+    // boss is itself truncated by this very door (the closed GO blocks the
+    // navmesh), so its polyline already terminates right at the door — glide
+    // that polyline to its end and the tank lands AT the door. The previous
+    // code did MoveTo(door): that overload bee-lines to the door and clamps
+    // each step to spellDistance, projecting an intermediate point straight at
+    // the door through any wall on a winding corridor, so the tank stopped at
+    // the last reachable spot far short of it. Reuse the same escort-spline
+    // follower Advance drives (shared follower state, same long-path value).
+    if (next.has_value())
+        EnsureLongPath(bot, context, *next);
+
+    ChunkedPathfinder::Result const& path =
+        AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+    if (!path.reachable || path.segments.empty())
+    {
+        // No corridor to follow (boss-side route gone). Hold the door line
+        // from wherever we are rather than thrash.
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] door-blocked: no long-path corridor ({:.1f}yd from door) "
+                  "-> park in place",
+                  bot->GetName(), distToDoor);
+        return parkAndStall();
+    }
+
+    DungeonFollowerState& follower =
+        context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+
+    // Off-path recovery (knockback / follower bump while walking in), mirrors
+    // Advance: re-anchor onto the existing polyline, or rebuild + hold.
+    if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
+        follower.offPathTicks >= DungeonPathFollower::OFF_PATH_TICK_LIMIT)
+    {
+        if (!DungeonPathFollower::Resnap(bot, path, follower))
+        {
+            StopActiveSplineGlide(bot);
+            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            follower = DungeonFollowerState{};
+            return parkAndStall();
+        }
+    }
+
+    DungeonPathFollower::Hop hop = DungeonPathFollower::NextHop(bot, path, follower);
+    if (hop.isDone)
+    {
+        // Reached the end of the corridor = as close to the door as the
+        // navmesh allows (the door's collision truncates the route here). This
+        // is the real "at the door"; park and wait.
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] door-blocked: corridor end reached ({:.1f}yd from door) -> parking",
+                  bot->GetName(), distToDoor);
+        return parkAndStall();
+    }
+
+    // Leave a healthy in-flight spline alone (same re-issue guard as Advance);
+    // re-issuing would StopMoving + relaunch and stutter the walk-in.
+    MotionMaster* mm = bot->GetMotionMaster();
+    bool const splineRunning =
+        mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
+    if (splineRunning || IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+        return true;
+    if (!IsMovingAllowed())
+        return parkAndStall();
+
+    uint32 const mapId = bot->GetMapId();
+
+    // A jump leg en route to the door (drop-down corridor) — arc it.
+    if (hop.isJump)
+    {
+        JumpTo(mapId, hop.point.x, hop.point.y, hop.point.z, MovementPriority::MOVEMENT_NORMAL);
+        ClearStall(context);
+        return true;
+    }
+
+    // Continuous escort spline along the upcoming polyline run, identical to
+    // Advance's glide — linear spline, wall-safe, no per-point stops.
+    std::vector<G3D::Vector3> const window =
+        DungeonPathFollower::BuildSplineWindow(bot, path, follower);
+    if (window.size() >= 2 && mm)
+    {
+        if (bot->IsSitState())
+            bot->SetStandState(UNIT_STAND_STATE_STAND);
+        if (bot->IsNonMeleeSpellCast(true))
+        {
+            bot->CastStop();
+            botAI->InterruptSpell();
+        }
+
+        Movement::PointsArray points(window.begin(), window.end());
+        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
+
+        float windowLen = 0.0f;
+        for (size_t i = 1; i < window.size(); ++i)
+            windowLen += (window[i] - window[i - 1]).magnitude();
+        float const runSpeed = std::max(0.1f, bot->GetSpeed(MOVE_RUN));
+        float delay = 1000.0f * (windowLen / runSpeed);
+        delay = std::min(delay, static_cast<float>(sPlayerbotAIConfig.maxWaitForMove));
+        delay = std::max(delay, static_cast<float>(sPlayerbotAIConfig.reactDelay));
+
+        G3D::Vector3 const& dest = window.back();
+        AI_VALUE(LastMovement&, "last movement")
+            .Set(mapId, dest.x, dest.y, dest.z, bot->GetOrientation(), delay,
+                 MovementPriority::MOVEMENT_NORMAL);
+
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] door walk-in spline: {} pts, {:.1f}yd ({:.1f}yd to door, seg {} pt {})",
+                  bot->GetName(), window.size(), windowLen, distToDoor,
+                  follower.segmentIdx, follower.pointIdx);
+        ClearStall(context);
+        return true;
+    }
+
+    // Window < 2 points (lone anchor tail): short single-hop fallback.
+    MoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
+           /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+           /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+    ClearStall(context);
+    return true;
 }
 
 bool DungeonClearFollowTankAction::Execute(Event /*event*/)
@@ -1475,6 +1625,12 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // are nearby. The timeout stops a follower parking forever on a corpse it
     // can't finish (group-roll pending, bags full) and being left behind, which
     // would also stall the tank on its party-spread gate.
+    //
+    // Strip already-given-up loot first (above the loot pipeline's relevance),
+    // so a corpse this follower abandoned can't keep the flags below true and
+    // re-arm the yield each time it drifts back within lootDistance of the
+    // tank — the corpse<->tank ping-pong.
+    DungeonClearUtil::StripSkippedLoot(botAI);
     uint32& lootYieldStart =
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =
@@ -1494,11 +1650,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                       bot->GetName(), now - lootYieldStart);
             return false;
         }
-        // Waited long enough — give up on this corpse and resume following so
-        // we rejoin the tank. Leave lootYieldStart expired so we keep following
-        // each tick until the loot flags clear (which resets the timer).
+        // Waited long enough — give up on THIS corpse (blacklist it so the
+        // flags drop next tick and we stop being yanked back to it), then resume
+        // following to rejoin the tank. Leave lootYieldStart expired so we keep
+        // following until the flags clear (which resets the timer).
+        DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
         LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] follow-tank loot-yield timed out after {}ms -> resuming follow",
+                 "[DC:{}] follow-tank loot-yield timed out after {}ms -> giving up on corpse, following",
                  bot->GetName(), now - lootYieldStart);
     }
     else

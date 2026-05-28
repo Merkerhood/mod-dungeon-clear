@@ -5,6 +5,7 @@
 
 #include "DungeonClearChatActions.h"
 
+#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -141,6 +142,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear enabled")->Set(true);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
+    context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
