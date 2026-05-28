@@ -48,6 +48,7 @@ public:
         creators["dungeon clear loot yield start"] = &DungeonClearValueContext::dungeon_clear_loot_yield_start;
         creators["dungeon clear loot skip"] = &DungeonClearValueContext::dungeon_clear_loot_skip;
         creators["dungeon clear done-not-engaged ticks"] = &DungeonClearValueContext::dungeon_clear_done_not_engaged_ticks;
+        creators["dungeon clear pursuit fail ticks"] = &DungeonClearValueContext::dungeon_clear_pursuit_fail_ticks;
         creators["dungeon clear followed tank"] = &DungeonClearValueContext::dungeon_clear_followed_tank;
     }
 
@@ -79,6 +80,7 @@ private:
     static UntypedValue* dungeon_clear_loot_yield_start(PlayerbotAI* ai) { return new DungeonClearLootYieldStartValue(ai); }
     static UntypedValue* dungeon_clear_loot_skip(PlayerbotAI* ai) { return new DungeonClearLootSkipValue(ai); }
     static UntypedValue* dungeon_clear_done_not_engaged_ticks(PlayerbotAI* ai) { return new DungeonClearDoneNotEngagedTicksValue(ai); }
+    static UntypedValue* dungeon_clear_pursuit_fail_ticks(PlayerbotAI* ai) { return new DungeonClearPursuitFailTicksValue(ai); }
     static UntypedValue* dungeon_clear_followed_tank(PlayerbotAI* ai) { return new DungeonClearFollowedTankValue(ai); }
 };
 

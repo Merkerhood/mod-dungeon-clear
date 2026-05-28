@@ -274,6 +274,27 @@ public:
     }
 };
 
+// Consecutive Advance ticks on which the LIVE-boss direct-pursuit branch issued
+// a MoveTo that produced no movement at all (MoveTo returned false and the bot
+// is not moving / not waiting on an in-flight move). This is the silent freeze
+// just outside pull range: the boss is close and in line of sight, so direct
+// pursuit is selected, but PathGenerator can't reach its live poly (Z resolves
+// to INVALID_HEIGHT, or the route winds past PathGenerator's 74-hop cap). The
+// bot never moves, so the position-based stuck counter can't see it and direct
+// pursuit would retry forever. Advance counts these ticks and, past a short
+// grace, abandons direct pursuit and falls through to the wall-screened
+// long-path (LongRangePathfinder, no hop cap, with its own dead-end -> stall
+// escalation). Reset on boss change and whenever the pursuit move makes
+// progress / is in flight.
+class DungeonClearPursuitFailTicksValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPursuitFailTicksValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pursuit fail ticks")
+    {
+    }
+};
+
 // Per-corpse loot give-up list: maps a loot GUID whose pickup the bot
 // abandoned (its loot-yield timed out on it) to the ms timestamp at which the
 // skip expires. Each DC tick the still-live entries are stripped from the stock

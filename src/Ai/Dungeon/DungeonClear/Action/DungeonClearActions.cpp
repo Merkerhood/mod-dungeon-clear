@@ -133,6 +133,19 @@ namespace
     // past it the boss is declared unreachable and we stall for `dc skip`.
     constexpr uint32 DC_DONE_NOT_ENGAGED_LIMIT = 15;
 
+    // Consecutive direct-pursuit ticks that issued no movement (MoveTo returned
+    // false and the bot is neither moving nor waiting on an in-flight move)
+    // before Advance abandons the LIVE-boss direct-pursuit shortcut and falls
+    // through to the wall-screened long-path. The direct-pursuit MoveTo bee-lines
+    // the boss's live poly through the raw PathGenerator, which can fail to
+    // resolve a path (Z -> INVALID_HEIGHT, or a winding route past its 74-hop
+    // cap) and then silently returns false every tick — the bot never moves, so
+    // the position-based stuck counter can't catch it. A short grace absorbs a
+    // transient miss (boss mid-step, grid still settling); past it we hand off
+    // to the long-path (LongRangePathfinder, no hop cap), which carries its own
+    // dead-end -> stall escalation. ~5 ticks ≈ a couple of seconds.
+    constexpr uint32 DC_PURSUIT_FAIL_LIMIT = 5;
+
     // Long-path cache TTL. Boss positions are static, so a longer TTL is
     // safe; rebuild costs are bounded (~8 PathGenerator calls × sub-ms each).
     // Keeping the TTL short keeps stale paths from outlasting edge cases
@@ -237,6 +250,7 @@ namespace
         ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
         ctx->GetValue<Position&>("dungeon clear last position")->Get() = Position();
         ctx->GetValue<ObjectGuid>("dungeon clear last pull target")->Set(ObjectGuid::Empty);
@@ -525,7 +539,13 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     uint32& doneNotEngagedTicks =
         context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->RefGet();
     if (engageDist < DC_ENGAGE_RANGE)
+    {
         doneNotEngagedTicks = 0;
+        // Made it into engage range: clear the direct-pursuit give-up latch too,
+        // so a later approach to this same boss (it wandered back out) can use
+        // the direct-pursuit shortcut again instead of staying latched off it.
+        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
+    }
 
     // Already in engage range of the (live) boss AND no anchored intermediate
     // hops remain unresolved → stop walking and let the at-boss trigger fire the
@@ -696,6 +716,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         posStuck = 0;
         rebuildAttempts = 0;
         doneNotEngagedTicks = 0;
+        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
         lastPos = Position();  // reset to (0,0,0) sentinel on boss change
         // Sticky trash target was picked for the previous boss's corridor;
         // it doesn't necessarily lie in the new boss's corridor and can be
@@ -806,7 +827,23 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // static spawn anchor and waiting for the boss to wander back. A boss out of
     // LOS (around a corner) or farther than the pursuit range falls through to
     // the wall-screened long-path below.
-    if (liveBoss && engageDist <= DC_DIRECT_PURSUIT_RANGE && bot->IsWithinLOSInMap(liveBoss))
+    // pursuitFailTicks doubles as a latch: while it sits at DC_PURSUIT_FAIL_LIMIT
+    // we've given up on the direct-pursuit shortcut for this approach and let the
+    // long-path drive uninterrupted (re-entering the pursuit branch would call
+    // StopActiveSplineGlide every tick and kill the long-path's escort glide
+    // before it travels — a step/freeze thrash). The latch clears on boss change
+    // and once we make it inside engage range (see the resets above).
+    uint32& pursuitFailTicks =
+        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->RefGet();
+    bool const canPursue =
+        liveBoss && engageDist <= DC_DIRECT_PURSUIT_RANGE && bot->IsWithinLOSInMap(liveBoss);
+    if (!canPursue)
+    {
+        // Boss not pursuable this tick (out of LOS / range / not loaded): clear
+        // the grace counter so a later pursuit starts with a fresh budget.
+        pursuitFailTicks = 0;
+    }
+    else if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
     {
         // Drop any stale long-path escort glide so it doesn't keep driving the
         // bot toward the spawn anchor while we steer toward the live boss.
@@ -814,13 +851,49 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         bool const chasing = MoveTo(next->mapId, bossX, bossY, bossZ,
                                     /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                     /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] pursuing live {} at {:.0f}yd (LOS) -> MoveTo {}",
-                  bot->GetName(), next->name, engageDist, chasing ? "issued" : "noop/queued");
-        stuck = 0;
-        ClearStall(context);
-        return chasing;
+
+        // A move was issued, is already in flight, or was just queued (MoveTo's
+        // own IsDuplicateMove / IsWaitingForLastMove return false while a prior
+        // move is still gliding) — pursuit is alive, let it ride. A move that is
+        // in flight but wedging in place is caught by the posStuck rebuild above,
+        // which runs before this branch.
+        if (chasing || bot->isMoving() ||
+            IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+        {
+            pursuitFailTicks = 0;
+            stuck = 0;
+            ClearStall(context);
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] pursuing live {} at {:.0f}yd (LOS) -> MoveTo {}",
+                      bot->GetName(), next->name, engageDist,
+                      chasing ? "issued" : "in flight");
+            return true;
+        }
+
+        // MoveTo produced nothing and the bot is standing still: PathGenerator
+        // can't reach the boss's live poly (Z -> INVALID_HEIGHT, or a winding
+        // route past its 74-hop cap). posStuck can't see this — the bot never
+        // moves — so without an escape this is a silent freeze just outside pull
+        // range. Count the dead tick; past a short grace, leave the latch set and
+        // fall through to the wall-screened long-path below (LongRangePathfinder,
+        // no hop cap, with its own dead-end -> stall escalation).
+        ++pursuitFailTicks;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] direct pursuit of {} stalled ({:.0f}yd, MoveTo noop, not "
+                 "moving) {}/{}",
+                 bot->GetName(), next->name, engageDist, pursuitFailTicks,
+                 DC_PURSUIT_FAIL_LIMIT);
+        if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
+            return false;
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] direct pursuit of {} unreachable -> long-path fallback "
+                 "(latched until engage range / boss change)",
+                 bot->GetName(), next->name);
+        // fall through to the long-path machinery below; the latch keeps us out
+        // of this branch on subsequent ticks so the long-path can travel.
     }
+    // else: latched — skip direct pursuit and let the long-path below drive.
 
     // Build or refresh the long-path cache. Boss positions are static,
     // so the TTL can be generous; cache is invalidated on boss change.
