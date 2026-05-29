@@ -282,67 +282,85 @@ bool DungeonPathFollower::Resnap(Player* bot, ChunkedPathfinder::Result const& p
     float const py = bot->GetPositionY();
     float const pz = bot->GetPositionZ();
 
-    // Walk a window of polyline points around the current cursor in both
-    // directions; pick the one closest to the bot in 3D. Forward bias on
-    // ties: among equally-close candidates, prefer the later one so the
-    // resnap doesn't replay corridor we already cleared.
-    float bestDist2 = std::numeric_limits<float>::max();
-    uint32 bestSeg = state.segmentIdx;
-    uint32 bestPoint = state.pointIdx;
-    bool found = false;
+    // Gather a window of polyline points around the current cursor in both
+    // directions, then pick the one closest to the bot in 3D that the bot can
+    // actually see in a straight line. The LOS gate guards against U-turns
+    // whose arms come within RESNAP_RADIUS: a physically-near point on the far
+    // arm is walled off, and snapping to it would skip the whole bend and leave
+    // the bot trying to cross the inside wall.
+    //
+    // BotCanSee is a static-VMAP raycast — the expensive part of this routine.
+    // Rather than raycast every windowed point, collect candidates, sort by
+    // distance, and raycast in nearest-first order: the first point that passes
+    // LOS is the closest visible one, so we usually run 1–2 raycasts instead of
+    // the full window. Forward bias on ties (later flat index wins) keeps the
+    // resnap from replaying corridor we already cleared.
+    struct Candidate
+    {
+        uint32 seg;
+        uint32 pt;
+        G3D::Vector3 pos;
+        float dist2;
+        uint64 flatIdx;  // seg * 100000 + pt — monotonic along the route
+    };
 
-    // Forward walk (starts at current point, includes it). Candidates the bot
-    // can't see in a straight line are skipped — on a U-turn whose arms come
-    // within RESNAP_RADIUS, a forward point on the far arm is physically near
-    // but walled off; snapping to it would skip the whole bend and leave the
-    // bot trying to cross the inside wall.
+    float const radius2 = RESNAP_RADIUS * RESNAP_RADIUS;
+    std::vector<Candidate> candidates;
+    candidates.reserve(2 * RESNAP_WINDOW + 1);
+
+    auto consider = [&](uint32 seg, uint32 pt)
+    {
+        std::optional<G3D::Vector3> p = PointAt(path, seg, pt);
+        if (!p.has_value())
+            return;
+        float const d2 = Dist3DSq(px, py, pz, *p);
+        if (d2 > radius2)
+            return;  // out of snap range — never a valid pick
+        candidates.push_back(Candidate{seg, pt, *p, d2,
+                                       static_cast<uint64>(seg) * 100000ULL + pt});
+    };
+
+    // Forward walk (starts at current point, includes it).
     FlatIndex fwd{state.segmentIdx, state.pointIdx};
     for (size_t step = 0; step <= RESNAP_WINDOW; ++step)
     {
-        std::optional<G3D::Vector3> p = PointAt(path, fwd.seg, fwd.pt);
-        if (p.has_value() && BotCanSee(bot, *p))
-        {
-            float const d2 = Dist3DSq(px, py, pz, *p);
-            // <= so the *furthest forward* tie wins (forward bias).
-            if (d2 <= bestDist2)
-            {
-                bestDist2 = d2;
-                bestSeg = fwd.seg;
-                bestPoint = fwd.pt;
-                found = true;
-            }
-        }
+        consider(fwd.seg, fwd.pt);
         if (!StepFlatForward(path, fwd))
             break;
     }
 
-    // Backward walk (starts one point before current; "<" so backward
-    // candidates only win on strictly closer distance). Same LOS gate.
+    // Backward walk (starts one point before current).
     FlatIndex back{state.segmentIdx, state.pointIdx};
     for (size_t step = 0; step < RESNAP_WINDOW; ++step)
     {
         if (!StepFlatBackward(path, back))
             break;
-        std::optional<G3D::Vector3> p = PointAt(path, back.seg, back.pt);
-        if (!p.has_value() || !BotCanSee(bot, *p))
-            continue;
-        float const d2 = Dist3DSq(px, py, pz, *p);
-        if (d2 < bestDist2)
-        {
-            bestDist2 = d2;
-            bestSeg = back.seg;
-            bestPoint = back.pt;
-            found = true;
-        }
+        consider(back.seg, back.pt);
     }
 
-    if (!found || bestDist2 > RESNAP_RADIUS * RESNAP_RADIUS)
+    if (candidates.empty())
         return false;
 
-    state.segmentIdx = bestSeg;
-    state.pointIdx = bestPoint;
-    state.offPathTicks = 0;
-    return true;
+    std::sort(candidates.begin(), candidates.end(),
+              [](Candidate const& a, Candidate const& b)
+              {
+                  if (std::fabs(a.dist2 - b.dist2) > 1e-5f)
+                      return a.dist2 < b.dist2;
+                  return a.flatIdx > b.flatIdx;  // forward bias on ties
+              });
+
+    for (Candidate const& cand : candidates)
+    {
+        if (!BotCanSee(bot, cand.pos))
+            continue;
+        // Sorted nearest-first: first visible candidate is the closest one.
+        state.segmentIdx = cand.seg;
+        state.pointIdx = cand.pt;
+        state.offPathTicks = 0;
+        return true;
+    }
+
+    return false;
 }
 
 std::vector<G3D::Vector3> DungeonPathFollower::BuildSplineWindow(Player* bot,

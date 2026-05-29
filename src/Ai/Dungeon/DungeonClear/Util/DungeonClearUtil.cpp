@@ -97,6 +97,11 @@ bool DungeonClearUtil::ComputeCorridor(Player* bot,
 
 namespace
 {
+    // A 2D line segment of the lookahead corridor (a→b), projected onto the XY
+    // plane. Both corridor-trash scanners build a flat list of these and hand
+    // it to PickBlockingTrash.
+    struct Seg2D { float ax, ay, bx, by; };
+
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,
@@ -120,6 +125,90 @@ namespace
         float const dy = py - cy;
         return dx * dx + dy * dy;
     }
+
+    // Shared candidate evaluation for the corridor-style trash scans. Returns
+    // the closest hostile, alive, level-reachable, in-LOS unit whose 2D
+    // position lands within `corridorWidth` of any segment in `segs`. Nullptr
+    // if none.
+    //
+    // LOS (and level-reachability) are checked PER CANDIDATE rather than once
+    // on the final pick: a geometrically closer mob behind a wall must not
+    // shadow a visible blocker further along the corridor — otherwise the tank
+    // walks right past the visible pack and aggros it onto the healers.
+    Unit* PickBlockingTrash(Player* bot,
+                            std::vector<Seg2D> const& segs,
+                            float corridorWidth,
+                            GuidVector const& candidates)
+    {
+        if (!bot || segs.empty() || candidates.empty())
+            return nullptr;
+
+        // 2D AABB around the lookahead corridor, padded by the width. Units
+        // nowhere near the route get rejected with four float compares before
+        // any per-segment distance math runs.
+        float minX = std::numeric_limits<float>::max();
+        float maxX = std::numeric_limits<float>::lowest();
+        float minY = std::numeric_limits<float>::max();
+        float maxY = std::numeric_limits<float>::lowest();
+        for (Seg2D const& s : segs)
+        {
+            minX = std::min({minX, s.ax, s.bx});
+            maxX = std::max({maxX, s.ax, s.bx});
+            minY = std::min({minY, s.ay, s.by});
+            maxY = std::max({maxY, s.ay, s.by});
+        }
+        minX -= corridorWidth; maxX += corridorWidth;
+        minY -= corridorWidth; maxY += corridorWidth;
+
+        float const widthSq = corridorWidth * corridorWidth;
+        Unit* best = nullptr;
+        float bestDistFromBot = std::numeric_limits<float>::max();
+
+        for (ObjectGuid guid : candidates)
+        {
+            Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+            if (!u || !u->IsAlive())
+                continue;
+            if (!bot->IsHostileTo(u))
+                continue;
+
+            float const ux = u->GetPositionX();
+            float const uy = u->GetPositionY();
+
+            // Trivial AABB reject before any sqrt / segment math.
+            if (ux < minX || ux > maxX || uy < minY || uy > maxY)
+                continue;
+
+            // We only want the closest blocker; once we have one, a farther
+            // candidate can't win, so skip the corridor/LOS/path work for it.
+            float const distFromBot = bot->GetDistance2d(u);
+            if (distFromBot >= bestDistFromBot)
+                continue;
+
+            bool inCorridor = false;
+            for (Seg2D const& s : segs)
+            {
+                if (DistSqToSegment2D(ux, uy, s.ax, s.ay, s.bx, s.by) <= widthSq)
+                {
+                    inCorridor = true;
+                    break;  // threshold test — first segment in range is enough
+                }
+            }
+            if (!inCorridor)
+                continue;
+
+            // Expensive gates last, and per-candidate so a closer out-of-LOS
+            // mob can't shadow a visible one further along the corridor.
+            if (!DungeonClearUtil::IsLevelReachable(bot, u))
+                continue;
+            if (!bot->IsWithinLOSInMap(u))
+                continue;
+
+            best = u;
+            bestDistFromBot = distFromBot;
+        }
+        return best;
+    }
 }
 
 Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
@@ -134,64 +223,25 @@ Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
     // Walk the polyline only as far as `maxLookAhead` yards from the bot's
     // current position. Beyond that the trigger doesn't care — we only
     // engage things that actually block the next leg of the route.
-    std::vector<std::pair<G3D::Vector3, G3D::Vector3>> segments;
+    std::vector<Seg2D> segments;
     segments.reserve(corridor.size());
     float accumulated = 0.0f;
     for (size_t i = 0; i + 1 < corridor.size(); ++i)
     {
         G3D::Vector3 const& a = corridor[i];
         G3D::Vector3 const& b = corridor[i + 1];
-        segments.emplace_back(a, b);
+        segments.push_back(Seg2D{a.x, a.y, b.x, b.y});
         float const dx = b.x - a.x;
         float const dy = b.y - a.y;
         accumulated += std::sqrt(dx * dx + dy * dy);
         if (accumulated >= maxLookAhead)
             break;
     }
-    if (segments.empty())
-        return nullptr;
 
-    float const widthSq = corridorWidth * corridorWidth;
-    Unit* best = nullptr;
-    float bestDistFromBot = std::numeric_limits<float>::max();
-
-    for (ObjectGuid guid : possibleTargets)
-    {
-        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
-        if (!u || !u->IsAlive())
-            continue;
-        if (!bot->IsHostileTo(u))
-            continue;
-
-        float const ux = u->GetPositionX();
-        float const uy = u->GetPositionY();
-
-        float minDistSq = std::numeric_limits<float>::max();
-        for (auto const& seg : segments)
-        {
-            float const d2 = DistSqToSegment2D(ux, uy, seg.first.x, seg.first.y, seg.second.x, seg.second.y);
-            if (d2 < minDistSq)
-                minDistSq = d2;
-        }
-        if (minDistSq > widthSq)
-            continue;
-
-        float const distFromBot = bot->GetDistance2d(u);
-        if (distFromBot < bestDistFromBot && IsLevelReachable(bot, u))
-        {
-            best = u;
-            bestDistFromBot = distFromBot;
-        }
-    }
-
-    // LOS gate. Drops "pack on the other side of a wall" false positives
-    // that the geometry-only test would otherwise produce — the corridor
-    // may legitimately turn behind a wall, but anything we engage has to
-    // be visible from the bot right now.
-    if (best && !bot->IsWithinLOSInMap(best))
-        return nullptr;
-
-    return best;
+    // Per-candidate LOS gate inside PickBlockingTrash drops "pack on the other
+    // side of a wall" false positives without letting a closer out-of-LOS mob
+    // shadow a visible blocker further along the corridor.
+    return PickBlockingTrash(bot, segments, corridorWidth, possibleTargets);
 }
 
 Creature* DungeonClearUtil::FindLiveCreatureOnMap(Player* bot, uint32 entry)
@@ -286,68 +336,62 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
     if (!bot || segments.empty() || candidates.empty())
         return nullptr;
 
-    // Walk the polyline starting from the bot's current position. Stop
-    // accumulating once we've traveled `maxLookAhead` yards along it —
-    // anything past that isn't blocking our immediate next pull.
-    struct Seg2D { float ax, ay, bx, by; };
+    // Walk the smoothed route starting from the bot's current position. Stop
+    // accumulating once we've traveled `maxLookAhead` yards along it — anything
+    // past that isn't blocking our immediate next pull.
+    //
+    // CRITICAL: chain each segment's `polyline` points, NOT the segment
+    // endpoints (`seg.ex/ey`). The primary producer (LongRangePathfinder) emits
+    // the ENTIRE winding route as a single PathSegment whose ex/ey is only the
+    // final endpoint (the boss). Chaining endpoints would collapse the corridor
+    // to one straight bee-line from the bot to the boss — a cylinder that cuts
+    // through walls and rooms, runs the whole route in one segment, and ignores
+    // maxLookAhead. The polyline is the real smoothed corridor geometry. (Same
+    // fix already applied in DungeonClearBlockingDoorValue::Calculate.)
     std::vector<Seg2D> segs;
     segs.reserve(segments.size());
 
     float prevX = bot->GetPositionX();
     float prevY = bot->GetPositionY();
     float accumulated = 0.0f;
+    bool limitReached = false;
     for (PathSegment const& seg : segments)
     {
-        float const dx = seg.ex - prevX;
-        float const dy = seg.ey - prevY;
-        float const len = std::sqrt(dx * dx + dy * dy);
-        segs.push_back(Seg2D{prevX, prevY, seg.ex, seg.ey});
-        accumulated += len;
-        prevX = seg.ex;
-        prevY = seg.ey;
-        if (accumulated >= maxLookAhead)
+        // Anchored segments collapse to a single polyline point; non-anchored
+        // segments carry the full smoothed corridor. Fall back to the endpoint
+        // only if a segment somehow has no polyline at all.
+        if (seg.polyline.empty())
+        {
+            float const dx = seg.ex - prevX;
+            float const dy = seg.ey - prevY;
+            segs.push_back(Seg2D{prevX, prevY, seg.ex, seg.ey});
+            accumulated += std::sqrt(dx * dx + dy * dy);
+            prevX = seg.ex;
+            prevY = seg.ey;
+            if (accumulated >= maxLookAhead)
+                break;
+            continue;
+        }
+
+        for (G3D::Vector3 const& pt : seg.polyline)
+        {
+            float const dx = pt.x - prevX;
+            float const dy = pt.y - prevY;
+            segs.push_back(Seg2D{prevX, prevY, pt.x, pt.y});
+            accumulated += std::sqrt(dx * dx + dy * dy);
+            prevX = pt.x;
+            prevY = pt.y;
+            if (accumulated >= maxLookAhead)
+            {
+                limitReached = true;
+                break;
+            }
+        }
+        if (limitReached)
             break;
     }
-    if (segs.empty())
-        return nullptr;
 
-    float const widthSq = corridorWidth * corridorWidth;
-    Unit* best = nullptr;
-    float bestDistFromBot = std::numeric_limits<float>::max();
-
-    for (ObjectGuid guid : candidates)
-    {
-        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
-        if (!u || !u->IsAlive())
-            continue;
-        if (!bot->IsHostileTo(u))
-            continue;
-
-        float const ux = u->GetPositionX();
-        float const uy = u->GetPositionY();
-
-        float minDistSq = std::numeric_limits<float>::max();
-        for (auto const& seg : segs)
-        {
-            float const d2 = DistSqToSegment2D(ux, uy, seg.ax, seg.ay, seg.bx, seg.by);
-            if (d2 < minDistSq)
-                minDistSq = d2;
-        }
-        if (minDistSq > widthSq)
-            continue;
-
-        float const distFromBot = bot->GetDistance2d(u);
-        if (distFromBot < bestDistFromBot && IsLevelReachable(bot, u))
-        {
-            best = u;
-            bestDistFromBot = distFromBot;
-        }
-    }
-
-    if (best && !bot->IsWithinLOSInMap(best))
-        return nullptr;
-
-    return best;
+    return PickBlockingTrash(bot, segs, corridorWidth, candidates);
 }
 
 Unit* DungeonClearUtil::FindNearestReachableHostile(Player* bot)
