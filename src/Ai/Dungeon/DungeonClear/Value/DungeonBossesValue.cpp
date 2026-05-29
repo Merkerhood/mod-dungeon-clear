@@ -5,8 +5,14 @@
 
 #include "DungeonBossesValue.h"
 
+#include <limits>
+#include <unordered_set>
+
+#include "Log.h"
 #include "Map.h"
+#include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossOverrideRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Playerbots.h"
@@ -42,6 +48,66 @@ namespace
         }
         return bosses;
     }
+
+    // For split maps (Dire Maul et al.) keep only the bosses of the wing the
+    // bot is in. The wing is identified by proximity: the wings occupy
+    // far-apart regions of the map and the bot enters directly into one, so the
+    // nearest registered boss is reliably in-wing — including its dead/cleared
+    // bosses, whose spawn coords are static, so the choice stays stable as the
+    // bot clears its way through. Maps with no wing registration pass through.
+    std::vector<DungeonBossInfo> FilterToCurrentWing(Player* bot, uint32 mapId,
+                                                     std::vector<DungeonBossInfo> bosses)
+    {
+        std::vector<DungeonWing> const* wings = DungeonWingRegistry::Get(mapId);
+        if (!wings || wings->empty() || bosses.empty())
+            return bosses;
+
+        // Pick the wing owning the boss nearest the bot.
+        size_t bestWing = wings->size();
+        float bestDistSq = std::numeric_limits<float>::max();
+        for (size_t w = 0; w < wings->size(); ++w)
+        {
+            for (uint32 entry : (*wings)[w].bossEntries)
+            {
+                for (DungeonBossInfo const& b : bosses)
+                {
+                    if (b.entry != entry)
+                        continue;
+                    float const dx = b.x - bot->GetPositionX();
+                    float const dy = b.y - bot->GetPositionY();
+                    float const dz = b.z - bot->GetPositionZ();
+                    float const d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < bestDistSq)
+                    {
+                        bestDistSq = d2;
+                        bestWing = w;
+                    }
+                }
+            }
+        }
+
+        // No registered boss matched the live list — leave it untouched rather
+        // than blanking it (would falsely read as "all cleared").
+        if (bestWing >= wings->size())
+            return bosses;
+
+        std::unordered_set<uint32> const keep((*wings)[bestWing].bossEntries.begin(),
+                                              (*wings)[bestWing].bossEntries.end());
+        std::vector<DungeonBossInfo> filtered;
+        filtered.reserve(keep.size());
+        for (DungeonBossInfo const& b : bosses)
+            if (keep.count(b.entry))
+                filtered.push_back(b);
+
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[dungeon-clear] map {} split into wings; bot in '{}' — "
+                  "{} of {} bosses kept", mapId, (*wings)[bestWing].name,
+                  filtered.size(), bosses.size());
+
+        // Defensive: if the chosen wing somehow contributed nothing, keep the
+        // full list so the bot still has a target.
+        return filtered.empty() ? bosses : filtered;
+    }
 }
 
 std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
@@ -57,7 +123,7 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
     Difficulty const difficulty = map->GetDifficulty();
 
     if (std::vector<DungeonBossInfo> const* over = BossOverrideRegistry::Get(mapId, difficulty))
-        return SnapAll(map, *over);
+        return SnapAll(map, FilterToCurrentWing(bot, mapId, *over));
 
-    return SnapAll(map, BossSpawnIndex::Get(mapId, difficulty));
+    return SnapAll(map, FilterToCurrentWing(bot, mapId, BossSpawnIndex::Get(mapId, difficulty)));
 }
