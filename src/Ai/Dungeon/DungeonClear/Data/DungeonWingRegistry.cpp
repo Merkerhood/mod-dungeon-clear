@@ -47,6 +47,39 @@ namespace
                     11501,  // King Gordok
                 }},
             }},
+
+            // --- Scarlet Monastery (map 189) -----------------------------
+            // Four wings, each entered through its own portal off the shared
+            // outdoor courtyard; you must leave to the courtyard to switch, so
+            // no in-instance route connects them. The wing clusters sit far
+            // apart in world space — Graveyard (x~1800, y~1270) and Cathedral
+            // (x~1160, y~1370) in the north half, Library (x~130, y~-345) and
+            // Armory (x~1965, y~-430) in the south half, each 600+ yds from the
+            // others — so nearest-boss wing detection is unambiguous.
+            //
+            // Entries are the kill-creature credit-entries from
+            // instance_encounters (what BossSpawnIndex emits), NOT every
+            // lore boss: the Cathedral's tracked encounters are Fairbanks and
+            // Whitemane — Scarlet Commander Mograine (3976) has no
+            // DungeonEncounter row, so he never appears in the boss list and
+            // must not be listed here.
+            {189, {
+                {"Scarlet Monastery (Graveyard)", {
+                    3983,   // Interrogator Vishas
+                    4543,   // Bloodmage Thalnos
+                }},
+                {"Scarlet Monastery (Library)", {
+                    3974,   // Houndmaster Loksey
+                    6487,   // Arcanist Doan
+                }},
+                {"Scarlet Monastery (Armory)", {
+                    3975,   // Herod
+                }},
+                {"Scarlet Monastery (Cathedral)", {
+                    4542,   // High Inquisitor Fairbanks
+                    3977,   // High Inquisitor Whitemane
+                }},
+            }},
         };
         return store;
     }
