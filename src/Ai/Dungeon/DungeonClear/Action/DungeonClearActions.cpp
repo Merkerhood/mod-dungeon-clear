@@ -47,7 +47,17 @@ namespace
     // consecutive Advance ticks, treat as stuck. Catches the "ran into
     // wall / shortcut path / stuck in mmap seam" case that the MoveTo-
     // returned-false counter misses.
-    constexpr float DC_STUCK_DISPLACEMENT = 1.5f;
+    //
+    // This threshold is PER TICK and must stay well below the distance a
+    // HEALTHY escort glide covers in one Advance tick, or normal movement is
+    // misread as stuck. With run speed ~7 yd/s and the Advance cadence of
+    // ~0.2 s, a gliding bot moves ~1.4-1.5 yd/tick — so the old 1.5 yd value
+    // flagged EVERY healthy tick, tripped the limit in 5 ticks, and killed the
+    // bot's own good spline (the stutter-step through hallways/doors: glide a
+    // few yards, false-stuck, stop, idle, re-issue, repeat). A genuinely
+    // wedged bot moves ~0 yd/tick, so 0.5 yd cleanly separates the two: it is
+    // 3x above the wedge floor yet ~1 yd below the slowest healthy glide.
+    constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
     constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 
     // Must match DungeonClearTriggers.cpp.
@@ -513,6 +523,21 @@ namespace
         MotionMaster* mm = bot->GetMotionMaster();
         if (mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE)
             bot->StopMoving();
+
+        // Clear the escort spline's LastMovement wait. When the spline was
+        // issued, LastMovement was Set with a delay sized to the window's full
+        // travel time (capped at maxWaitForMove, i.e. up to 5s). The Advance
+        // re-issue guard early-outs while IsWaitingForLastMove() is true, so
+        // after we halt the glide here the bot would otherwise idle for the
+        // remainder of that delay — up to ~5s — before re-issuing movement.
+        // Zeroing lastdelayTime makes IsWaitingForLastMove() false immediately,
+        // so the next Advance tick re-issues from the standstill without the
+        // dead pause.
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
+        {
+            if (AiObjectContext* ctx = botAI->GetAiObjectContext())
+                ctx->GetValue<LastMovement&>("last movement")->Get().lastdelayTime = 0.0f;
+        }
     }
 }
 
