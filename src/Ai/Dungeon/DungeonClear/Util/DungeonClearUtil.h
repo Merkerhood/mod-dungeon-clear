@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_DUNGEONCLEARUTIL_H
 #define _PLAYERBOT_DUNGEONCLEARUTIL_H
 
+#include <string>
 #include <vector>
 
 #include "MoveSplineInitArgs.h"
@@ -75,6 +76,25 @@ public:
     // tank hold its advance after a pull until the whole party has finished
     // looting; the caller bounds the wait with a commit-timeout.
     static bool IsAnyPartyMemberLooting(Player* bot);
+
+    // Builds a short, human-readable account of who the tank is waiting on to
+    // become pull-ready, using the SAME thresholds IsPartyReady is called with
+    // (so the description always matches the gate that actually holds the
+    // advance). Lists each living on-map member that is too far, low on health,
+    // or low on mana, with the limiting reason — e.g. "Bob (low HP), Alice (out
+    // of range)". Caps the list so the addon line stays short; extra members
+    // collapse to "+N more". Returns "" when the party is ready (nobody to wait
+    // on). Used by DcStatusAction to fill the addon "resting" detail.
+    static std::string DescribePartyNotReady(Player* bot,
+                                             float minHpPct, float minMpPct,
+                                             float maxSpread);
+
+    // Names the living bot party members currently looting (walking to or
+    // standing on a corpse), comma-joined and capped like DescribePartyNotReady.
+    // Returns "" when only the tank itself is looting / nobody is. Used to fill
+    // the addon "looting" detail so the player can see who is holding up the
+    // advance.
+    static std::string DescribePartyLooting(Player* bot);
 
     // --- Per-corpse loot give-up list ---------------------------------------
     // Prunes expired give-up entries and strips the still-live ones from the

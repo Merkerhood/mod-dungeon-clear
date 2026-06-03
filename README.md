@@ -108,7 +108,13 @@ channel on the `PARTY` distribution (no visible chat). The addon sends
 them (before normal chat processing) and dispatches to the group's tank bot,
 exactly like the `.dc` command. The module pushes `STATUS`, `BOSS_START` /
 `BOSS` / `BOSS_END`, `CHAT`, and `ERROR` payloads back so the panel renders live
-state. Bot announcements arrive as `CHAT` lines (prefixed `[DC]`) instead of
+state. The `STATUS` payload is
+`STATUS\t<enabled>\t<bossEntry>\t<bossName>\t<stallReason>\t<skipped>\t<state>\t<detail>`,
+where `<state>` is one of `off`, `paused`, `moving`, `pathing` (plotting a route),
+`pursuing` (closing on a live boss), `recovering` (wedged, replanning),
+`resting`, `looting`, `fighting_trash`, `fighting_boss`, `door_blocked`,
+`stalled`, or `idle`, and `<detail>` is a short human sentence (who we are
+waiting on, what we are heading to). Bot announcements arrive as `CHAT` lines (prefixed `[DC]`) instead of
 party-chat spam. The addon polls `status` every ~2s while a clear runs and
 re-requests the boss list on a 2s/5s cadence so the panel self-heals through
 loading screens and bot-not-yet-in-instance gaps.

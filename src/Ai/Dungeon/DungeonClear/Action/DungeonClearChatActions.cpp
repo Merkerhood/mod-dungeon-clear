@@ -149,6 +149,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
     context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+    context->GetValue<std::string&>("dungeon clear phase")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
     context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
     // Force a fresh long-path build on the first Advance tick. Without
@@ -306,15 +307,23 @@ bool DcStatusAction::Execute(Event event)
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + msg.str());
     }
 
-    // Calculate dynamic state for addon UI
+    // Calculate dynamic state for addon UI. Authoritative poll-time conditions
+    // (combat, stall, loot, rest) take precedence over the advance action's
+    // self-reported navigation phase, since they reflect ground truth the phase
+    // token can't see. `detail` is a short human sentence the addon shows under
+    // the state line — who we're waiting on, what we're heading to, etc.
     std::string stateStr = "off";
+    std::string detail;
     bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    std::string const bossName = next.has_value() ? next->name : "the boss";
+
     if (enabled && paused)
     {
         // Paused takes precedence over every running sub-state — the addon
         // paints this state yellow. `enabled` stays 1 so the addon keeps
         // polling and can see the eventual resume.
         stateStr = "paused";
+        detail = "Holding position; boss progress saved.";
     }
     else if (enabled)
     {
@@ -322,34 +331,72 @@ bool DcStatusAction::Execute(Event event)
         {
             Unit* currentTarget = botAI->GetAiObjectContext()->GetValue<Unit*>("current target")->Get();
             if (currentTarget && next.has_value() && currentTarget->GetEntry() == next->entry)
+            {
                 stateStr = "fighting_boss";
+                detail = "Engaging " + bossName + ".";
+            }
             else
+            {
                 stateStr = "fighting_trash";
+                detail = (currentTarget && !currentTarget->GetName().empty())
+                             ? ("Fighting " + currentTarget->GetName() + ".")
+                             : "Clearing trash from the path.";
+            }
         }
         else if (!stall.empty())
         {
             ObjectGuid door = botAI->GetAiObjectContext()->GetValue<ObjectGuid>("dungeon clear blocking door")->Get();
-            if (!door.IsEmpty())
-                stateStr = "door_blocked";
-            else
-                stateStr = "stalled";
+            stateStr = door.IsEmpty() ? "stalled" : "door_blocked";
+            // The stall reason already rides in its own field; leave detail empty.
         }
         else if (AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
                  DungeonClearUtil::IsAnyPartyMemberLooting(bot))
         {
             stateStr = "looting";
+            std::string const who = DungeonClearUtil::DescribePartyLooting(bot);
+            detail = who.empty() ? "Collecting loot." : (who + ".");
         }
         else if (!DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, 40.0f))
         {
             stateStr = "resting";
-        }
-        else if (bot->isMoving())
-        {
-            stateStr = "moving";
+            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, 40.0f);
+            detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else
         {
-            stateStr = "idle";
+            // No blocking condition — report what the advance action is up to,
+            // using its per-tick phase token plus the route cache state.
+            std::string const& phase = AI_VALUE(std::string&, "dungeon clear phase");
+            uint32 const pathTarget = AI_VALUE(uint32, "dungeon clear long path target");
+            bool const routeReady = next.has_value() && pathTarget == next->entry;
+
+            if (phase == "recovering")
+            {
+                stateStr = "recovering";
+                detail = "Stuck; replanning the route to " + bossName + ".";
+            }
+            else if (phase == "pursuing")
+            {
+                stateStr = "pursuing";
+                detail = "Closing in on " + bossName + ".";
+            }
+            else if (next.has_value() && !routeReady)
+            {
+                // A boss is selected but no route to it is cached yet: the tank
+                // is between picking the target and its first path build.
+                stateStr = "pathing";
+                detail = "Plotting a route to " + bossName + ".";
+            }
+            else if (phase == "moving" || bot->isMoving())
+            {
+                stateStr = "moving";
+                detail = next.has_value() ? ("En route to " + bossName + ".") : "Advancing.";
+            }
+            else
+            {
+                stateStr = "idle";
+                detail = next.has_value() ? ("Holding near " + bossName + ".") : "Idle.";
+            }
         }
     }
 
@@ -360,7 +407,8 @@ bool DcStatusAction::Execute(Event event)
              << (next.has_value() ? next->name : "None") << "\t"
              << (stall.empty() ? "" : stall) << "\t"
              << skipped.size() << "\t"
-             << stateStr;
+             << stateStr << "\t"
+             << detail;
 
     DungeonClearUtil::SendAddonMessage(botAI, addonMsg.str());
     return true;

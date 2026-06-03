@@ -33,6 +33,7 @@ public:
         creators["dungeon clear selected boss"] = &DungeonClearValueContext::dungeon_clear_selected_boss;
         creators["dungeon clear stall reason"] = &DungeonClearValueContext::dungeon_clear_stall_reason;
         creators["dungeon clear last said reason"] = &DungeonClearValueContext::dungeon_clear_last_said_reason;
+        creators["dungeon clear phase"] = &DungeonClearValueContext::dungeon_clear_phase;
         creators["dungeon clear fallback target"] = &DungeonClearValueContext::dungeon_clear_fallback_target;
         creators["dungeon clear party tank"] = &DungeonClearValueContext::dungeon_clear_party_tank;
         creators["dungeon clear last position"] = &DungeonClearValueContext::dungeon_clear_last_position;
@@ -69,6 +70,7 @@ private:
     static UntypedValue* dungeon_clear_selected_boss(PlayerbotAI* ai) { return new DungeonClearSelectedBossValue(ai); }
     static UntypedValue* dungeon_clear_stall_reason(PlayerbotAI* ai) { return new DungeonClearStallReasonValue(ai); }
     static UntypedValue* dungeon_clear_last_said_reason(PlayerbotAI* ai) { return new DungeonClearLastSaidReasonValue(ai); }
+    static UntypedValue* dungeon_clear_phase(PlayerbotAI* ai) { return new DungeonClearPhaseValue(ai); }
     static UntypedValue* dungeon_clear_fallback_target(PlayerbotAI* ai) { return new DungeonClearFallbackTargetValue(ai); }
     static UntypedValue* dungeon_clear_party_tank(PlayerbotAI* ai) { return new DungeonClearPartyTankValue(ai); }
     static UntypedValue* dungeon_clear_last_position(PlayerbotAI* ai) { return new DungeonClearLastPositionValue(ai); }

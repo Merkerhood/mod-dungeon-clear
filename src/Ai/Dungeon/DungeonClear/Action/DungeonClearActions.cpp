@@ -277,6 +277,7 @@ namespace
         ctx->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
         ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+        ctx->GetValue<std::string&>("dungeon clear phase")->Get().clear();
         ctx->GetValue<uint32>("dungeon clear long path target")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
@@ -311,6 +312,16 @@ namespace
     {
         ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+    }
+
+    // Record the navigation micro-activity for this advance tick so the ~2s
+    // status poll can report a fine-grained state to the addon (see
+    // DungeonClearPhaseValue / DcStatusAction). Cheap string assignment; called
+    // from each terminal movement/recovery branch of Advance::Execute. Tokens:
+    // "moving", "pursuing", "recovering".
+    void SetPhase(AiObjectContext* ctx, std::string const& phase)
+    {
+        ctx->GetValue<std::string&>("dungeon clear phase")->Get() = phase;
     }
 
     // True if a player standing where the bot stands could open this door by
@@ -669,6 +680,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             if (bot->isMoving())
                 bot->StopMoving();
             ClearStall(context);
+            // Parked at the boss waiting for the at-boss pull — not navigating,
+            // so clear the nav phase (status reads this as "idle / holding").
+            SetPhase(context, "");
             return false;
         }
     }
@@ -858,6 +872,8 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     if (posStuck >= DC_STUCK_TICK_LIMIT)
     {
         posStuck = 0;
+        // Wedged and replanning — surface "recovering" to the status poll.
+        SetPhase(context, "recovering");
 
         // The bot was moving but not progressing — a continuous-spline glide
         // wedged against geometry. Halt it so the recovery below re-issues
@@ -952,6 +968,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             pursuitFailTicks = 0;
             stuck = 0;
             ClearStall(context);
+            SetPhase(context, "pursuing");
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] pursuing live {} at {:.0f}yd (LOS) -> MoveTo {}",
                       bot->GetName(), next->name, engageDist,
@@ -1004,6 +1021,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
                 // Don't say anything in party chat — this should be
                 // invisible recovery. Force a rebuild so the next tick
                 // picks up the new (hopefully on-mesh) position.
+                SetPhase(context, "recovering");
                 context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
                 return true;
             }
@@ -1041,6 +1059,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild",
                      bot->GetName(), offTicks, DungeonPathFollower::RESNAP_RADIUS);
+            SetPhase(context, "recovering");
             StopActiveSplineGlide(bot);
             context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
             follower = DungeonFollowerState{};
@@ -1112,6 +1131,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             bool const pushing = MoveTo(next->mapId, bossX, bossY, bossZ,
                                         /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                         /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+            SetPhase(context, "pursuing");
             context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
             return pushing;
         }
@@ -1150,6 +1170,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             return false;
         }
         ClearStall(context);
+        SetPhase(context, "moving");
         return true;
     }
 
@@ -1180,6 +1201,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     {
         stuck = 0;
         ClearStall(context);
+        SetPhase(context, "moving");
         return true;
     }
 
@@ -1250,6 +1272,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 
         stuck = 0;
         ClearStall(context);
+        SetPhase(context, "moving");
         return true;
     }
 
@@ -1287,6 +1310,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 
     stuck = 0;
     ClearStall(context);
+    SetPhase(context, "moving");
     return true;
 }
 

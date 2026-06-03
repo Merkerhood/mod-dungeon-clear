@@ -111,6 +111,28 @@ private:
     std::string data;
 };
 
+// Short token describing what the advance action did on its most recent tick:
+// "moving" (gliding the planned route), "pursuing" (closing directly on a live
+// boss / final approach), or "recovering" (wedged off the route and repathing).
+// Empty when the tank isn't actively navigating. DcStatusAction reads it to
+// report a fine-grained activity to the companion addon — the navigation
+// sub-states the coarse poll-time conditions (combat/loot/rest/stall) can't see
+// on their own. Stamped every advance tick so the ~2s status poll always reads
+// a fresh value; cleared on dc on / disable so a stale phase can't leak across
+// runs. Distinct from the user-facing addon state: a "route not built yet"
+// reading is derived at poll time, not stored here.
+class DungeonClearPhaseValue : public ManualSetValue<std::string&>
+{
+public:
+    DungeonClearPhaseValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::string&>(botAI, data, "dungeon clear phase")
+    {
+    }
+
+private:
+    std::string data;
+};
+
 class DungeonClearFallbackTargetValue : public ManualSetValue<ObjectGuid>
 {
 public:

@@ -526,6 +526,127 @@ bool DungeonClearUtil::IsAnyPartyMemberLooting(Player* bot)
     return false;
 }
 
+std::string DungeonClearUtil::DescribePartyNotReady(Player* bot,
+                                                    float minHpPct, float minMpPct,
+                                                    float maxSpread)
+{
+    if (!bot)
+        return "";
+    Group* group = bot->GetGroup();
+    if (!group)
+        return "";  // Solo tank — nobody to wait on.
+
+    // Keep the addon line short: name a few members, then collapse the rest.
+    constexpr size_t MAX_NAMED = 3;
+    std::vector<std::string> parts;
+    size_t extra = 0;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member)
+            continue;
+        if (member->GetMapId() != bot->GetMapId())
+            continue;
+        if (member->isDead())
+            continue;  // Dead members handled by the party-died trigger.
+
+        // Mirror IsPartyReady's checks, but record the limiting reason. Order
+        // matters only for which single reason we surface first; distance reads
+        // most intuitively, then health, then mana.
+        std::string reason;
+        if (member != bot && bot->GetDistance(member) > maxSpread)
+            reason = "out of range";
+        else if (member->GetHealthPct() < minHpPct)
+            reason = "low HP";
+        else if (member->getPowerType() == POWER_MANA)
+        {
+            uint32 const maxMp = member->GetMaxPower(POWER_MANA);
+            if (maxMp > 0)
+            {
+                float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
+                if (mpPct < minMpPct)
+                    reason = "low mana";
+            }
+        }
+
+        if (reason.empty())
+            continue;  // This member is ready — not blocking.
+
+        if (parts.size() < MAX_NAMED)
+            parts.push_back(member->GetName() + " (" + reason + ")");
+        else
+            ++extra;
+    }
+
+    if (parts.empty())
+        return "";
+
+    std::string out = "Waiting on ";
+    for (size_t i = 0; i < parts.size(); ++i)
+    {
+        if (i)
+            out += ", ";
+        out += parts[i];
+    }
+    if (extra)
+        out += " +" + std::to_string(extra) + " more";
+    return out;
+}
+
+std::string DungeonClearUtil::DescribePartyLooting(Player* bot)
+{
+    if (!bot)
+        return "";
+    Group* group = bot->GetGroup();
+    if (!group)
+        return "";
+
+    constexpr size_t MAX_NAMED = 3;
+    std::vector<std::string> names;
+    size_t extra = 0;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || member == bot)
+            continue;
+        if (!member->IsAlive())
+            continue;
+        if (member->GetMapId() != bot->GetMapId())
+            continue;
+
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI)
+            continue;  // Real player — we don't drive or wait on their loot.
+
+        AiObjectContext* memberCtx = memberAI->GetAiObjectContext();
+        if (!memberCtx->GetValue<bool>("can loot")->Get() &&
+            !memberCtx->GetValue<bool>("has available loot")->Get())
+            continue;
+
+        if (names.size() < MAX_NAMED)
+            names.push_back(member->GetName());
+        else
+            ++extra;
+    }
+
+    if (names.empty())
+        return "";
+
+    std::string out;
+    for (size_t i = 0; i < names.size(); ++i)
+    {
+        if (i)
+            out += ", ";
+        out += names[i];
+    }
+    if (extra)
+        out += " +" + std::to_string(extra) + " more";
+    out += " looting";
+    return out;
+}
+
 void DungeonClearUtil::StripSkippedLoot(PlayerbotAI* botAI)
 {
     if (!botAI)
