@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Creature.h"
+#include "DBCStores.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "Log.h"
@@ -24,6 +25,7 @@
 #include "PlayerbotAIConfig.h"
 #include "Position.h"
 #include "ServerFacade.h"
+#include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -94,11 +96,15 @@ namespace
     // corridor half-width, so this stays inside that band.
     constexpr float DC_DOOR_STOP_DISTANCE = 4.0f;
 
-    // Stretch goal: once parked at a blocking door, make a single best-effort
-    // attempt to open it ourselves via GameObject::Use (the same path a player
-    // click takes). A plain click-to-open door swings; a script/lever-gated one
-    // ignores the Use entirely. We deliberately never force the GO state, which
-    // would fight the instance's own door scripting. Flip to false to disable.
+    // Once parked at a blocking door, try to open it the way a player would:
+    // interact with GameObject::Use (the exact path a client right-click takes)
+    // — but ONLY when the bot is actually entitled to open it, as decided by
+    // BotCanOpenDoorLikePlayer (plain click-door, or it holds the key / has the
+    // required skill). The raw GameObject::Use door branch toggles the GO state
+    // with no lock check, so calling it unconditionally force-opens keyed and
+    // encounter doors the player has no business opening; the entitlement gate
+    // is what keeps us honest. Doors we can't open legitimately are left shut
+    // and we wait for the human. Flip to false to never auto-open anything.
     constexpr bool DC_ATTEMPT_DOOR_OPEN = true;
 
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
@@ -305,6 +311,66 @@ namespace
     {
         ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
+    }
+
+    // True if a player standing where the bot stands could open this door by
+    // interacting with it — i.e. it is a plain click-to-open door, or it is
+    // lock-gated and the bot satisfies the lock (holds the key item, or has the
+    // required skill such as lockpicking). Returns false for the doors a player
+    // can't click open: those flagged not-selectable (driven by instance/boss
+    // scripting — encounter gates, "kill the boss" doors) and locked doors the
+    // bot has no key/skill for.
+    //
+    // This is the gate that keeps the tank from force-opening keyed or encounter
+    // doors it has no business opening: GameObject::Use's door branch toggles
+    // the GO state with no lock check, so it must only ever be called on a door
+    // this returns true for. Mirrors the core lock logic in Spell::CanOpenLock /
+    // OpenLootAction::CanOpenLock.
+    bool BotCanOpenDoorLikePlayer(Player* bot, GameObject* go)
+    {
+        if (!bot || !go)
+            return false;
+        GameObjectTemplate const* info = go->GetGOInfo();
+        if (!info || info->type != GAMEOBJECT_TYPE_DOOR)
+            return false;
+        // Not-selectable doors can't be right-clicked by a player at all; they
+        // are opened by the instance/boss scripting. Never force them.
+        if (go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
+            return false;
+
+        uint32 const lockId = info->GetLockId();
+        if (!lockId)
+            return true;            // no requirement: a plain door, click opens it
+
+        LockEntry const* lock = sLockStore.LookupEntry(lockId);
+        if (!lock)
+            return false;           // unknown lock — don't force it open
+
+        for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
+        {
+            switch (lock->Type[i])
+            {
+                case LOCK_KEY_ITEM:
+                    // Needs the specific key in the bags (keys aren't consumed
+                    // by opening, so possession alone is the requirement).
+                    if (lock->Index[i] && bot->HasItemCount(lock->Index[i], 1))
+                        return true;
+                    break;
+                case LOCK_KEY_SKILL:
+                {
+                    SkillType const skill = SkillByLockType(LockType(lock->Index[i]));
+                    if (skill == SKILL_NONE)
+                        break;
+                    if (bot->HasSkill(skill) &&
+                        bot->GetSkillValue(skill) >= lock->Skill[i])
+                        return true;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        return false;               // locked, and the bot can't satisfy it
     }
 
     // Party-readiness gate for resuming the advance (HP/MP/spread). Loot is
@@ -1487,33 +1553,46 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
     std::string const stallReason =
-        "A door blocks the path to " + target + ". Open it and I'll resume; 'dc off' to stop.";
+        "A door blocks the path to " + target + " and I can't open it. Open it "
+        "and I'll resume; 'dc off' to stop.";
+    std::string const openingReason = "Opening the door to " + target + ".";
 
     ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, "dungeon clear blocking door");
     GameObject* door = doorGuid.IsEmpty() ? nullptr : botAI->GetGameObject(doorGuid);
 
-    // Stop here and wait for the door to open. On the FIRST tick we settle at a
-    // given door (the stall reason isn't being announced yet) take one
-    // best-effort swing at opening it ourselves — see DC_ATTEMPT_DOOR_OPEN.
-    // Throttling on the stall-reason transition keeps us from spamming Use()
-    // every tick on a door that won't budge.
+    // We've reached the door. Decide what a player in our shoes would do:
+    //   - openable (plain door, or we hold the key / have the skill): interact
+    //     with it the same way a client right-click does (GameObject::Use at
+    //     interaction range), then hold for the tick — the door swings open,
+    //     the blocking-door value empties next tick, and Advance resumes.
+    //   - not openable (locked with no key/skill, or a script/encounter door):
+    //     never touch the GO state; park and ask the human to open it.
+    // The Use() is throttled on the announced-reason transition so we don't
+    // re-click a door every tick; when Advance resumes it clears the reason, so
+    // a later re-close (autoclose doors) re-arms a fresh single attempt.
     auto parkAndStall = [&]()
     {
         if (bot->isMoving())
             bot->StopMoving();
-        if (door && DC_ATTEMPT_DOOR_OPEN)
+
+        bool const canOpen = DC_ATTEMPT_DOOR_OPEN && door &&
+                             BotCanOpenDoorLikePlayer(bot, door);
+        std::string const& reason = canOpen ? openingReason : stallReason;
+
+        if (canOpen)
         {
             std::string const& lastSaid =
                 context->GetValue<std::string&>("dungeon clear last said reason")->Get();
-            if (lastSaid != stallReason)
+            if (lastSaid != reason)
             {
                 LOG_INFO("playerbots.dungeonclear",
-                         "[DC:{}] door-blocked: attempting to open {} via Use()",
+                         "[DC:{}] door-blocked: opening {} as a player would (entitled)",
                          bot->GetName(), door->GetGUID().ToString());
                 door->Use(bot);
             }
         }
-        StallDungeonClear(botAI, stallReason);
+
+        StallDungeonClear(botAI, reason);
         return true;
     };
 
