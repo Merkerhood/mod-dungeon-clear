@@ -14,6 +14,7 @@
 #include "DetourExtended.h"   // dtQueryFilterExt
 #include "DetourNavMeshQuery.h"
 #include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "PathGenerator.h"    // NAV_* flags, VERTEX_SIZE, INVALID_POLYREF
 #include "Player.h"
 
@@ -27,6 +28,36 @@ namespace
     // sideways (it would shear the link off its endpoints). Horizontal hugging
     // along a ledge has no Z delta, so it is still centered normally.
     constexpr float JUMP_DZ = 1.8f;
+
+    // LOS-preservation constants, kept in lockstep with the producers'
+    // post-centering VMAP screen (StridedPathfinder / LongRangePathfinder).
+    // findDistanceToWall / OnMesh validate a push against the *navmesh*, which
+    // near a doorway is more permissive than the static door-frame geometry in
+    // the VMAP. So a push that stays on-mesh can still make the chord to a
+    // neighbour clip the jamb — and the producer's LOS screen then truncates
+    // the whole route just short of the door. We therefore re-check every
+    // accepted push against the VMAP and revert any that would break a
+    // sightline, so centering can never cause that truncation.
+    constexpr float LOS_Z_BUMP  = 1.5f;   // ~eye height, matches the producers
+    constexpr float LOS_MIN_HOP = 3.0f;   // sub-3yd hops are smoothing artifacts
+
+    // True iff the bot has a clear static-VMAP straight line between two world
+    // points. Short hops are treated as clear (they're Detour smoothing
+    // artifacts the producers also skip). A null map fails open (clear) so the
+    // guard never blocks centering when geometry can't be queried.
+    bool ChordClear(Player* bot, G3D::Vector3 const& a, G3D::Vector3 const& b)
+    {
+        float const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        if ((dx * dx + dy * dy + dz * dz) < (LOS_MIN_HOP * LOS_MIN_HOP))
+            return true;
+        Map const* map = bot->GetMap();
+        if (!map)
+            return true;
+        return map->isInLineOfSight(a.x, a.y, a.z + LOS_Z_BUMP,
+                                    b.x, b.y, b.z + LOS_Z_BUMP,
+                                    bot->GetPhaseMask(), LINEOFSIGHT_CHECK_VMAP,
+                                    VMAP::ModelIgnoreFlags::Nothing);
+    }
 
     // Modest A* pool for the convenience overload's own query. findDistanceTo
     // Wall / findNearestPoly are local searches — they do not need the
@@ -92,7 +123,12 @@ namespace
 
                 G3D::Vector3 avg = src[i - 1] * 0.25f + src[i] * 0.5f + src[i + 1] * 0.25f;
                 bot->UpdateAllowedPositionZ(avg.x, avg.y, avg.z);
-                if (OnMesh(query, filter, avg))
+                // On-mesh AND sightline-preserving: an average that drifts the
+                // point across a doorjamb stays on the navmesh but would clip
+                // the frame in the VMAP, so screen it against both neighbours
+                // (pts[i-1] is this pass's already-committed value).
+                if (OnMesh(query, filter, avg) &&
+                    ChordClear(bot, pts[i - 1], avg) && ChordClear(bot, avg, src[i + 1]))
                     pts[i] = avg;
             }
         }
@@ -163,12 +199,22 @@ void CorridorCenter::Center(dtNavMeshQuery const* query, dtQueryFilter const* fi
 
         // Re-pin to a walkable Z and re-validate on-mesh; halve the push twice
         // before giving up, so a slightly-too-far nudge degrades gracefully.
+        // The push must ALSO keep the chords to both neighbours clear in the
+        // VMAP — otherwise a navmesh-legal nudge near a doorway shoves the
+        // approach off-axis, the chord clips the jamb, and the producer's LOS
+        // screen truncates the route right before the door (the stutter-step-
+        // up-to-the-door bug). pts[i-1] is already centred; pts[i+1] is still
+        // its original taut value (processed next iteration). Halving the push
+        // on a blocked chord lets a slightly-too-far nudge settle to a clean
+        // offset instead of reverting all the way to the wall-hugging point.
         G3D::Vector3 accepted = pts[i];
         for (int attempt = 0; attempt < 3; ++attempt)
         {
             G3D::Vector3 test = cand;
             bot->UpdateAllowedPositionZ(test.x, test.y, test.z);
-            if (OnMesh(query, filter, test))
+            if (OnMesh(query, filter, test) &&
+                ChordClear(bot, pts[i - 1], test) &&
+                ChordClear(bot, test, pts[i + 1]))
             {
                 accepted = test;
                 break;
