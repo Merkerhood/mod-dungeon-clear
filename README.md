@@ -5,6 +5,20 @@ drop-in AzerothCore module. A tank bot drives the party from boss to boss,
 clearing blocking trash, pathing around the dungeon, pausing for loot, and
 handling doors/stalls along the way.
 
+> 📺 **Looking for the in-game addon?** Jump to [Companion addon](#companion-addon),
+> or grab it directly from
+> [github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon).
+
+> ## ❗ Important: use the companion addon
+>
+> The [companion addon](#companion-addon) is the **preferred way to interact with
+> this module.** It gives you a movable in-game panel with buttons for On / Off /
+> Skip / Pause, a live status readout, and a per-boss list — no need to memorize
+> or type `dc`/`.dc` chat commands. Install it from
+> [github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon).
+> The chat keywords and `.dc` command still work and are documented below, but the
+> addon is what we recommend for driving and monitoring a clear.
+
 ## Requirements
 
 - **mod-playerbots** must be installed and enabled. This is an *extension* of the
@@ -68,18 +82,21 @@ play one of the followers instead.
 
 ## Companion addon
 
-`mod-dungeon-clear-addon` is a client-side WoW addon (interface 30300, patch
-3.3.5a) that gives the feature a movable in-game panel instead of typing
-`dc`/`.dc` commands. It is **optional**: everything it does is also reachable
-via chat keywords and the `.dc` command, but it's the recommended way to drive
-and monitor a clear.
+[**mod-dungeon-clear-addon**](https://github.com/jrad7/mod-dungeon-clear-addon)
+is a client-side WoW addon (interface 30300, patch 3.3.5a) that gives the
+feature a movable in-game panel instead of typing `dc`/`.dc` commands. It is the
+**recommended way to drive and monitor a clear**: everything it does is also
+reachable via chat keywords and the `.dc` command, but the panel is far easier
+to use.
 
 ### Install
 
-Copy the `DungeonClear` addon folder (`DungeonClear.toc` + `DungeonClear.lua`)
-into your client's `Interface/AddOns/` directory, then enable **DungeonClear**
-on the character-select AddOns list. No server-side install is needed beyond the
-module itself.
+Download it from
+[github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon),
+then copy the `DungeonClear` addon folder (`DungeonClear.toc` +
+`DungeonClear.lua`) into your client's `Interface/AddOns/` directory and enable
+**DungeonClear** on the character-select AddOns list. No server-side install is
+needed beyond the module itself.
 
 ### Use
 
