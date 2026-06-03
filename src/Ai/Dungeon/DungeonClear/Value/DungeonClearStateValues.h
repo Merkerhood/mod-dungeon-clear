@@ -357,6 +357,35 @@ private:
     std::map<ObjectGuid, uint32> data;
 };
 
+// The loot GUID the bot is currently "camped" on — within interaction range
+// (can-loot true) of one specific corpse — together with the ms timestamp at
+// which it arrived. DungeonClearUtil::MaybeGiveUpCampedLoot uses the pair to
+// time how long the bot has stood on the SAME corpse: a normal loot
+// transaction clears in a tick or two, so camping a plain (non-gathering)
+// corpse much longer means its loot is un-finishable (group-roll items pending
+// a real player's roll, items reserved for others, bags full). Past the camp
+// cutoff the corpse is blacklisted at once instead of burning the full
+// loot-yield timeout on it — the "stuck on certain corpses" stall. Empty / 0
+// whenever the bot isn't standing on a corpse (resets every tick can-loot is
+// false), so a new corpse starts a fresh clock.
+class DungeonClearLootCampGuidValue : public ManualSetValue<ObjectGuid>
+{
+public:
+    DungeonClearLootCampGuidValue(PlayerbotAI* botAI)
+        : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear loot camp guid")
+    {
+    }
+};
+
+class DungeonClearLootCampStartValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearLootCampStartValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear loot camp start")
+    {
+    }
+};
+
 // Cursor into the cached long-path's flattened polyline plus the
 // off-path tick counter. Reset whenever the path is rebuilt (boss
 // change, TTL expiry, forced rebuild). The follower keeps this in sync

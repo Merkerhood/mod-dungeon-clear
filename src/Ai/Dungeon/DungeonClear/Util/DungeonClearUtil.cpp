@@ -579,6 +579,60 @@ void DungeonClearUtil::GiveUpCurrentLoot(PlayerbotAI* botAI, uint32 ttlMs)
     skip[guid] = getMSTime() + ttlMs;
 }
 
+bool DungeonClearUtil::MaybeGiveUpCampedLoot(PlayerbotAI* botAI, uint32 campTimeoutMs, uint32 giveUpTtlMs)
+{
+    if (!botAI)
+        return false;
+
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+    ObjectGuid& campGuid = ctx->GetValue<ObjectGuid>("dungeon clear loot camp guid")->RefGet();
+
+    // Only meaningful once the bot is standing in interaction range of a corpse
+    // (can-loot true). While merely walking toward one (has-available-loot), the
+    // broader loot-yield timeout — which budgets for the walk — applies instead.
+    if (!ctx->GetValue<bool>("can loot")->Get())
+    {
+        campGuid = ObjectGuid::Empty;  // not camping -> reset the clock
+        return false;
+    }
+
+    LootObject const target = ctx->GetValue<LootObject>("loot target")->Get();
+    if (target.guid.IsEmpty())
+    {
+        campGuid = ObjectGuid::Empty;
+        return false;
+    }
+
+    // Gathering nodes (skinning / mining / herbalism) carry a non-zero skillId
+    // and a legitimate multi-second cast — don't mistake the channel for a stuck
+    // corpse. Only plain creature / chest loot is subject to the camp cutoff.
+    if (target.skillId != 0)
+        return false;
+
+    uint32& campStart = ctx->GetValue<uint32>("dungeon clear loot camp start")->RefGet();
+    uint32 const now = getMSTime();
+
+    if (campGuid != target.guid)
+    {
+        // Just arrived at a (new) corpse -> start its camp clock.
+        campGuid = target.guid;
+        campStart = now;
+        return false;
+    }
+
+    if (now - campStart < campTimeoutMs)
+        return false;  // still within the brief grace a normal pickup needs
+
+    // Standing on the same corpse, in range, well past a normal loot's window:
+    // its loot is un-finishable for this bot. Blacklist it now and strip it so
+    // the loot flags drop this tick, instead of burning the full loot-yield
+    // timeout (and, for the tank, holding the whole party) on it.
+    GiveUpCurrentLoot(botAI, giveUpTtlMs);
+    StripSkippedLoot(botAI);
+    campGuid = ObjectGuid::Empty;
+    return true;
+}
+
 void DungeonClearUtil::SendAddonMessage(PlayerbotAI* botAI, std::string const& msg)
 {
     Player* bot = botAI->GetBot();

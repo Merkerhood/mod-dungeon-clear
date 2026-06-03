@@ -174,6 +174,19 @@ namespace
     // resolved in the meantime.
     constexpr uint32 DC_LOOT_GIVEUP_TTL_MS = 60 * 1000;
 
+    // Camp cutoff: how long the bot may stand within interaction range of ONE
+    // plain corpse (can-loot true) before we treat its loot as un-finishable and
+    // skip it (see DungeonClearUtil::MaybeGiveUpCampedLoot). Unlike the yield
+    // timeout above — which budgets for walking in from lootDistance — this
+    // clock starts only once the bot has arrived, where a real pickup resolves
+    // in a tick or two. Bots park on corpses whose loot they can never take
+    // (group-roll items pending a real player's roll, items reserved for others,
+    // bags full); without this they burned the full 15s yield timeout on each
+    // such corpse, and the tank — which holds its advance while any follower is
+    // looting — stalled the whole party for it. 3s clears a normal auto-loot
+    // comfortably while cutting the dead time on a stuck corpse 5x.
+    constexpr uint32 DC_LOOT_CAMP_TIMEOUT_MS = 3 * 1000;
+
     // Recovery moves run when the bot is wedged off the navmesh or has
     // failed to make progress for DC_STUCK_TICK_LIMIT consecutive ticks.
     // Single-player server only — the teleport blink is visible to other
@@ -620,6 +633,10 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // corpse this tick, so the flags below and the timeout's give-up stay in
     // sync and the yield doesn't re-arm on something we just abandoned.
     DungeonClearUtil::StripSkippedLoot(botAI);
+    // Fast-skip a corpse we've been camped on too long (un-lootable) before it
+    // can burn the full yield timeout below; followers do the same in their
+    // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
+    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =
@@ -1705,6 +1722,11 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // re-arm the yield each time it drifts back within lootDistance of the
     // tank — the corpse<->tank ping-pong.
     DungeonClearUtil::StripSkippedLoot(botAI);
+    // Fast-skip a corpse this follower has been camped on too long instead of
+    // waiting out the full yield timeout: an un-finishable corpse (group-roll
+    // items pending, bags full) otherwise wastes 15s here AND keeps the tank's
+    // IsAnyPartyMemberLooting true, stalling the whole party on it.
+    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =

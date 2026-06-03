@@ -96,6 +96,22 @@ public:
     // Looting waiting on a follower — that follower gives up its own loot).
     static void GiveUpCurrentLoot(PlayerbotAI* botAI, uint32 ttlMs);
 
+    // Fast-skips a corpse the bot has been "camped" on — standing within
+    // interaction range (can-loot true) of one specific plain corpse — for
+    // longer than campTimeoutMs. A normal loot transaction clears in a tick or
+    // two once the bot is in range, so a long camp means the loot is
+    // un-finishable for this bot (group-roll items pending a real player's roll,
+    // items reserved for others, bags full). Rather than waiting out the much
+    // longer loot-yield timeout on every such corpse — the "stuck on certain
+    // corpses" stall — this blacklists it for giveUpTtlMs and strips it right
+    // away so the loot flags drop this tick. Gathering nodes (skinning / mining
+    // / herbalism) are exempt: their multi-second cast is legitimate camping.
+    // Tracks the camped GUID + arrival time in the "dungeon clear loot camp *"
+    // values; resets them whenever the bot isn't in range of a corpse. Returns
+    // true when it skipped a corpse this call. Module-only: mutates stock loot
+    // values via GiveUpCurrentLoot / StripSkippedLoot, never stock code.
+    static bool MaybeGiveUpCampedLoot(PlayerbotAI* botAI, uint32 campTimeoutMs, uint32 giveUpTtlMs);
+
     // Returns true if at least one navigable chunk of the path to (x, y, z)
     // exists. Delegates to ChunkedPathfinder::IsReachable, which is more
     // permissive than the legacy strict-PATHFIND_NORMAL check — partial
