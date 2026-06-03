@@ -615,15 +615,17 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
 
     context->GetValue<Unit*>("current target")->Set(target);
     bot->Attack(target, melee);
-    // Non-aggressive bosses won't aggro just because the tank is standing in
-    // melee range, and bot->Attack() alone doesn't reciprocate combat until a
-    // swing lands — which stock combat targeting can drop the target before.
-    // Without a ranged pull, the proximity walk-in then never actually engages.
-    // Force the creature into combat with us so the pull is deterministic
-    // instead of relying on proximity aggro. Harmless for already-hostile mobs:
-    // they'd enter combat anyway, and EngageWithTarget only seeds 0 threat.
+    // Non-aggressive ("yellow"-name, neutral) bosses won't aggro just because
+    // the tank is standing in melee range, and bot->Attack() alone doesn't
+    // reciprocate combat until a swing lands — which stock combat targeting can
+    // drop the target before. Without a ranged pull, the proximity walk-in then
+    // never actually engages. Force such a creature into combat with us so the
+    // pull is deterministic. Scoped to non-hostile targets only: a "red"-name
+    // hostile mob (IsHostileTo, reaction <= REP_HOSTILE) aggros on its own, so
+    // we leave its natural pull untouched.
     if (Creature* creature = target->ToCreature())
-        creature->EngageWithTarget(bot);
+        if (!bot->IsHostileTo(creature))
+            creature->EngageWithTarget(bot);
     botAI->ChangeEngine(BOT_STATE_COMBAT);
     botAI->SetNextCheckDelay(sPlayerbotAIConfig.reactDelay);
     return true;
