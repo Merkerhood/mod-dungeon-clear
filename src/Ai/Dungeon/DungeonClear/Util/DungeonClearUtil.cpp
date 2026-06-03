@@ -602,7 +602,7 @@ std::string DungeonClearUtil::DescribePartyLooting(Player* bot)
     if (!group)
         return "";
 
-    constexpr size_t MAX_NAMED = 3;
+    constexpr size_t MAX_NAMED = 1;
     std::vector<std::string> names;
     size_t extra = 0;
 
