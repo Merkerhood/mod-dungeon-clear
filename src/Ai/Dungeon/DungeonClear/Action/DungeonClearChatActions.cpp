@@ -356,10 +356,10 @@ bool DcStatusAction::Execute(Event event)
             std::string const who = DungeonClearUtil::DescribePartyLooting(bot);
             detail = who.empty() ? "Collecting loot." : (who + ".");
         }
-        else if (!DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, 40.0f))
+        else if (!DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, 30.0f))
         {
             stateStr = "resting";
-            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, 40.0f);
+            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, 30.0f);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else
