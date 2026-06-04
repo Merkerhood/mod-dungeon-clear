@@ -377,6 +377,38 @@ float DungeonClearUtil::BossEngageRange(Player* bot, AiObjectContext* ctx,
     return range;
 }
 
+bool DungeonClearUtil::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
+                                      DungeonBossInfo const& boss, float staticRange)
+{
+    if (!bot || !ctx)
+        return false;
+
+    Creature* live = GetLiveBoss(bot, ctx, boss.entry);
+    float const bx = live ? live->GetPositionX() : boss.x;
+    float const by = live ? live->GetPositionY() : boss.y;
+    float const bz = live ? live->GetPositionZ() : boss.z;
+
+    // Straight-line aggro-bubble gate (same value the trigger ladder reads).
+    if (bot->GetDistance(bx, by, bz) >= BossEngageRange(bot, ctx, boss, staticRange))
+        return false;
+
+    // Floor guard: a 3D-close boss on a different vertical level — the tank
+    // passing *under* a ledge/upper-floor boss en route to the ramp — is NOT
+    // navigationally arrived. IsLevelReachable short-circuits true for a boss on
+    // the tank's own level (dz within tolerance, the common case → no probe
+    // cost), and otherwise confirms an actual ground path that ends on the
+    // boss's level. A boss directly overhead fails that probe (PathGenerator
+    // clamps the straight-up destination back to the tank's own floor), so the
+    // handoff is deferred and the advance action keeps walking the route up to
+    // the boss's floor, where dz collapses and the pull fires for real. Skipped
+    // when the boss isn't loaded (static coords, necessarily far — there is no
+    // under-the-ledge case to guard against).
+    if (live && !IsLevelReachable(bot, live))
+        return false;
+
+    return true;
+}
+
 bool DungeonClearUtil::IsReachable(Player* bot, float x, float y, float z)
 {
     // Delegate to the chunked pathfinder. Strict PATHFIND_NORMAL was too

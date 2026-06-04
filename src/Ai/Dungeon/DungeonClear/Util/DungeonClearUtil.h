@@ -97,6 +97,18 @@ public:
     static float BossEngageRange(Player* bot, AiObjectContext* ctx,
                                  DungeonBossInfo const& boss, float staticRange);
 
+    // True when the tank is close enough AND on a navigable level with the boss
+    // to hand off from route-following to the decisive engage pull. The 3D
+    // distance alone (BossEngageRange) treats a boss one floor up/down as
+    // "arrived" while the tank is still running underneath it to reach the ramp
+    // — which parks the tank under the boss forever ("boss is close", never
+    // pulls). This adds the trash scan's level-reachability probe so the handoff
+    // is deferred until the route lifts the tank onto the boss's own floor. The
+    // at-boss trigger, the blocking-trash trigger, and the advance action MUST
+    // all gate on this so they agree on "are we at the boss".
+    static bool IsAtBossEngage(Player* bot, AiObjectContext* ctx,
+                               DungeonBossInfo const& boss, float staticRange);
+
     // The HP/mana percentages the between-pulls rest gate (IsPartyReady) holds
     // for. These are NOT fixed: they are clamped to mod-playerbots' own drink/eat
     // stop thresholds (AiPlayerbot.AlmostFullHealth / AiPlayerbot.HighMana). A

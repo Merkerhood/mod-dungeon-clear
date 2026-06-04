@@ -60,19 +60,6 @@ namespace
         return AI_VALUE(bool, "dungeon clear enabled") && !AI_VALUE(bool, "dungeon clear paused");
     }
 
-    // Distance from the bot to the boss's LIVE creature position when it is
-    // loaded on the map, else to its static DB spawn coords. The advance action
-    // pursues this same effective position, so the trigger ladder and the action
-    // must agree on "are we at the boss yet" — otherwise a wandering/patrolling
-    // boss that has left its spawn anchor makes the action keep walking while the
-    // at-boss trigger thinks it has arrived (or vice versa).
-    float BossEngageDistance(Player* bot, AiObjectContext* context, DungeonBossInfo const& boss)
-    {
-        if (Creature* live = DungeonClearUtil::GetLiveBoss(bot, context, boss.entry))
-            return bot->GetDistance(live->GetPositionX(), live->GetPositionY(), live->GetPositionZ());
-        return bot->GetDistance(boss.x, boss.y, boss.z);
-    }
-
     bool IsBetweenPullsReady(Player* bot, AiObjectContext* context)
     {
         if (AI_VALUE(bool, "has available loot"))
@@ -120,9 +107,9 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!next.has_value())
         return false;
 
-    float const engageRange =
-        DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
-    if (BossEngageDistance(bot, context, *next) >= engageRange)
+    // Close enough AND on the boss's own floor (not just 3D-near while passing
+    // under an upper-floor boss). See IsAtBossEngage.
+    if (!DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
         return false;
 
     // When the long-path cache is anchored (registered route), make sure
@@ -169,10 +156,11 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     if (!next.has_value())
         return false;
 
-    // Within engage range of the live boss, at-boss trigger handles the pull.
-    float const engageRange =
-        DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
-    if (BossEngageDistance(bot, context, *next) < engageRange)
+    // At the boss (close AND on its floor), the at-boss trigger handles the
+    // pull — don't also scan for blocking trash. While merely passing under an
+    // upper-floor boss this is false, so trash on the way to the ramp still gets
+    // cleared. See IsAtBossEngage.
+    if (DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE))
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.

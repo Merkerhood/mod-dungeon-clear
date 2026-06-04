@@ -865,6 +865,14 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     float const engageRange =
         DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
 
+    // "At the boss" for the route->engage handoff: close enough AND on the
+    // boss's own floor. Distinct from engageDist < engageRange (pure 3D), which
+    // is true while the tank passes UNDER an upper-floor boss en route to the
+    // ramp — honoring it there stops the tank dead under the boss forever. Must
+    // match the trigger ladder, which gates on the same predicate.
+    bool const atBoss =
+        DungeonClearUtil::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
+
     // Dead-end escalation counter (see DC_DONE_NOT_ENGAGED_LIMIT). Cleared the
     // moment we're back inside engage range so it only ever counts a continuous
     // run of "path done but boss still out of reach" ticks for one approach.
@@ -879,12 +887,13 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
     }
 
-    // Already in engage range of the (live) boss AND no anchored intermediate
-    // hops remain unresolved → stop walking and let the at-boss trigger fire the
-    // pull. With anchored routes the bot may be geometrically near the boss but
-    // still on the wrong side of a wall; we keep walking in that case until
-    // anchors are cleared.
-    if (engageDist < engageRange)
+    // At the boss (close, on its floor) AND no anchored intermediate hops remain
+    // unresolved → stop walking and let the at-boss trigger fire the pull. With
+    // anchored routes the bot may be geometrically near the boss but still on the
+    // wrong side of a wall; we keep walking in that case until anchors are
+    // cleared. Likewise a boss one floor up is 3D-near but not atBoss, so the
+    // tank keeps walking the route up to its level instead of parking underneath.
+    if (atBoss)
     {
         ChunkedPathfinder::Result const& currentPath =
             AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
