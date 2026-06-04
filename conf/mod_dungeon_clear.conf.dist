@@ -40,6 +40,18 @@ DungeonClear.PreventBotRelease = 1
 
 DungeonClear.LootMinQuality = 0
 
+#
+#    DungeonClear.PartyMaxSpread
+#        Max distance (yards) the tank may lead a party member while clearing
+#        before it holds its advance and waits for everyone to catch up. Lower
+#        keeps the party tighter (safer pulls, less straggling) at the cost of
+#        the tank pausing more often; higher lets the tank push ahead further.
+#
+#        Default: 25.0
+#
+
+DungeonClear.PartyMaxSpread = 25.0
+
 ########################################
 # DEBUGGING SETTINGS
 ########################################

@@ -19,7 +19,7 @@ float DungeonClearMultiplier::GetValue(Action* action)
         return 1.0f;
 
     // The tank leads the clear — it must never follow its master. When Advance
-    // yields to wait for the party to catch up (party spread > DC_PARTY_MAX_SPREAD)
+    // yields to wait for the party to catch up (party spread > DungeonClear.PartyMaxSpread)
     // it StopMoving()s and parks; without this, the stock FollowAction (relevance
     // 1.0) then wins the idle tick and walks the tank BACK toward the stationary
     // player, who is now in range again, so next tick Advance runs it forward to
