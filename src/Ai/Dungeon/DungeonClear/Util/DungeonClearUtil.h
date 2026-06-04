@@ -151,6 +151,14 @@ public:
     // MaybeGiveUpCampedLoot: creature loot is generated at kill time, so the
     // contents are knowable without opening the corpse.
     //
+    // Drains EVERY in-range unworthy corpse in one call, not just the nearest:
+    // it re-evaluates the now-nearest pickup after each skip and repeats until
+    // the nearest is worth a stop (or there is none left). This keeps the tank
+    // from stutter-stopping once per skipped corpse when it backtracks through a
+    // field of below-floor corpses — with all of them stripped in a single tick,
+    // "has available loot" never stays armed for loot the bot won't take, so the
+    // advance walks straight through, held only by the party-spread gate.
+    //
     // A corpse is skipped when it holds nothing this bot can take, which is two
     // overlapping cases:
     //   - un-finishable: every unlooted item is locked in a group-loot roll the
@@ -167,8 +175,8 @@ public:
     // chests, gameobjects and item loot are left to stock (returns false). The
     // check is deliberately conservative — it skips only when confident nothing
     // is takeable — because a false skip drops real loot, whereas a missed skip
-    // merely falls back to the existing timeout. Returns true when it skipped a
-    // corpse this call. Module-only: mutates stock loot values via
+    // merely falls back to the existing timeout. Returns true when it skipped at
+    // least one corpse this call. Module-only: mutates stock loot values via
     // GiveUpCurrentLoot / StripSkippedLoot, never stock code.
     static bool MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTtlMs);
 

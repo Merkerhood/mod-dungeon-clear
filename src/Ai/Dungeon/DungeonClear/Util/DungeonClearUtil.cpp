@@ -855,35 +855,55 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI, uint32 giveUpTt
     Player* bot = botAI->GetBot();
     AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-    // The corpse we're about to commit to: stock's chosen target if set, else
-    // the nearest in the stack (what `loot` would pick next). This is the same
-    // selection GiveUpCurrentLoot blacklists, so the two stay aligned.
-    LootObject target = ctx->GetValue<LootObject>("loot target")->Get();
-    if (target.guid.IsEmpty())
-        if (LootObjectStack* stack = ctx->GetValue<LootObjectStack*>("available loot")->Get())
-            target = stack->GetLoot(sPlayerbotAIConfig.lootDistance);
-    if (target.guid.IsEmpty())
-        return false;  // nothing pending to judge
-
-    // Gathering nodes carry a skillId and a legitimate cast; chests / GOs / item
-    // loot we don't introspect this way. Only plain creature corpses are judged.
-    if (target.skillId != 0)
-        return false;
-    Creature* creature = botAI->GetCreature(target.guid);
-    if (!creature)
-        return false;
-
     uint32 const minQuality = sConfigMgr->GetOption<uint32>("DungeonClear.LootMinQuality", 0);
 
-    if (CorpseHasTakeableLoot(bot, creature, minQuality))
-        return false;  // worth a stop -> let the loot pipeline run
+    // Drain EVERY in-range unworthy corpse this tick, not just the single
+    // nearest. Each pass judges the loot the bot would commit to next — stock's
+    // chosen target if set, else the nearest in the stack (the same selection
+    // GiveUpCurrentLoot blacklists, so the two stay aligned). When that corpse
+    // is below the floor, we blacklist + strip it so the loot flags drop for it,
+    // then re-evaluate the now-nearest remaining corpse and repeat.
+    //
+    // Judging only one per tick (the old behavior) made the tank stutter when
+    // backtracking through a field of skipped corpses: it stripped one corpse
+    // but "has available loot" stayed true for the rest, so the advance loot-
+    // yield halted it (StopMoving) for as many ticks as there were corpses. By
+    // clearing them all in a single tick the tank never stops for loot it won't
+    // take — it walks straight through, held only by the party-spread gate. The
+    // loop terminates because every skip removes the corpse from the stack (via
+    // StripSkippedLoot), so GetLoot can't return it again; the cap is a belt-
+    // and-braces guard against an unexpectedly large cluster.
+    bool skippedAny = false;
+    constexpr int kMaxDrain = 32;
+    for (int i = 0; i < kMaxDrain; ++i)
+    {
+        LootObject target = ctx->GetValue<LootObject>("loot target")->Get();
+        if (target.guid.IsEmpty())
+            if (LootObjectStack* stack = ctx->GetValue<LootObjectStack*>("available loot")->Get())
+                target = stack->GetLoot(sPlayerbotAIConfig.lootDistance);
+        if (target.guid.IsEmpty())
+            break;  // nothing left to judge
 
-    // Nothing here for us -> blacklist + strip now so the loot flags drop this
-    // tick and the bot skips the detour entirely (the proactive analogue of the
-    // camp/yield timeouts firing after a wasted walk).
-    GiveUpCurrentLoot(botAI, giveUpTtlMs);
-    StripSkippedLoot(botAI);
-    return true;
+        // Gathering nodes carry a skillId and a legitimate cast; chests / GOs /
+        // item loot we don't introspect this way. A gathering node as the
+        // nearest pickup means the bot should stop for it -> stop draining.
+        if (target.skillId != 0)
+            break;
+        Creature* creature = botAI->GetCreature(target.guid);
+        if (!creature)
+            break;  // can't classify the nearest -> let the pipeline handle it
+
+        if (CorpseHasTakeableLoot(bot, creature, minQuality))
+            break;  // nearest is worth a stop -> let the loot pipeline run
+
+        // Nothing here for us -> blacklist + strip now so the loot flags drop
+        // this tick and the bot skips the detour entirely (the proactive
+        // analogue of the camp/yield timeouts firing after a wasted walk).
+        GiveUpCurrentLoot(botAI, giveUpTtlMs);
+        StripSkippedLoot(botAI);
+        skippedAny = true;
+    }
+    return skippedAny;
 }
 
 void DungeonClearUtil::SendAddonMessage(PlayerbotAI* botAI, std::string const& msg)
