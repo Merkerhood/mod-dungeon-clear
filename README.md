@@ -1,64 +1,41 @@
 # mod-dungeon-clear
 
 Autonomous dungeon-clearing mode for **mod-playerbots** tank bots, packaged as a
-drop-in AzerothCore module. A tank bot drives the party from boss to boss,
-clearing blocking trash, pathing around the dungeon, pausing for loot, and
-handling doors/stalls along the way.
+drop-in AzerothCore module. A tank bot drives the party from boss to boss —
+clearing blocking trash, pathing around the layout, pausing for loot, and
+handling doors and stalls along the way. You sit back, deal damage, and let the
+tank run the dungeon; no need to lead pulls or remember the route.
 
-## The problem
-
-You want to relax during dungeons. You want to sit back and deal damage — not
-shoulder the navigation, not lead every pull, not be the one who has to know the
-route. And after time away from a dungeon, the route is exactly the thing that
-slips your mind: which way to the first boss, which packs to clear, which turns
-lead nowhere. The moment-to-moment work of *running* the dungeon gets in the way
-of enjoying it.
-
-## The solution
-
-**mod-dungeon-clear.** A tank bot takes over the dungeon for you. It navigates
-from boss to boss and clears a path as it goes — pulling the trash that blocks
-the way, pathing around the layout, pausing for loot, and working through doors
-and stalls without supervision. You no longer need to remember the route or lead
-the pulls. You sit back, deal your damage, and let the tank drive the clear.
-
-> 📺 **Looking for the in-game addon?** Jump to [Companion addon](#companion-addon),
-> or grab it directly from
-> [github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon).
-
-> ## ❗ Important: use the companion addon
+> ## ❗ Use the companion addon
 >
-> The [companion addon](#companion-addon) is the **preferred way to interact with
-> this module.** It gives you a movable in-game panel with buttons for On / Off /
-> Skip / Pause, a live status readout, and a per-boss list — no need to memorize
-> or type `dc`/`.dc` chat commands. Install it from
-> [github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon).
-> The chat keywords and `.dc` command still work and are documented below, but the
-> addon is what we recommend for driving and monitoring a clear.
+> [**mod-dungeon-clear-addon**](https://github.com/jrad7/mod-dungeon-clear-addon)
+> is the recommended way to drive a clear: a movable in-game panel with On / Off
+> / Skip / Pause buttons, a live status readout, and a per-boss list. The `dc`
+> chat keywords and `.dc` command still work and are documented below, but the
+> addon is far easier. See [Companion addon](#companion-addon).
 
 ## Requirements
 
-- **mod-playerbots** must be installed and enabled. This is an *extension* of the
+- **mod-playerbots** installed and enabled. This is an *extension* of the
   playerbots AI engine, not a standalone module; it subclasses playerbots'
   strategy/action/trigger/value classes and links against them.
-- Works against a **stock, unmodified mod-playerbots** checkout: no playerbots
-  source edits are required. See [How it integrates](#how-it-integrates).
+- Works against a **stock, unmodified mod-playerbots** checkout — no playerbots
+  source edits required. See [How it integrates](#how-it-integrates).
 
 ## Install
 
-1. Clone into `modules/`:
-   ```
-   modules/mod-dungeon-clear/
-   ```
+1. Clone into `modules/mod-dungeon-clear/`.
 2. Re-run CMake and rebuild the worldserver (`-DMODULES=static`).
-3. Copy `conf/mod_dungeon_clear.conf.dist` → `mod_dungeon_clear.conf` in your
-   config dir (optional; only affects the DungeonClear log channel).
+3. Optionally copy `conf/mod_dungeon_clear.conf.dist` → `mod_dungeon_clear.conf`
+   (only affects the DungeonClear log channel).
 
 ## Usage
 
-Both input methods control the same behaviour. Drive the **tank** bot:
+Both input methods control the same behaviour and act on the group's **tank**
+bot. Commands must come from a real player in the bot's group; `.dc on` requires
+being inside a dungeon.
 
-| Slash command (any time, no config) | In-party chat keyword |
+| Slash command | In-party chat keyword |
 |---|---|
 | `.dc on` | `dc on` / `dungeon clear on` |
 | `.dc off` | `dc off` / `dungeon clear off` |
@@ -66,92 +43,54 @@ Both input methods control the same behaviour. Drive the **tank** bot:
 | `.dc status` | `dc status` |
 | `.dc bosses` | `dc bosses` |
 
-- The command must be issued by a real player in the bot's group; `.dc on`
-  requires being inside a dungeon and acts on the group's tank bot.
-- **Chat keywords + follow-tank need the `dungeon clear` strategy applied.** The
-  module's login hook applies it automatically to bots present at login, but the
-  reliable universal path, and the **only** one that reaches a self-bot created
-  mid-session via `.playerbots bot self`, is the playerbots config. Add this to
-  your deployed `playerbots.conf` (both fields, so player-bots, random bots and
-  self-bots are all covered):
-  ```
-  AiPlayerbot.NonCombatStrategies       = "+dungeon clear"
-  AiPlayerbot.RandomBotNonCombatStrategies = "+dungeon clear"
-  ```
-  The `.dc` slash command always works regardless. Non-tank party bots follow
-  the tank only while the tank has dungeon clear enabled, then revert to the
-  player automatically.
+The `.dc` slash command always works. **Chat keywords and follow-tank need the
+`dungeon clear` strategy applied** — the login hook applies it to bots present
+at login, but the only path that reaches a self-bot created mid-session is the
+playerbots config. Add to your deployed `playerbots.conf`:
+
+```
+AiPlayerbot.NonCombatStrategies          = "+dungeon clear"
+AiPlayerbot.RandomBotNonCombatStrategies = "+dungeon clear"
+```
+
+Non-tank party bots follow the tank only while it has dungeon clear enabled,
+then revert to the player automatically.
 
 ### You can't play *as* the tank with dungeon clear on
 
-Dungeon clear drives the **tank bot's** AI; it steers movement, pulls, and
-loots on the tank's behalf. The party's tank therefore has to be a bot, not
-your own character: if you're personally controlling the tank, the AI and you
-fight over the same character and movement stutters/fails.
-
-The one exception is **self-bot mode**. If you turn your own character into a
-self-bot (`.playerbots bot self`) and let the bot AI drive, your character *is*
-the tank bot and dungeon clear works on it normally. Self-bots are built from
-the playerbots config, so reaching them requires the `NonCombatStrategies`
-config above (the login hook can't catch a bot created mid-session). For a
-human who keeps hands on the keyboard, roll the tank as a normal player bot and
-play one of the followers instead.
+Dungeon clear drives the **tank bot's** AI, so the tank must be a bot — if you
+personally control the tank, the AI and you fight over the same character and
+movement breaks. The exception is **self-bot mode**: turn your own character
+into a self-bot (`.playerbots bot self`) and let the AI drive, and dungeon clear
+works on it normally (self-bots need the `NonCombatStrategies` config above). If
+you want hands on the keyboard, roll the tank as a normal player bot and play a
+follower instead.
 
 ## Companion addon
 
 [**mod-dungeon-clear-addon**](https://github.com/jrad7/mod-dungeon-clear-addon)
-is a client-side WoW addon (interface 30300, patch 3.3.5a) that gives the
-feature a movable in-game panel instead of typing `dc`/`.dc` commands. It is the
-**recommended way to drive and monitor a clear**: everything it does is also
-reachable via chat keywords and the `.dc` command, but the panel is far easier
-to use.
+is a client-side WoW addon (interface 30300, patch 3.3.5a) that replaces typing
+`dc`/`.dc` commands with a movable in-game panel. Everything it does is also
+reachable via chat keywords and `.dc`.
 
-### Install
+**Install:** copy the `DungeonClear` folder (`DungeonClear.toc` +
+`DungeonClear.lua`) into your client's `Interface/AddOns/` and enable
+**DungeonClear** on the character-select list. No extra server-side install.
 
-Download it from
-[github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon),
-then copy the `DungeonClear` addon folder (`DungeonClear.toc` +
-`DungeonClear.lua`) into your client's `Interface/AddOns/` directory and enable
-**DungeonClear** on the character-select AddOns list. No server-side install is
-needed beyond the module itself.
+**Features:**
 
-### Use
-
-- `/dc` toggles the window open/closed. `/dc <sub> [param]` also forwards any
-  raw subcommand (e.g. `/dc on`, `/dc skip`) to the tank bot.
-- **Action row:** On / Off / Skip / Pause·Resume buttons. Pause holds the tank
-  in place without ending the clear; the button relabels to Resume while paused.
-- **Status panel:** live mode status (OFF / ON / PAUSED), current state
-  (Advancing, Clearing Trash, Boss Fight, Looting, Resting, Door Blocked, Route
-  Blocked, …), the next boss target, and a warning line when the tank stalls.
-- **Boss list:** every boss in the dungeon with its status (Alive / Dead /
-  Skipped / Missing) and a per-boss **Go** button that targets the tank at that
-  boss (auto-enabling dungeon clear first if it's off). On a split/multi-wing map
-  the list is filtered to the bot's nearest wing.
-- **Tiny mode:** the **Tiny** button collapses the panel to a single-line
-  readout (status dot + state + target boss). Left-click the dot to start the
-  clear or toggle pause; right-click anywhere on the bar restores the full
-  window. Window position, tiny/folded state, and visibility persist via
-  `DungeonClearDB` saved variables.
-
-### How it talks to the server
-
-The addon and module communicate over a silent `DC`-prefixed addon message
-channel on the `PARTY` distribution (no visible chat). The addon sends
-`CMD\t<sub>[\t<param>]` payloads; the server's `DungeonClearAddonHook` intercepts
-them (before normal chat processing) and dispatches to the group's tank bot,
-exactly like the `.dc` command. The module pushes `STATUS`, `BOSS_START` /
-`BOSS` / `BOSS_END`, `CHAT`, and `ERROR` payloads back so the panel renders live
-state. The `STATUS` payload is
-`STATUS\t<enabled>\t<bossEntry>\t<bossName>\t<stallReason>\t<skipped>\t<state>\t<detail>`,
-where `<state>` is one of `off`, `paused`, `moving`, `pathing` (plotting a route),
-`pursuing` (closing on a live boss), `recovering` (wedged, replanning),
-`resting`, `looting`, `fighting_trash`, `fighting_boss`, `door_blocked`,
-`stalled`, or `idle`, and `<detail>` is a short human sentence (who we are
-waiting on, what we are heading to). Bot announcements arrive as `CHAT` lines (prefixed `[DC]`) instead of
-party-chat spam. The addon polls `status` every ~2s while a clear runs and
-re-requests the boss list on a 2s/5s cadence so the panel self-heals through
-loading screens and bot-not-yet-in-instance gaps.
+- `/dc` toggles the window; `/dc <sub> [param]` forwards a raw subcommand (e.g.
+  `/dc on`, `/dc skip`) to the tank.
+- **Action row:** On / Off / Skip / Pause·Resume. Pause holds the tank in place
+  without ending the clear.
+- **Status panel:** live mode (OFF / ON / PAUSED), current state (Advancing,
+  Clearing Trash, Boss Fight, Looting, Resting, Door Blocked, …), next boss
+  target, and a stall warning.
+- **Boss list:** every boss with status (Alive / Dead / Skipped / Missing) and a
+  per-boss **Go** button (auto-enables dungeon clear). Filtered to the bot's
+  nearest wing on split maps.
+- **Tiny mode:** collapses the panel to a single-line readout; window position,
+  state, and visibility persist via saved variables.
 
 ## How it integrates
 
@@ -163,8 +102,8 @@ mod-playerbots exposes no extension API, so this module:
 2. Registers a `.dc` command and a login hook for the `dungeon clear` strategy.
 
 It touches **no** playerbots file. The trade-off: it couples to playerbots'
-internal class shape, so an upstream rename of those registries would surface as
-a **compile error** here (never a silent runtime failure).
+internal class shape, so an upstream rename of those registries surfaces as a
+**compile error** here, never a silent runtime failure.
 
 ## License
 
