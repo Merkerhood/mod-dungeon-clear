@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearUtil.h"
+#include "DungeonClearMath.h"
 
 #include <algorithm>
 #include <cmath>
@@ -117,30 +118,6 @@ namespace
     // it to PickBlockingTrash.
     struct Seg2D { float ax, ay, bx, by; };
 
-    // Squared 2D distance from point P to segment (A,B).
-    float DistSqToSegment2D(float px, float py,
-                            float ax, float ay,
-                            float bx, float by)
-    {
-        float const ex = bx - ax;
-        float const ey = by - ay;
-        float const len2 = ex * ex + ey * ey;
-        if (len2 <= 1e-6f)
-        {
-            float const dx = px - ax;
-            float const dy = py - ay;
-            return dx * dx + dy * dy;
-        }
-        float t = ((px - ax) * ex + (py - ay) * ey) / len2;
-        if (t < 0.0f) t = 0.0f;
-        else if (t > 1.0f) t = 1.0f;
-        float const cx = ax + t * ex;
-        float const cy = ay + t * ey;
-        float const dx = px - cx;
-        float const dy = py - cy;
-        return dx * dx + dy * dy;
-    }
-
     // Shared candidate evaluation for the corridor-style trash scans. Returns
     // the closest hostile, alive, level-reachable, in-LOS unit whose 2D
     // position lands within its OWN effective aggro band of any segment in
@@ -233,7 +210,7 @@ namespace
             bool inCorridor = false;
             for (Seg2D const& s : segs)
             {
-                if (DistSqToSegment2D(ux, uy, s.ax, s.ay, s.bx, s.by) <= widthSq)
+                if (DungeonClearMath::DistSqToSegment2D(ux, uy, s.ax, s.ay, s.bx, s.by) <= widthSq)
                 {
                     inCorridor = true;
                     break;  // threshold test — first segment in range is enough
