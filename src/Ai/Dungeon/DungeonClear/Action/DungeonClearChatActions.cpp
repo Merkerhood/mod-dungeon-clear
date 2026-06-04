@@ -21,6 +21,7 @@
 #include "Player.h"
 #include "InstanceScript.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -485,6 +486,13 @@ bool DcBossesAction::Execute(Event event)
         else
             statusStr = "alive";  // exists in the instance, grid not yet loaded
 
+        // Wing label for split maps (empty for single-wing dungeons). On
+        // connected maps like Maraudon this is the only place the wing surfaces
+        // — the boss list still holds every boss, it's just annotated by region.
+        std::string const wing = DungeonWingRegistry::WingName(bot->GetMapId(), info.entry);
+
+        // Wing is appended as a trailing field; older addons that read only the
+        // first seven fields ignore it, so the protocol stays compatible.
         std::ostringstream addonMsg;
         addonMsg << "BOSS\t"
                  << info.entry << "\t"
@@ -493,15 +501,18 @@ bool DcBossesAction::Execute(Event event)
                  << statusStr << "\t"
                  << static_cast<int>(info.x) << "\t"
                  << static_cast<int>(info.y) << "\t"
-                 << static_cast<int>(info.z);
+                 << static_cast<int>(info.z) << "\t"
+                 << wing;
 
         DungeonClearUtil::SendAddonMessage(botAI, addonMsg.str());
 
         if (!silent)
         {
             std::ostringstream line;
-            line << info.encounterIndex << ". " << info.name
-                 << " @ (" << static_cast<int>(info.x) << ", "
+            line << info.encounterIndex << ". " << info.name;
+            if (!wing.empty())
+                line << " [" << wing << "]";
+            line << " @ (" << static_cast<int>(info.x) << ", "
                  << static_cast<int>(info.y) << ", "
                  << static_cast<int>(info.z) << ") [" << statusStr << "]";
 

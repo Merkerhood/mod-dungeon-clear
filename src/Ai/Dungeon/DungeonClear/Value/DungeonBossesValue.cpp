@@ -58,16 +58,25 @@ namespace
     std::vector<DungeonBossInfo> FilterToCurrentWing(Player* bot, uint32 mapId,
                                                      std::vector<DungeonBossInfo> bosses)
     {
-        std::vector<DungeonWing> const* wings = DungeonWingRegistry::Get(mapId);
-        if (!wings || wings->empty() || bosses.empty())
+        DungeonWingLayout const* layout = DungeonWingRegistry::Get(mapId);
+        if (!layout || layout->wings.empty() || bosses.empty())
             return bosses;
 
+        // Connected-wing maps (Maraudon) are not split for filtering: every
+        // wing is reachable from any entrance, so all bosses must stay in the
+        // list. The wing data is a display label only — never filter, or the
+        // bot would clear one region and read the whole dungeon as done.
+        if (!layout->isolated)
+            return bosses;
+
+        std::vector<DungeonWing> const& wings = layout->wings;
+
         // Pick the wing owning the boss nearest the bot.
-        size_t bestWing = wings->size();
+        size_t bestWing = wings.size();
         float bestDistSq = std::numeric_limits<float>::max();
-        for (size_t w = 0; w < wings->size(); ++w)
+        for (size_t w = 0; w < wings.size(); ++w)
         {
-            for (uint32 entry : (*wings)[w].bossEntries)
+            for (uint32 entry : wings[w].bossEntries)
             {
                 for (DungeonBossInfo const& b : bosses)
                 {
@@ -88,11 +97,11 @@ namespace
 
         // No registered boss matched the live list — leave it untouched rather
         // than blanking it (would falsely read as "all cleared").
-        if (bestWing >= wings->size())
+        if (bestWing >= wings.size())
             return bosses;
 
-        std::unordered_set<uint32> const keep((*wings)[bestWing].bossEntries.begin(),
-                                              (*wings)[bestWing].bossEntries.end());
+        std::unordered_set<uint32> const keep(wings[bestWing].bossEntries.begin(),
+                                              wings[bestWing].bossEntries.end());
         std::vector<DungeonBossInfo> filtered;
         filtered.reserve(keep.size());
         for (DungeonBossInfo const& b : bosses)
@@ -101,7 +110,7 @@ namespace
 
         LOG_DEBUG("playerbots.dungeonclear",
                   "[dungeon-clear] map {} split into wings; bot in '{}' — "
-                  "{} of {} bosses kept", mapId, (*wings)[bestWing].name,
+                  "{} of {} bosses kept", mapId, wings[bestWing].name,
                   filtered.size(), bosses.size());
 
         // Defensive: if the chosen wing somehow contributed nothing, keep the

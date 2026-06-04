@@ -14,16 +14,16 @@ namespace
     // keys its list on, so a wing's entries match the "dungeon bosses" output
     // 1:1. Every boss of a split map must appear in exactly one wing — any
     // entry left out would silently never be cleared.
-    std::unordered_map<uint32, std::vector<DungeonWing>> const& Store()
+    std::unordered_map<uint32, DungeonWingLayout> const& Store()
     {
-        static std::unordered_map<uint32, std::vector<DungeonWing>> const store = {
+        static std::unordered_map<uint32, DungeonWingLayout> const store = {
             // --- Dire Maul (map 429) -------------------------------------
             // Three wings, each entered through its own portal; no in-instance
             // route connects them. Grouping verified against creature spawn
             // coords (East sits at y < -100, West at x < 150 / y > 400, North
             // at x > 300), which is also why nearest-boss wing detection is
-            // unambiguous.
-            {429, {
+            // unambiguous. isolated == true: filter to the bot's wing.
+            {429, {true, {
                 {"Dire Maul (East)", {
                     11490,  // Zevrim Thornhoof
                     13280,  // Hydrospawn
@@ -46,7 +46,7 @@ namespace
                     14324,  // Cho'Rush the Observer
                     11501,  // King Gordok
                 }},
-            }},
+            }}},
 
             // --- Scarlet Monastery (map 189) -----------------------------
             // Four wings, each entered through its own portal off the shared
@@ -56,6 +56,7 @@ namespace
             // (x~1160, y~1370) in the north half, Library (x~130, y~-345) and
             // Armory (x~1965, y~-430) in the south half, each 600+ yds from the
             // others — so nearest-boss wing detection is unambiguous.
+            // isolated == true: filter to the bot's wing.
             //
             // Entries are the kill-creature credit-entries from
             // instance_encounters (what BossSpawnIndex emits), NOT every
@@ -63,7 +64,7 @@ namespace
             // Whitemane — Scarlet Commander Mograine (3976) has no
             // DungeonEncounter row, so he never appears in the boss list and
             // must not be listed here.
-            {189, {
+            {189, {true, {
                 {"Scarlet Monastery (Graveyard)", {
                     3983,   // Interrogator Vishas
                     4543,   // Bloodmage Thalnos
@@ -79,15 +80,61 @@ namespace
                     4542,   // High Inquisitor Fairbanks
                     3977,   // High Inquisitor Whitemane
                 }},
-            }},
+            }}},
+
+            // --- Maraudon (map 349) --------------------------------------
+            // Three named regions — Orange (Foulspore Cavern), Purple (Wicked
+            // Grotto) and the inner Pristine Waters (Earth Song Falls) — but
+            // UNLIKE Dire Maul they share one connected interior: orange and
+            // purple converge at the Celebras seal, which opens into the inner
+            // waters, and the Earth Song Falls surface portal drops straight
+            // into that same inner area. So every boss is reachable from any
+            // entrance.
+            //
+            // isolated == false: this is a LABEL only. Do NOT filter — all
+            // eight bosses stay in the clear list; the wing name is surfaced in
+            // status/UI so the player can see which region each boss sits in.
+            //
+            // Entries are the kill-creature credit-entries from
+            // instance_encounters (what BossSpawnIndex emits). Celebras the
+            // Cursed sits at the purple-side seal he unlocks, so he is grouped
+            // with Purple.
+            {349, {false, {
+                {"Maraudon (Orange)", {
+                    13282,  // Noxxion
+                    12258,  // Razorlash
+                }},
+                {"Maraudon (Purple)", {
+                    12236,  // Lord Vyletongue
+                    12225,  // Celebras the Cursed
+                }},
+                {"Maraudon (Pristine Waters)", {
+                    13601,  // Tinkerer Gizlock
+                    12203,  // Landslide
+                    13596,  // Rotgrip
+                    12201,  // Princess Theradras
+                }},
+            }}},
         };
         return store;
     }
 }
 
-std::vector<DungeonWing> const* DungeonWingRegistry::Get(uint32 mapId)
+DungeonWingLayout const* DungeonWingRegistry::Get(uint32 mapId)
 {
     auto const& s = Store();
     auto it = s.find(mapId);
     return it == s.end() ? nullptr : &it->second;
+}
+
+std::string DungeonWingRegistry::WingName(uint32 mapId, uint32 bossEntry)
+{
+    DungeonWingLayout const* layout = Get(mapId);
+    if (!layout)
+        return "";
+    for (DungeonWing const& wing : layout->wings)
+        for (uint32 entry : wing.bossEntries)
+            if (entry == bossEntry)
+                return wing.name;
+    return "";
 }
