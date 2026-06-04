@@ -6,6 +6,9 @@ clearing blocking trash, pathing around the layout, pausing for loot, and
 handling doors and stalls along the way. You sit back, deal damage, and let the
 tank run the dungeon; no need to lead pulls or remember the route.
 
+There are no waypoints or hardcoded paths — every route is generated on the fly
+from the live navigation mesh, so it works in any instance, raids included.
+
 > ## ❗ Use the companion addon
 >
 > [**mod-dungeon-clear-addon**](https://github.com/jrad7/mod-dungeon-clear-addon)
