@@ -7,10 +7,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
+#include <sstream>
+#include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -1090,6 +1095,307 @@ void DungeonClearUtil::ReapOrphanedFollows()
         }
 
         it = g_dcFollowingPlayers.erase(it);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event-driven STATUS / BOSS pushes
+// ---------------------------------------------------------------------------
+//
+// Rather than have the addon poll `CMD\tstatus` on a fixed interval, the server
+// recomputes the status string cheaply each world tick for the small set of
+// tanks actually running a clear and emits a packet only when the meaningful
+// state changes. BuildStatusPayload is the single source of truth for the
+// STATUS line (also used by the on-demand `dc status`), so the two paths can
+// never diverge.
+
+namespace
+{
+    // Per-tank push bookkeeping. lastStatus is the exact STATUS payload last
+    // sent (the change-detector compares against it verbatim); lastBossSig is a
+    // cheap fingerprint of the boss list so the expensive boss re-scan only runs
+    // when a boss actually dies / gets skipped / the target changes. `primed`
+    // guards the very first tick so a freshly-marked tank always emits once.
+    struct DcPushState
+    {
+        std::string lastStatus;
+        uint64 lastBossSig = 0;
+        bool primed = false;
+    };
+
+    std::map<ObjectGuid, DcPushState> g_dcActiveTanks;
+    std::mutex g_dcActiveTanksMutex;
+
+    // Throttle accumulator for the world-tick detector (ms).
+    uint32 g_dcPushAccumMs = 0;
+    constexpr uint32 DC_PUSH_INTERVAL_MS = 400;
+
+    // Cheap fingerprint of the boss list's user-visible state. Driven entirely
+    // off values that are O(1) to read — the completed-encounter bitmask (flips
+    // when a boss dies), the skipped-set size, and the committed target — so it
+    // can be checked every detector pass without the per-boss creature scans
+    // that BuildBossList / DcBossesAction perform. alive->missing transitions
+    // are intentionally NOT captured here (they need the scan and are cosmetic);
+    // the addon still refreshes those via its zone-change / window-show request.
+    uint64 BuildBossSignature(PlayerbotAI* botAI)
+    {
+        AiObjectContext* context = botAI->GetAiObjectContext();
+        Player* bot = botAI->GetBot();
+        if (!bot)
+            return 0;
+
+        InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+        uint32 const mask = inst ? inst->GetCompletedEncounterMask() : 0u;
+        uint32 const skipped =
+            static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped").size());
+        uint32 const selected = AI_VALUE(uint32, "dungeon clear selected boss");
+        uint32 const count =
+            static_cast<uint32>(AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses").size());
+
+        // FNV-1a over the four words. Collisions are harmless: the only cost of
+        // a missed change is a slightly stale boss row until the next real
+        // transition or an explicit request.
+        uint64 h = 1469598103934665603ull;
+        for (uint32 w : {mask, skipped, selected, count})
+        {
+            h ^= w;
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+}
+
+std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
+{
+    AiObjectContext* context = botAI->GetAiObjectContext();
+    Player* bot = botAI->GetBot();
+
+    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
+    std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+    auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
+    std::string const& stall = AI_VALUE(std::string&, "dungeon clear stall reason");
+
+    // Calculate dynamic state for addon UI. Authoritative conditions (combat,
+    // stall, loot, rest) take precedence over the advance action's self-reported
+    // navigation phase, since they reflect ground truth the phase token can't
+    // see. `detail` is a short human sentence the addon shows under the state
+    // line — who we're waiting on, what we're heading to, etc.
+    std::string stateStr = "off";
+    std::string detail;
+    bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    std::string const bossName = next.has_value() ? next->name : "the boss";
+
+    if (enabled && paused)
+    {
+        // Paused takes precedence over every running sub-state — the addon
+        // paints this state yellow. `enabled` stays 1 so the addon can see the
+        // eventual resume.
+        stateStr = "paused";
+        detail = "Holding position; boss progress saved.";
+    }
+    else if (enabled && bot)
+    {
+        if (bot->IsInCombat())
+        {
+            Unit* currentTarget = context->GetValue<Unit*>("current target")->Get();
+            if (currentTarget && next.has_value() && currentTarget->GetEntry() == next->entry)
+            {
+                stateStr = "fighting_boss";
+                detail = "Engaging " + bossName + ".";
+            }
+            else
+            {
+                stateStr = "fighting_trash";
+                detail = (currentTarget && !currentTarget->GetName().empty())
+                             ? ("Fighting " + currentTarget->GetName() + ".")
+                             : "Clearing trash from the path.";
+            }
+        }
+        else if (!stall.empty())
+        {
+            ObjectGuid door = context->GetValue<ObjectGuid>("dungeon clear blocking door")->Get();
+            stateStr = door.IsEmpty() ? "stalled" : "door_blocked";
+            // The stall reason already rides in its own field; leave detail empty.
+        }
+        else if (AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
+                 DungeonClearUtil::IsAnyPartyMemberLooting(bot))
+        {
+            stateStr = "looting";
+            std::string const who = DungeonClearUtil::DescribePartyLooting(bot);
+            detail = who.empty() ? "Collecting loot." : (who + ".");
+        }
+        // Status display must use the SAME spread the advance gate enforces
+        // (DungeonClear.PartyMaxSpread), or the tank parks at the limit while
+        // still reporting "En route" instead of "Waiting on".
+        else if (float const maxSpread = sConfigMgr->GetOption<float>(
+                     "DungeonClear.PartyMaxSpread", 25.0f);
+                 !DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, maxSpread))
+        {
+            stateStr = "resting";
+            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, maxSpread);
+            detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
+        }
+        else
+        {
+            // No blocking condition — report what the advance action is up to,
+            // using its per-tick phase token plus the route cache state.
+            std::string const& phase = AI_VALUE(std::string&, "dungeon clear phase");
+            uint32 const pathTarget = AI_VALUE(uint32, "dungeon clear long path target");
+            bool const routeReady = next.has_value() && pathTarget == next->entry;
+
+            if (phase == "recovering")
+            {
+                stateStr = "recovering";
+                detail = "Stuck; replanning the route to " + bossName + ".";
+            }
+            else if (phase == "pursuing")
+            {
+                stateStr = "pursuing";
+                detail = "Closing in on " + bossName + ".";
+            }
+            else if (next.has_value() && !routeReady)
+            {
+                // A boss is selected but no route to it is cached yet: the tank
+                // is between picking the target and its first path build.
+                stateStr = "pathing";
+                detail = "Plotting a route to " + bossName + ".";
+            }
+            else if (phase == "moving" || bot->isMoving())
+            {
+                stateStr = "moving";
+                detail = next.has_value() ? ("En route to " + bossName + ".") : "Advancing.";
+            }
+            else
+            {
+                stateStr = "idle";
+                detail = next.has_value() ? ("Holding near " + bossName + ".") : "Idle.";
+            }
+        }
+    }
+
+    std::ostringstream addonMsg;
+    addonMsg << "STATUS\t"
+             << (enabled ? "1" : "0") << "\t"
+             << (next.has_value() ? std::to_string(next->entry) : "0") << "\t"
+             << (next.has_value() ? next->name : "None") << "\t"
+             << (stall.empty() ? "" : stall) << "\t"
+             << skipped.size() << "\t"
+             << stateStr << "\t"
+             << detail;
+
+    return addonMsg.str();
+}
+
+void DungeonClearUtil::PushStatus(PlayerbotAI* botAI)
+{
+    if (!botAI)
+        return;
+
+    std::string payload = BuildStatusPayload(botAI);
+    SendAddonMessage(botAI, payload);
+
+    // Keep the change-detector's STATUS snapshot in lock-step with an explicit
+    // push so it doesn't re-emit the identical payload on the very next pass.
+    // Deliberately leave lastBossSig untouched: a fresh `dc on` resets it to the
+    // 0 sentinel via MarkActiveTank, so the first detector pass emits the boss
+    // list exactly once; later skip/go changes flip the signature and re-push.
+    if (Player* bot = botAI->GetBot())
+    {
+        std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+        auto it = g_dcActiveTanks.find(bot->GetGUID());
+        if (it != g_dcActiveTanks.end())
+        {
+            it->second.lastStatus = std::move(payload);
+            it->second.primed = true;
+        }
+    }
+}
+
+void DungeonClearUtil::MarkActiveTank(ObjectGuid tank)
+{
+    std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+    // Default-constructed state (primed=false) forces an emit on the first
+    // detector pass even if nothing has changed yet.
+    g_dcActiveTanks[tank];
+}
+
+void DungeonClearUtil::UnmarkActiveTank(ObjectGuid tank)
+{
+    std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+    g_dcActiveTanks.erase(tank);
+}
+
+void DungeonClearUtil::TickStatusPushes(uint32 diff)
+{
+    // Throttle: detect at most every DC_PUSH_INTERVAL_MS. Status transitions are
+    // human-perceptible at this granularity, and it keeps the per-tick cost off
+    // the world loop.
+    g_dcPushAccumMs += diff;
+    if (g_dcPushAccumMs < DC_PUSH_INTERVAL_MS)
+        return;
+    g_dcPushAccumMs = 0;
+
+    // Snapshot the GUIDs under lock, then do the heavier work (value reads,
+    // packet builds) without holding it — SendAddonMessage / DoSpecificAction
+    // must not run under our mutex.
+    std::vector<ObjectGuid> tanks;
+    {
+        std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+        if (g_dcActiveTanks.empty())
+            return;
+        tanks.reserve(g_dcActiveTanks.size());
+        for (auto const& kv : g_dcActiveTanks)
+            tanks.push_back(kv.first);
+    }
+
+    for (ObjectGuid guid : tanks)
+    {
+        Player* bot = ObjectAccessor::FindPlayer(guid);
+        if (!bot || !bot->IsInWorld())
+        {
+            // Tank vanished without a clean dc off (logout, instance reset).
+            // Drop it; the addon will resync on its next explicit request.
+            std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+            g_dcActiveTanks.erase(guid);
+            continue;
+        }
+
+        PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+        if (!botAI)
+            continue;
+
+        std::string const payload = BuildStatusPayload(botAI);
+        uint64 const bossSig = BuildBossSignature(botAI);
+
+        bool emitStatus = false;
+        bool emitBosses = false;
+        {
+            std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+            auto it = g_dcActiveTanks.find(guid);
+            if (it == g_dcActiveTanks.end())
+                continue;  // unmarked between snapshot and now
+
+            DcPushState& st = it->second;
+            if (!st.primed || st.lastStatus != payload)
+            {
+                st.lastStatus = payload;
+                emitStatus = true;
+            }
+            if (!st.primed || st.lastBossSig != bossSig)
+            {
+                st.lastBossSig = bossSig;
+                emitBosses = true;
+            }
+            st.primed = true;
+        }
+
+        if (emitStatus)
+            SendAddonMessage(botAI, payload);
+        if (emitBosses)
+            // Reuse the existing boss-list action (silent) so the BOSS_START /
+            // BOSS* / BOSS_END framing and per-boss status logic live in one
+            // place. "addon" param suppresses the chat echo.
+            botAI->DoSpecificAction("dc bosses", Event("dc push", "addon"), true);
     }
 }
 

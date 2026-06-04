@@ -184,13 +184,19 @@ class DungeonClearReaperScript : public PlayerbotScript
 public:
     DungeonClearReaperScript() : PlayerbotScript("DungeonClearReaperScript") {}
 
-    void OnPlayerbotUpdate(uint32 /*diff*/) override
+    void OnPlayerbotUpdate(uint32 diff) override
     {
         DungeonClearUtil::ReapOrphanedFollows();
         // Drop async path results that were never collected (the bot logged out
         // or toggled dc off before polling). Bounds the mailbox; cheap no-op
         // when empty.
         DcPathWorker::Instance().Sweep(DC_ASYNC_PATH_RESULT_TTL_MS);
+        // Event-driven status: recompute each clearing tank's status and emit a
+        // STATUS/BOSS packet only on change (replaces the addon's old poll).
+        // Internally throttled; a cheap no-op when no tank is clearing. Runs on
+        // the global tick (not a per-bot one) so it keeps firing through boss
+        // fights, when the bot's non-combat strategy engine is dormant.
+        DungeonClearUtil::TickStatusPushes(diff);
     }
 };
 

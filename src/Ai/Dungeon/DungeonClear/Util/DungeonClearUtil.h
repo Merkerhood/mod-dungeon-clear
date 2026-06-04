@@ -275,6 +275,26 @@ public:
     // Send a structured addon message with prefix "DC" to all real players in the bot's group.
     static void SendAddonMessage(PlayerbotAI* botAI, std::string const& msg);
 
+    // --- Event-driven status pushes -----------------------------------------
+    // The companion addon used to poll `CMD\tstatus` every 2s. Instead the
+    // server now recomputes status cheaply each world tick for the handful of
+    // tanks actually running a clear and pushes a STATUS packet only when the
+    // meaningful state changes (entered combat, pulled a boss, a boss died,
+    // stalled, started looting, party recovered, …). BuildStatusPayload
+    // produces the same "STATUS\t..." string DcStatusAction sends; it is shared
+    // by the on-demand `dc status` action and the change-detector so the two
+    // can never drift. MarkActiveTank / UnmarkActiveTank maintain the small
+    // registry of clearing tanks (mirrors the follow-reaper pattern below);
+    // TickStatusPushes is the throttled detector driven from the world tick.
+    static std::string BuildStatusPayload(PlayerbotAI* botAI);
+    // Unconditionally send the current STATUS payload and refresh the
+    // change-detector's snapshot for this bot, so an explicit request never
+    // provokes a duplicate push on the following tick.
+    static void PushStatus(PlayerbotAI* botAI);
+    static void MarkActiveTank(ObjectGuid tank);
+    static void UnmarkActiveTank(ObjectGuid tank);
+    static void TickStatusPushes(uint32 diff);
+
     // --- Orphaned follow-generator reaper -----------------------------------
     // MoveFollow is a persistent MotionMaster generator. A non-tank DC follower
     // installs one to chase the tank; its own follow-tank action tears it down

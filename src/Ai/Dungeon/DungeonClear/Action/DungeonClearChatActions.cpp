@@ -142,6 +142,11 @@ bool DcOnAction::Execute(Event event)
 
     // Reset transient state and enable.
     context->GetValue<bool>("dungeon clear enabled")->Set(true);
+    // Register this tank with the event-driven status pusher so the server
+    // begins emitting STATUS packets on state transitions (replacing the
+    // addon's old 2s poll). The matching UnmarkActiveTank lives in every
+    // disable path: dc off, skip-to-empty, and DisableDungeonClear.
+    DungeonClearUtil::MarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
@@ -190,6 +195,7 @@ bool DcOffAction::Execute(Event event)
         return true;
 
     context->GetValue<bool>("dungeon clear enabled")->Set(false);
+    DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
@@ -281,6 +287,7 @@ bool DcSkipAction::Execute(Event event)
     {
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tSkipped " + current->name + ". No bosses left \xe2\x80\x94 disabling.");
         context->GetValue<bool>("dungeon clear enabled")->Set(false);
+        DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
     }
 
     // Trigger instant status addon message update
@@ -309,115 +316,12 @@ bool DcStatusAction::Execute(Event event)
         DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + msg.str());
     }
 
-    // Calculate dynamic state for addon UI. Authoritative poll-time conditions
-    // (combat, stall, loot, rest) take precedence over the advance action's
-    // self-reported navigation phase, since they reflect ground truth the phase
-    // token can't see. `detail` is a short human sentence the addon shows under
-    // the state line — who we're waiting on, what we're heading to, etc.
-    std::string stateStr = "off";
-    std::string detail;
-    bool const paused = AI_VALUE(bool, "dungeon clear paused");
-    std::string const bossName = next.has_value() ? next->name : "the boss";
-
-    if (enabled && paused)
-    {
-        // Paused takes precedence over every running sub-state — the addon
-        // paints this state yellow. `enabled` stays 1 so the addon keeps
-        // polling and can see the eventual resume.
-        stateStr = "paused";
-        detail = "Holding position; boss progress saved.";
-    }
-    else if (enabled)
-    {
-        if (bot->IsInCombat())
-        {
-            Unit* currentTarget = botAI->GetAiObjectContext()->GetValue<Unit*>("current target")->Get();
-            if (currentTarget && next.has_value() && currentTarget->GetEntry() == next->entry)
-            {
-                stateStr = "fighting_boss";
-                detail = "Engaging " + bossName + ".";
-            }
-            else
-            {
-                stateStr = "fighting_trash";
-                detail = (currentTarget && !currentTarget->GetName().empty())
-                             ? ("Fighting " + currentTarget->GetName() + ".")
-                             : "Clearing trash from the path.";
-            }
-        }
-        else if (!stall.empty())
-        {
-            ObjectGuid door = botAI->GetAiObjectContext()->GetValue<ObjectGuid>("dungeon clear blocking door")->Get();
-            stateStr = door.IsEmpty() ? "stalled" : "door_blocked";
-            // The stall reason already rides in its own field; leave detail empty.
-        }
-        else if (AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
-                 DungeonClearUtil::IsAnyPartyMemberLooting(bot))
-        {
-            stateStr = "looting";
-            std::string const who = DungeonClearUtil::DescribePartyLooting(bot);
-            detail = who.empty() ? "Collecting loot." : (who + ".");
-        }
-        // Status display must use the SAME spread the advance gate enforces
-        // (DungeonClear.PartyMaxSpread), or the tank parks at the limit while
-        // still reporting "En route" instead of "Waiting on".
-        else if (float const maxSpread = sConfigMgr->GetOption<float>(
-                     "DungeonClear.PartyMaxSpread", 25.0f);
-                 !DungeonClearUtil::IsPartyReady(bot, 90.0f, 75.0f, maxSpread))
-        {
-            stateStr = "resting";
-            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, 90.0f, 75.0f, maxSpread);
-            detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
-        }
-        else
-        {
-            // No blocking condition — report what the advance action is up to,
-            // using its per-tick phase token plus the route cache state.
-            std::string const& phase = AI_VALUE(std::string&, "dungeon clear phase");
-            uint32 const pathTarget = AI_VALUE(uint32, "dungeon clear long path target");
-            bool const routeReady = next.has_value() && pathTarget == next->entry;
-
-            if (phase == "recovering")
-            {
-                stateStr = "recovering";
-                detail = "Stuck; replanning the route to " + bossName + ".";
-            }
-            else if (phase == "pursuing")
-            {
-                stateStr = "pursuing";
-                detail = "Closing in on " + bossName + ".";
-            }
-            else if (next.has_value() && !routeReady)
-            {
-                // A boss is selected but no route to it is cached yet: the tank
-                // is between picking the target and its first path build.
-                stateStr = "pathing";
-                detail = "Plotting a route to " + bossName + ".";
-            }
-            else if (phase == "moving" || bot->isMoving())
-            {
-                stateStr = "moving";
-                detail = next.has_value() ? ("En route to " + bossName + ".") : "Advancing.";
-            }
-            else
-            {
-                stateStr = "idle";
-                detail = next.has_value() ? ("Holding near " + bossName + ".") : "Idle.";
-            }
-        }
-    }
-
-    std::ostringstream addonMsg;
-    addonMsg << "STATUS\t"
-             << (enabled ? "1" : "0") << "\t"
-             << (next.has_value() ? std::to_string(next->entry) : "0") << "\t"
-             << (next.has_value() ? next->name : "None") << "\t"
-             << (stall.empty() ? "" : stall) << "\t"
-             << skipped.size() << "\t"
-             << stateStr << "\t"
-             << detail;
-
-    DungeonClearUtil::SendAddonMessage(botAI, addonMsg.str());
+    // The STATUS payload itself is built by the shared helper so the on-demand
+    // path here and the event-driven change-detector (TickStatusPushes) emit
+    // byte-identical strings and can never drift. PushStatus also refreshes the
+    // detector's "last pushed" snapshot for this tank, so an explicit `dc
+    // status` won't trigger a redundant push on the following tick.
+    DungeonClearUtil::PushStatus(botAI);
     return true;
 }
 
