@@ -502,9 +502,14 @@ namespace
                 if (getMSTimeDiff(pendingSince, now) < DC_ASYNC_PATH_PENDING_TIMEOUT_MS)
                     return;  // still building — keep serving the cached path
 
-                LOG_WARN("playerbots.dungeonclear",
-                         "[DC:{}] async path job {} gave no result in {}ms — abandoning, "
-                         "rebuilding synchronously (worker swept/stalled?)",
+                // INFO so it's trackable: this is the only path that runs a full
+                // long-range build on the world thread in async mode, which is
+                // exactly what async exists to avoid. It should be rare (lost
+                // result / wedged worker); frequent hits mean the worker is
+                // unhealthy and want investigating.
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] ASYNC PATH SYNC-FALLBACK: job {} gave no result in {}ms — "
+                         "abandoning and rebuilding on the world thread (worker swept/stalled?)",
                          bot->GetName(), pendingJob, getMSTimeDiff(pendingSince, now));
                 pendingJob = 0;
                 pendingSince = 0;
