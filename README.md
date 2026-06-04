@@ -5,6 +5,23 @@ drop-in AzerothCore module. A tank bot drives the party from boss to boss,
 clearing blocking trash, pathing around the dungeon, pausing for loot, and
 handling doors/stalls along the way.
 
+## The problem
+
+You want to relax during dungeons. You want to sit back and deal damage — not
+shoulder the navigation, not lead every pull, not be the one who has to know the
+route. And after time away from a dungeon, the route is exactly the thing that
+slips your mind: which way to the first boss, which packs to clear, which turns
+lead nowhere. The moment-to-moment work of *running* the dungeon gets in the way
+of enjoying it.
+
+## The solution
+
+**mod-dungeon-clear.** A tank bot takes over the dungeon for you. It navigates
+from boss to boss and clears a path as it goes — pulling the trash that blocks
+the way, pathing around the layout, pausing for loot, and working through doors
+and stalls without supervision. You no longer need to remember the route or lead
+the pulls. You sit back, deal your damage, and let the tank drive the clear.
+
 > 📺 **Looking for the in-game addon?** Jump to [Companion addon](#companion-addon),
 > or grab it directly from
 > [github.com/jrad7/mod-dungeon-clear-addon](https://github.com/jrad7/mod-dungeon-clear-addon).
