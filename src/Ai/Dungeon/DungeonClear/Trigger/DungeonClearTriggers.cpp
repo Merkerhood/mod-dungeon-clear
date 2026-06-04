@@ -119,7 +119,9 @@ bool DungeonClearAtBossTrigger::IsActive()
     if (!next.has_value())
         return false;
 
-    if (BossEngageDistance(bot, context, *next) >= DC_ENGAGE_RANGE)
+    float const engageRange =
+        DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
+    if (BossEngageDistance(bot, context, *next) >= engageRange)
         return false;
 
     // When the long-path cache is anchored (registered route), make sure
@@ -167,7 +169,9 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         return false;
 
     // Within engage range of the live boss, at-boss trigger handles the pull.
-    if (BossEngageDistance(bot, context, *next) < DC_ENGAGE_RANGE)
+    float const engageRange =
+        DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
+    if (BossEngageDistance(bot, context, *next) < engageRange)
         return false;
 
     // Wait between pulls for loot, party catch-up, and rest.

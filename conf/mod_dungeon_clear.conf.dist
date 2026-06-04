@@ -52,6 +52,63 @@ DungeonClear.LootMinQuality = 0
 
 DungeonClear.PartyMaxSpread = 25.0
 
+#
+#    DungeonClear.DynamicAggroRange
+#        1 (default): size the "blocking trash" scan band and the boss engage
+#        hand-off from each creature's REAL aggro range (the core's own
+#        level-scaled detection radius) instead of one hardcoded distance.
+#            - Trash: a giant elite with a large aggro radius is now caught even
+#              when it sits a few yards off the route line, while a low-aggro
+#              ambient mob just off the line is no longer pulled.
+#            - Boss: a small-aggro boss yields a short hand-off range, so the
+#              smooth approach glide carries the tank most of the way in before
+#              the pull — fixing the slow stutter-creep up to such bosses.
+#        0: use the fixed legacy bands (18yd trash, 22yd boss) for everything.
+#
+#        Default: 1
+#
+
+DungeonClear.DynamicAggroRange = 1
+
+#
+#    DungeonClear.AggroRangeMargin
+#        Extra yards added to a boss's aggro range when computing the engage
+#        hand-off distance, so the engage trigger fires just before the boss
+#        would pull on its own. Only used when DynamicAggroRange = 1.
+#
+#        Default: 2.0
+#
+
+DungeonClear.AggroRangeMargin = 2.0
+
+#
+#    DungeonClear.BossEngageRangeFloor / DungeonClear.BossEngageRangeCap
+#        Clamp the dynamic boss engage hand-off distance to [floor, cap] yards.
+#        The floor keeps the tank from having to reach point-blank melee on a
+#        tiny-aggro boss; the cap stops a huge level-gap aggro radius from
+#        committing the pull from absurdly far. Only used when
+#        DynamicAggroRange = 1.
+#
+#        Defaults: 12.0 / 30.0
+#
+
+DungeonClear.BossEngageRangeFloor = 12.0
+DungeonClear.BossEngageRangeCap = 30.0
+
+#
+#    DungeonClear.TrashWidthFloor / DungeonClear.TrashWidthCap
+#        Clamp each trash candidate's dynamic corridor band to [floor, cap]
+#        yards. The floor ensures a mob sitting right on the route line always
+#        counts as blocking; the cap bounds how far off the line a giant-aggro
+#        elite can still be pulled (and pads the broad-phase reject box). Only
+#        used when DynamicAggroRange = 1.
+#
+#        Defaults: 8.0 / 30.0
+#
+
+DungeonClear.TrashWidthFloor = 8.0
+DungeonClear.TrashWidthCap = 30.0
+
 ########################################
 # DEBUGGING SETTINGS
 ########################################

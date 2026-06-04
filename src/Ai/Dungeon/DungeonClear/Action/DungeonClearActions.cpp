@@ -775,12 +775,28 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
             (distance <= attackRange + DC_COMBAT_APPROACH_RANGE)
                 ? MovementPriority::MOVEMENT_COMBAT
                 : MovementPriority::MOVEMENT_NORMAL;
-        return MoveTo(target->GetMapId(),
-                      target->GetPositionX(),
-                      target->GetPositionY(),
-                      target->GetPositionZ(),
-                      /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-                      /*exact_waypoint*/ false, prio);
+        bool const moved = MoveTo(target->GetMapId(),
+                                  target->GetPositionX(),
+                                  target->GetPositionY(),
+                                  target->GetPositionZ(),
+                                  /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                                  /*exact_waypoint*/ false, prio);
+
+        // Decisive approach: commit to one continuous run into range instead of
+        // the old stutter-creep. MoveTo returns false on a DUPLICATE move (same
+        // destination while a prior glide is still in flight) — that means "the
+        // run is already happening", NOT a failure. The old `return MoveTo(...)`
+        // surfaced that false to the engine, which then fell through to the
+        // lower-relevance Advance action; Advance saw us inside engage range and
+        // called StopMoving — so every other tick killed the glide and the tank
+        // crept in a few yards at a time. Treat an in-flight / freshly-queued
+        // move as success (consume the tick, keep gliding); only a genuine
+        // "couldn't move AND not moving" falls through so Advance's posStuck /
+        // stall escalation can still catch a real wedge. Mirrors the direct-
+        // pursuit branch in DungeonClearAdvanceAction.
+        if (moved || bot->isMoving() || IsWaitingForLastMove(prio))
+            return true;
+        return false;
     }
 
     if (bot->isMoving())
@@ -837,12 +853,21 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     float const bossZ = liveBoss ? liveBoss->GetPositionZ() : next->z;
     float const engageDist = bot->GetDistance(bossX, bossY, bossZ);
 
+    // Hand-off distance: the boss's real aggro bubble (+reaches/margin) when it
+    // is loaded, else the static fallback. Shrinking this for a small-aggro boss
+    // lets the smooth long-path/direct-pursuit glide carry the tank most of the
+    // way in before the engage pull takes over — collapsing the stutter-creep
+    // the old fixed 22yd hand-off produced. Must match the trigger ladder's
+    // BossEngageRange so action and triggers agree on "are we at the boss".
+    float const engageRange =
+        DungeonClearUtil::BossEngageRange(bot, context, *next, DC_ENGAGE_RANGE);
+
     // Dead-end escalation counter (see DC_DONE_NOT_ENGAGED_LIMIT). Cleared the
     // moment we're back inside engage range so it only ever counts a continuous
     // run of "path done but boss still out of reach" ticks for one approach.
     uint32& doneNotEngagedTicks =
         context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->RefGet();
-    if (engageDist < DC_ENGAGE_RANGE)
+    if (engageDist < engageRange)
     {
         doneNotEngagedTicks = 0;
         // Made it into engage range: clear the direct-pursuit give-up latch too,
@@ -856,7 +881,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // pull. With anchored routes the bot may be geometrically near the boss but
     // still on the wrong side of a wall; we keep walking in that case until
     // anchors are cleared.
-    if (engageDist < DC_ENGAGE_RANGE)
+    if (engageDist < engageRange)
     {
         ChunkedPathfinder::Result const& currentPath =
             AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
@@ -1332,7 +1357,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // Cursor reached the polyline end. If we're already within engage range
         // this is a benign "anchored hops were still pending at the top" case —
         // rebuild and let the engage hold take over next tick.
-        if (engageDist < DC_ENGAGE_RANGE)
+        if (engageDist < engageRange)
         {
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] reached end of path polyline (seg {}) -> forcing rebuild next tick",
@@ -1354,7 +1379,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] path ends {:.0f}yd short of {} (>{:.0f}, attempt {}/{}) "
                      "-> final-approach MoveTo",
-                     bot->GetName(), engageDist, next->name, DC_ENGAGE_RANGE,
+                     bot->GetName(), engageDist, next->name, engageRange,
                      doneNotEngagedTicks, DC_DONE_NOT_ENGAGED_LIMIT);
             StopActiveSplineGlide(bot);
             bool const pushing = MoveTo(next->mapId, bossX, bossY, bossZ,

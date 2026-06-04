@@ -44,9 +44,11 @@ public:
                                 Movement::PointsArray& out);
 
     // Returns the closest hostile, alive unit from `possibleTargets` whose
-    // 2D distance to the path polyline is <= corridorWidth, considering
-    // only the segment of the path within the first maxLookAhead yards
-    // from the bot. LOS-checked. Nullptr if none.
+    // 2D distance to the path polyline is within its blocking band, considering
+    // only the segment of the path within the first maxLookAhead yards from the
+    // bot. LOS-checked. Nullptr if none. With DungeonClear.DynamicAggroRange on,
+    // each candidate's band is its real aggro range (clamped to the trash
+    // floor/cap); off, every candidate uses the fixed `corridorWidth`.
     static Unit* FindBlockingTrashCorridor(Player* bot,
                                            Movement::PointsArray const& corridor,
                                            float maxLookAhead,
@@ -69,6 +71,31 @@ public:
     // Returns true if at least one spawned creature with the given entry exists
     // on the bot's map (alive or dead). Distinguishes "missing" from "killed".
     static bool IsCreaturePresentOnMap(Player* bot, uint32 entry);
+
+    // --- Dynamic aggro range ------------------------------------------------
+    // The distance at which `u` would aggro `bot`. For a Creature this is the
+    // core's own GetAggroRange (detection range adjusted by level difference,
+    // clamped 5-45yd by the core), so the value already reflects giant elites
+    // (large detection) and neutral/low-level ambient mobs (small detection)
+    // instead of a single hardcoded band. Clamped to [floorYd, capYd] so a
+    // pathological value can never blow out the caller's scan/engage geometry.
+    // Non-creatures (and a disabled DungeonClear.DynamicAggroRange config)
+    // return `fallback`. Cheap — no allocation, no pathfinding.
+    static float AggroRangeOf(Player* bot, Unit* u, float fallback,
+                              float floorYd, float capYd);
+
+    // The distance at which the tank should consider itself "at the boss" and
+    // hand off from the smooth long-path/direct-pursuit glide to the decisive
+    // engage pull. Derived from the LIVE boss's actual aggro range plus the
+    // tank's reach and a margin, so a small-aggro boss yields a short range
+    // (the smooth glide carries the tank most of the way in before the pull,
+    // killing the old stutter-creep) while a large-aggro elite yields a longer
+    // one (the tank commits to the pull right as it would aggro anyway). Falls
+    // back to `staticRange` when the boss isn't loaded yet or the dynamic-aggro
+    // config is off. The trigger ladder and the advance action MUST both read
+    // this so they agree on "are we at the boss".
+    static float BossEngageRange(Player* bot, AiObjectContext* ctx,
+                                 DungeonBossInfo const& boss, float staticRange);
 
     // Returns true when the party has caught up and recovered enough to pull again:
     //  - every living party member on the bot's map has HP% >= minHpPct,
@@ -222,9 +249,11 @@ public:
 
     // Scans `candidates` for the closest hostile alive unit whose 2D distance
     // to any segment of the supplied path polyline (within the first
-    // `maxLookAhead` yards of forward travel) is ≤ corridorWidth. LOS-checked.
-    // Nullptr if none. Replaces the single-segment FindBlockingTrashCorridor
-    // for long routes that fan across multiple chunks.
+    // `maxLookAhead` yards of forward travel) is within its blocking band.
+    // LOS-checked. Nullptr if none. Replaces the single-segment
+    // FindBlockingTrashCorridor for long routes that fan across multiple chunks.
+    // With DungeonClear.DynamicAggroRange on the band is each candidate's real
+    // aggro range (clamped to the trash floor/cap); off it is `corridorWidth`.
     static Unit* FindBlockingTrashOnPath(Player* bot,
                                          std::vector<PathSegment> const& segments,
                                          float maxLookAhead,

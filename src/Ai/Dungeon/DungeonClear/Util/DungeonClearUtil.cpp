@@ -138,8 +138,17 @@ namespace
 
     // Shared candidate evaluation for the corridor-style trash scans. Returns
     // the closest hostile, alive, level-reachable, in-LOS unit whose 2D
-    // position lands within `corridorWidth` of any segment in `segs`. Nullptr
-    // if none.
+    // position lands within its OWN effective aggro band of any segment in
+    // `segs`. Nullptr if none.
+    //
+    // `corridorWidth` is the band used for every candidate when
+    // DungeonClear.DynamicAggroRange is off (legacy fixed-width behaviour).
+    // With it on, each candidate's band is its real aggro range (clamped to
+    // [DungeonClear.TrashWidthFloor, DungeonClear.TrashWidthCap] via
+    // AggroRangeOf) and the AABB cull is padded by that cap: a giant elite with
+    // a large aggro radius now counts as blocking even when it sits several
+    // yards off the route line, while a low-aggro ambient mob just off the line
+    // no longer does — the two failure modes the old single fixed band had.
     //
     // LOS (and level-reachability) are checked PER CANDIDATE rather than once
     // on the final pick: a geometrically closer mob behind a wall must not
@@ -153,9 +162,22 @@ namespace
         if (!bot || segs.empty() || candidates.empty())
             return nullptr;
 
-        // 2D AABB around the lookahead corridor, padded by the width. Units
-        // nowhere near the route get rejected with four float compares before
-        // any per-segment distance math runs.
+        bool const dynamic =
+            sConfigMgr->GetOption<bool>("DungeonClear.DynamicAggroRange", true);
+        float const widthFloor =
+            sConfigMgr->GetOption<float>("DungeonClear.TrashWidthFloor", 8.0f);
+        float const widthCap =
+            sConfigMgr->GetOption<float>("DungeonClear.TrashWidthCap", 30.0f);
+
+        // Broad-phase band: the widest per-candidate band we might use. With
+        // dynamic aggro on it must reach the cap so a giant elite's large band
+        // isn't culled by the AABB before its per-candidate test runs; off, it
+        // stays at the caller's legacy fixed width.
+        float const broadWidth = dynamic ? std::max(corridorWidth, widthCap) : corridorWidth;
+
+        // 2D AABB around the lookahead corridor, padded by the broad-phase
+        // width. Units nowhere near the route get rejected with four float
+        // compares before any per-segment distance math runs.
         float minX = std::numeric_limits<float>::max();
         float maxX = std::numeric_limits<float>::lowest();
         float minY = std::numeric_limits<float>::max();
@@ -167,10 +189,9 @@ namespace
             minY = std::min({minY, s.ay, s.by});
             maxY = std::max({maxY, s.ay, s.by});
         }
-        minX -= corridorWidth; maxX += corridorWidth;
-        minY -= corridorWidth; maxY += corridorWidth;
+        minX -= broadWidth; maxX += broadWidth;
+        minY -= broadWidth; maxY += broadWidth;
 
-        float const widthSq = corridorWidth * corridorWidth;
         Unit* best = nullptr;
         float bestDistFromBot = std::numeric_limits<float>::max();
 
@@ -194,6 +215,15 @@ namespace
             float const distFromBot = bot->GetDistance2d(u);
             if (distFromBot >= bestDistFromBot)
                 continue;
+
+            // Per-candidate band: its real aggro range, clamped to
+            // [widthFloor, widthCap] so a tiny-aggro mob right on the line
+            // still counts and a giant elite is caught out to the cap. Falls
+            // back to the caller's fixed corridorWidth when dynamic-aggro is
+            // off (AggroRangeOf returns the fallback then).
+            float const band =
+                DungeonClearUtil::AggroRangeOf(bot, u, corridorWidth, widthFloor, widthCap);
+            float const widthSq = band * band;
 
             bool inCorridor = false;
             for (Seg2D const& s : segs)
@@ -309,6 +339,60 @@ bool DungeonClearUtil::IsCreaturePresentOnMap(Player* bot, uint32 entry)
             return true;
     }
     return false;
+}
+
+float DungeonClearUtil::AggroRangeOf(Player* bot, Unit* u, float fallback,
+                                    float floorYd, float capYd)
+{
+    if (!bot || !u)
+        return fallback;
+    if (!sConfigMgr->GetOption<bool>("DungeonClear.DynamicAggroRange", true))
+        return fallback;
+
+    Creature* c = u->ToCreature();
+    if (!c)
+        return fallback;            // players/totems: keep the caller's band
+
+    // Core formula: detection range adjusted by level diff, already clamped
+    // 5-45yd. Add the creature's reach so the band measures "how close the
+    // route must pass for it to pull", not just its notice distance.
+    float range = c->GetAggroRange(bot) + c->GetCombatReach();
+    if (range < floorYd)
+        range = floorYd;
+    if (range > capYd)
+        range = capYd;
+    return range;
+}
+
+float DungeonClearUtil::BossEngageRange(Player* bot, AiObjectContext* ctx,
+                                        DungeonBossInfo const& boss, float staticRange)
+{
+    if (!bot || !ctx)
+        return staticRange;
+    if (!sConfigMgr->GetOption<bool>("DungeonClear.DynamicAggroRange", true))
+        return staticRange;
+
+    Creature* live = GetLiveBoss(bot, ctx, boss.entry);
+    if (!live)
+        return staticRange;         // not loaded yet — use the static fallback
+
+    float const margin =
+        sConfigMgr->GetOption<float>("DungeonClear.AggroRangeMargin", 2.0f);
+    float const floorYd =
+        sConfigMgr->GetOption<float>("DungeonClear.BossEngageRangeFloor", 12.0f);
+    float const capYd =
+        sConfigMgr->GetOption<float>("DungeonClear.BossEngageRangeCap", 30.0f);
+
+    // Hand off as the tank enters the boss's real aggro bubble: its notice
+    // distance + both reaches + a small margin so the engage trigger fires
+    // just before the boss would pull on its own.
+    float range = live->GetAggroRange(bot) + live->GetCombatReach()
+                + bot->GetCombatReach() + margin;
+    if (range < floorYd)
+        range = floorYd;
+    if (range > capYd)
+        range = capYd;
+    return range;
 }
 
 bool DungeonClearUtil::IsReachable(Player* bot, float x, float y, float z)
