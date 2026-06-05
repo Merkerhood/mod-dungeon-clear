@@ -6,6 +6,8 @@
 #include "DungeonClearUtil.h"
 #include "DungeonClearMath.h"
 
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -145,11 +147,11 @@ namespace
             return nullptr;
 
         bool const dynamic =
-            sConfigMgr->GetOption<bool>("DungeonClear.DynamicAggroRange", true);
+            DcSettings::GetBool(bot, "DynamicAggroRange");
         float const widthFloor =
-            sConfigMgr->GetOption<float>("DungeonClear.TrashWidthFloor", 8.0f);
+            DcSettings::GetFloat(bot, "TrashWidthFloor");
         float const widthCap =
-            sConfigMgr->GetOption<float>("DungeonClear.TrashWidthCap", 30.0f);
+            DcSettings::GetFloat(bot, "TrashWidthCap");
 
         // Broad-phase band: the widest per-candidate band we might use. With
         // dynamic aggro on it must reach the cap so a giant elite's large band
@@ -328,7 +330,7 @@ float DungeonClearUtil::AggroRangeOf(Player* bot, Unit* u, float fallback,
 {
     if (!bot || !u)
         return fallback;
-    if (!sConfigMgr->GetOption<bool>("DungeonClear.DynamicAggroRange", true))
+    if (!DcSettings::GetBool(bot, "DynamicAggroRange"))
         return fallback;
 
     Creature* c = u->ToCreature();
@@ -351,7 +353,7 @@ float DungeonClearUtil::BossEngageRange(Player* bot, AiObjectContext* ctx,
 {
     if (!bot || !ctx)
         return staticRange;
-    if (!sConfigMgr->GetOption<bool>("DungeonClear.DynamicAggroRange", true))
+    if (!DcSettings::GetBool(bot, "DynamicAggroRange"))
         return staticRange;
 
     Creature* live = GetLiveBoss(bot, ctx, boss.entry);
@@ -359,11 +361,11 @@ float DungeonClearUtil::BossEngageRange(Player* bot, AiObjectContext* ctx,
         return staticRange;         // not loaded yet — use the static fallback
 
     float const margin =
-        sConfigMgr->GetOption<float>("DungeonClear.AggroRangeMargin", 2.0f);
+        DcSettings::GetFloat(bot, "AggroRangeMargin");
     float const floorYd =
-        sConfigMgr->GetOption<float>("DungeonClear.BossEngageRangeFloor", 12.0f);
+        DcSettings::GetFloat(bot, "BossEngageRangeFloor");
     float const capYd =
-        sConfigMgr->GetOption<float>("DungeonClear.BossEngageRangeCap", 30.0f);
+        DcSettings::GetFloat(bot, "BossEngageRangeCap");
 
     // Hand off as the tank enters the boss's real aggro bubble: its notice
     // distance + both reaches + a small margin so the engage trigger fires
@@ -1027,7 +1029,7 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
     Player* bot = botAI->GetBot();
     AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-    uint32 const minQuality = sConfigMgr->GetOption<uint32>("DungeonClear.LootMinQuality", 0);
+    uint32 const minQuality = DcSettings::GetUInt(bot, "LootMinQuality");
 
     // Drain EVERY in-range unworthy corpse this tick, not just the single
     // nearest. Each pass judges the loot the bot would commit to next — stock's

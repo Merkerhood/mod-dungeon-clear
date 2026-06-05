@@ -16,6 +16,8 @@
  * the message so no further chat processing occurs.
  */
 
+#include <cstdlib>
+
 #include "ScriptMgr.h"
 #include "PlayerScript.h"
 #include "Chat.h"
@@ -26,17 +28,18 @@
 #include "PlayerbotAI.h"
 
 #include "DungeonClearDispatch.h"
+#include "StringFormat.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettingsRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 
 namespace
 {
-    // Send an error back to the player via the addon message channel.
-    void SendAddonError(Player* player, std::string const& msg)
+    // Send a raw "DC\t..." payload back to the player via the addon channel.
+    void SendAddonPayload(Player* player, std::string const& payload)
     {
         if (!player)
             return;
-
-        std::string const payload = "DC\tERROR\t" + msg;
 
         WorldPacket data;
         ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, payload.c_str(),
@@ -45,6 +48,95 @@ namespace
 
         ServerFacade::instance().SendPacket(player, &data);
     }
+
+    // Send an error back to the player via the addon message channel.
+    void SendAddonError(Player* player, std::string const& msg)
+    {
+        SendAddonPayload(player, "DC\tERROR\t" + msg);
+    }
+
+    // One "DC\tSETTINGS\t<key>\t<value>\t<min>\t<max>\t<type>\t<overridden>"
+    // line describing one player-facing setting's effective value + schema, so
+    // the addon can populate (and optionally render) its panel from the server.
+    void SendSettingLine(Player* player, ObjectGuid owner, DcSettingDef const& d)
+    {
+        double const value = DcSettings::GetEffectiveRaw(owner, d);
+        bool const overridden = DcSettings::HasOverride(owner, d.key);
+
+        SendAddonPayload(player, Acore::StringFormat(
+            "DC\tSETTINGS\t{}\t{}\t{}\t{}\t{}\t{}",
+            d.key, value, d.minVal, d.maxVal,
+            static_cast<int>(d.type), overridden ? 1 : 0));
+    }
+
+    // Push every player-facing setting (the full panel) to the player, framed by
+    // a SYNCSTART/SYNCEND pair so the addon knows when it has the complete set.
+    void SendSettingsSync(Player* player, ObjectGuid owner)
+    {
+        SendAddonPayload(player, "DC\tSYNCSTART");
+        for (DcSettingDef const& d : kDcSettings)
+            if (d.playerFacing)
+                SendSettingLine(player, owner, d);
+        SendAddonPayload(player, "DC\tSYNCEND");
+    }
+
+    // set / reset / sync share the same run-owner resolution. Returns false (and
+    // reports an error) when the player has no leader tank to own the overrides.
+    void HandleSettingsCommand(Player* player, std::string const& subCmd,
+                               std::string const& param)
+    {
+        Player* leader = DungeonClearUtil::FindLeaderTank(player);
+        if (!leader)
+        {
+            SendAddonError(player, "No tank bot found in your group.");
+            return;
+        }
+        ObjectGuid const owner = leader->GetGUID();
+
+        if (subCmd == "sync")
+        {
+            SendSettingsSync(player, owner);
+            return;
+        }
+
+        if (subCmd == "reset")
+        {
+            // param is the key to reset, or empty to reset the whole run.
+            DcSettings::ResetOverride(owner, param);
+            SendSettingsSync(player, owner);
+            return;
+        }
+
+        // subCmd == "set": param is "<key>\t<value>".
+        auto const sep = param.find('\t');
+        if (sep == std::string::npos)
+        {
+            SendAddonError(player, "set requires <key> <value>.");
+            return;
+        }
+
+        std::string const key = param.substr(0, sep);
+        std::string const valStr = param.substr(sep + 1);
+
+        char* end = nullptr;
+        double const value = std::strtod(valStr.c_str(), &end);
+        if (end == valStr.c_str())
+        {
+            SendAddonError(player, "Invalid value for " + key + ".");
+            return;
+        }
+
+        std::string err;
+        if (!DcSettings::SetOverride(owner, key, value, &err))
+        {
+            SendAddonError(player, err);
+            return;
+        }
+
+        // Echo the stored (clamped) value back so the addon shows the truth.
+        if (DcSettingDef const* d = FindDcSetting(key))
+            SendSettingLine(player, owner, *d);
+    }
 }
 
 class DungeonClearAddonHookScript : public PlayerScript
@@ -52,8 +144,18 @@ class DungeonClearAddonHookScript : public PlayerScript
 public:
     DungeonClearAddonHookScript()
         : PlayerScript("DungeonClearAddonHookScript", {
-            PLAYERHOOK_ON_BEFORE_SEND_CHAT_MESSAGE
+            PLAYERHOOK_ON_BEFORE_SEND_CHAT_MESSAGE,
+            PLAYERHOOK_ON_LOGOUT
         }) {}
+
+    // Per-run overrides are keyed by the leader tank's GUID; drop them when that
+    // player logs out so stale leader GUIDs don't accumulate. A no-op for any
+    // player who never owned a run.
+    void OnPlayerLogout(Player* player) override
+    {
+        if (player)
+            DcSettings::ClearRun(player->GetGUID());
+    }
 
     void OnPlayerBeforeSendChatMessage(Player* player, uint32& type, uint32& lang, std::string& msg) override
     {
@@ -98,6 +200,16 @@ public:
 
         if (subCmd.empty())
             return;
+
+        // Per-run settings overrides (set/reset/sync) are handled in-process
+        // rather than dispatched as a tank-bot action.
+        if (subCmd == "set" || subCmd == "reset" || subCmd == "sync")
+        {
+            HandleSettingsCommand(player, subCmd, param);
+            msg.clear();
+            type = CHAT_MSG_ADDON;
+            return;
+        }
 
         // Map subcommand strings to action names.
         std::string action;

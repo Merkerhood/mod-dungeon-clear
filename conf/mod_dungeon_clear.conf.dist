@@ -7,9 +7,19 @@
 # Clearing is driven at runtime with `.dc on|off|skip|status|bosses` or the
 # in-party chat keywords (`dc on`, `dungeon clear on`, …) — no config needed.
 # The settings below tune behaviour, debugging, and pathing.
+#
+# PER-PLAYER OVERRIDES: the GENERAL SETTINGS below are the server-wide DEFAULT.
+# Players running the DungeonClear companion addon can override any of them for
+# the duration of their own dungeon run (the override is keyed to their group's
+# leader tank bot and discarded when that run ends). The addon pushes overrides
+# over the "DC" addon channel via `set <key> <value>` / `reset [<key>]` and
+# reads the current effective values + schema via `sync`. The server validates
+# and clamps every override to the registry range (see DcSettingsRegistry.h);
+# the values here remain the fallback for anyone without an override. The
+# DEBUGGING and ADVANCED PATHING settings are server-only and NOT overridable.
 
 ########################################
-# GENERAL SETTINGS
+# GENERAL SETTINGS  (per-player overridable — see note above)
 ########################################
 
 #

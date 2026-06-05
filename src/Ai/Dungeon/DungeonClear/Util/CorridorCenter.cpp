@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "Config.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "DetourCommon.h"
 #include "DetourExtended.h"   // dtQueryFilterExt
 #include "DetourNavMeshQuery.h"
@@ -134,11 +135,13 @@ CorridorCenter::Params CorridorCenter::LoadParams()
     if (cachedAt != 0 && now - cachedAt < 1000)
         return cached;
 
+    // Server-only keys: read with an empty run owner so the override store is
+    // never consulted (this runs on the map-update worker threads).
     Params p;
-    p.enable      = sConfigMgr->GetOption<bool>("DungeonClear.PathCenterEnable", true);
-    p.clearance   = sConfigMgr->GetOption<float>("DungeonClear.PathWallClearance", 3.0f);
-    p.maxPush     = sConfigMgr->GetOption<float>("DungeonClear.PathCenterMaxPush", 3.0f);
-    p.smoothIters = sConfigMgr->GetOption<int32>("DungeonClear.PathCenterSmoothIters", 2);
+    p.enable      = DcSettings::GetBool(ObjectGuid::Empty, "PathCenterEnable");
+    p.clearance   = DcSettings::GetFloat(ObjectGuid::Empty, "PathWallClearance");
+    p.maxPush     = DcSettings::GetFloat(ObjectGuid::Empty, "PathCenterMaxPush");
+    p.smoothIters = DcSettings::GetInt(ObjectGuid::Empty, "PathCenterSmoothIters");
     p.clearance   = std::max(0.0f, p.clearance);
     p.maxPush     = std::max(0.0f, p.maxPush);
     p.smoothIters = std::max(0, p.smoothIters);

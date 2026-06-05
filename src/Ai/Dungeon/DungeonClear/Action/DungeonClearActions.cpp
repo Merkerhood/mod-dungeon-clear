@@ -30,6 +30,7 @@
 #include "ServerFacade.h"
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -524,7 +525,7 @@ namespace
         uint32& pendingSince = ctx->GetValue<uint32>("dungeon clear pending path since")->RefGet();
         uint32 const now = getMSTime();
 
-        bool const asyncEnabled = sConfigMgr->GetOption<bool>("DungeonClear.AsyncPathfinding", true);
+        bool const asyncEnabled = DcSettings::GetBool(bot, "AsyncPathfinding");
 
         // ---- 1. Drain a completed async build ----
         if (pendingJob)

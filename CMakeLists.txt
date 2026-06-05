@@ -21,5 +21,7 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Data/DungeonWingRegistry.{h,cpp}, Action/StayDeadAction.{h,cpp},
 # Util/CorridorCenter.{h,cpp}, Value/DungeonClearLiveBossValue.{h,cpp},
 # Util/DcPathWorker.{h,cpp} (async pathfinding worker),
-# Util/DungeonClearGeometry.{h,cpp} (shared LOS/distance primitives)
+# Util/DungeonClearGeometry.{h,cpp} (shared LOS/distance primitives),
+# Settings/DcSettingsRegistry.h + Settings/DcSettings.{h,cpp}
+#   (per-run settings registry + override accessor)
 # (this comment bumps mtime to force CMake re-glob on next build)
