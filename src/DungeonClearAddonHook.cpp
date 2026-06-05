@@ -6,8 +6,11 @@
  * payloads and dispatches to the same tank-bot actions that the `.dc` slash
  * command uses.
  *
- * The addon sends commands via SendAddonMessage("DC", ..., "PARTY") which
- * arrives as CHAT_MSG_PARTY / LANG_ADDON.  Our OnPlayerBeforeSendChatMessage
+ * The addon sends commands via SendAddonMessage("DC", ..., "PARTY") in a party
+ * or "RAID" in a raid, arriving as CHAT_MSG_PARTY / CHAT_MSG_RAID / LANG_ADDON.
+ * (A raid must use the RAID channel: a PARTY addon message only reaches the
+ * sender's subgroup, so a tank bot in another subgroup would never see it.)
+ * Our OnPlayerBeforeSendChatMessage
  * hook fires before the ChatHandler switch statement, parses the command,
  * dispatches it silently (DoSpecificAction with silent=true), then consumes
  * the message so no further chat processing occurs.
@@ -58,8 +61,12 @@ public:
         if (lang != LANG_ADDON)
             return;
 
-        // Accept PARTY and PARTY_LEADER (standard addon channel).
-        if (type != CHAT_MSG_PARTY && type != CHAT_MSG_PARTY_LEADER)
+        // Accept PARTY/PARTY_LEADER (party groups) and RAID/RAID_LEADER (raid
+        // groups). The addon sends on RAID when the player is in a raid so the
+        // command reaches a tank bot in any subgroup — on PARTY it would only
+        // reach the sender's own subgroup.
+        if (type != CHAT_MSG_PARTY && type != CHAT_MSG_PARTY_LEADER &&
+            type != CHAT_MSG_RAID && type != CHAT_MSG_RAID_LEADER)
             return;
 
         // Addon messages arrive as "DC\tCMD\t<sub>[\t<param>]".
