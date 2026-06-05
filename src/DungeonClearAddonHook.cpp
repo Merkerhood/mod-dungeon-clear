@@ -85,17 +85,22 @@ namespace
     void HandleSettingsCommand(Player* player, std::string const& subCmd,
                                std::string const& param)
     {
+        // The run owner is this party's leader tank, if one exists. sync works
+        // without one (it just reports the server defaults so the addon panel
+        // can render anywhere); set/reset need an owner to attach the override
+        // to and report an error when there's no tank in the group.
         Player* leader = DungeonClearUtil::FindLeaderTank(player);
-        if (!leader)
-        {
-            SendAddonError(player, "No tank bot found in your group.");
-            return;
-        }
-        ObjectGuid const owner = leader->GetGUID();
+        ObjectGuid const owner = leader ? leader->GetGUID() : ObjectGuid::Empty;
 
         if (subCmd == "sync")
         {
             SendSettingsSync(player, owner);
+            return;
+        }
+
+        if (owner.IsEmpty())
+        {
+            SendAddonError(player, "No tank bot found in your group.");
             return;
         }
 
