@@ -105,6 +105,26 @@ wall-clip, fall back to Option A.
 
 ## Phase 3 — Finding #1: decompose `Advance::Execute`
 
+> **Status (as shipped).** Done in two commits, but split for risk rather than
+> by the original 3a/3b boundary:
+> - **3a (done):** extracted the four cleanly counter-*independent* phases
+>   (`TryEngageHold`, `TryLootYield`, `TryBetweenPullsRest`,
+>   `TryBossNotPresentStall`) into member methods returning
+>   `Step{Continue,ReturnTrue,ReturnFalse}`; Execute is now a short ladder over a
+>   per-tick `AdvanceState` bundle. Verbatim move, no behavior change.
+> - **3b (done):** consolidated the two multi-counter reset *clusters*
+>   (entered-engage-range, boss-change) into `ResetApproachOnEnteredEngageRange`
+>   / `ResetApproachOnBossChange` helpers — capturing the bug-prone "centralise
+>   the resets" intent at low risk, WITHOUT migrating the five counters to a
+>   single struct/value. The full `ApproachHealth` value-store migration and the
+>   extraction of the counter-coupled tail (stuck recovery / direct pursuit /
+>   long-path drive) were deliberately deferred: they are the highest-risk,
+>   test-blind changes, and the reset consolidation already removes the scattered
+>   duplication where past bugs lived. Tracked as a follow-up in
+>   `IDEAS-pathfinding-future.md` (Idea D).
+>
+> Original plan text for the full decomposition follows.
+
 The structural payoff and the riskiest phase — done last, on a clean tree.
 `DungeonClearActions.cpp:830-1581` is one ~750-line method running ~16 sequential
 decision phases and juggling five failure counters (`stuck`, `posStuck`,

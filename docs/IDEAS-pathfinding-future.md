@@ -118,6 +118,34 @@ family.
 
 ---
 
+## Idea D — Finish the Advance decomposition (deferred from Phase 3)
+
+**Idea.** Two follow-ups left from the navigation-review Phase 3 (see
+`PLAN-nav-refactor.md`):
+1. Migrate the five per-approach counters (`stuck`, `posStuck`,
+   `rebuildAttempts`, `doneNotEngagedTicks`, `pursuitFailTicks`) from five
+   separate context values into one `ApproachHealth` struct value, with the
+   reset helpers (`ResetApproachOnEnteredEngageRange` /
+   `ResetApproachOnBossChange`, already added in 3b) becoming methods on it.
+2. Extract the still-inline counter-coupled tail of `Execute` (stuck-recovery,
+   direct-pursuit, long-path-drive) into member methods, mirroring the 3a ladder.
+
+**Why it was deferred.** These are the highest-risk, least-test-guardable parts
+of the whole refactor — the counter interactions are exactly where the past
+freeze/livelock bugs lived, and there is no unit coverage for `Execute`'s
+orchestration. 3b already centralised the bug-prone reset *clusters*, which is
+most of the maintainability win at a fraction of the risk.
+
+**Open questions.**
+- Best done after Idea C (unified movement intent), since the tail extraction
+  and the intent model overlap heavily — doing them together avoids extracting
+  the pursuit/drive logic twice.
+- A single `ApproachHealth` value changes the serialization/Reset path
+  (`DisableDungeonClear` currently resets each counter by name) — confirm the
+  one-value Reset covers every field.
+- Worth pairing with a pure unit test of `ApproachHealth` transitions (the one
+  genuinely unit-testable slice of the tail).
+
 ## Smaller spin-off thoughts
 
 - **Boss "room entrance" targeting.** Instead of aiming at the boss centroid,

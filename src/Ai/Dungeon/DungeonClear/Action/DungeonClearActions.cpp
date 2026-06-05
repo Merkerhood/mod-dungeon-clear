@@ -360,6 +360,44 @@ namespace
         ctx->GetValue<std::string&>("dungeon clear phase")->Get() = phase;
     }
 
+    // ---- Per-approach counter resets ------------------------------------
+    // Advance tracks several independent "this approach is failing" signals —
+    // stuck count (MoveTo no-ops), no-displacement ticks, consecutive rebuilds,
+    // path-ends-short ticks, and the direct-pursuit give-up latch — plus the
+    // position sentinel and the sticky trash pick. Their reset rules used to be
+    // inlined at each trigger site in Execute, which is exactly where several
+    // past freeze/livelock bugs lived. Centralise the two multi-counter reset
+    // clusters here so the reset logic is in one auditable place. Both write the
+    // shared context values directly, so any local RefGet() reference Execute
+    // holds reflects the reset immediately (same backing storage).
+
+    // Reached engage range: clear the dead-end escalation counter and the
+    // direct-pursuit give-up latch, so a boss that wanders back out can be
+    // re-pursued cleanly instead of staying latched off the pursuit shortcut.
+    void ResetApproachOnEnteredEngageRange(AiObjectContext* ctx)
+    {
+        ctx->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
+    }
+
+    // Committed boss changed: wipe every per-approach counter/latch, the
+    // position sentinel, and the sticky trash target so nothing from the
+    // previous pull bleeds into the new approach.
+    void ResetApproachOnBossChange(AiObjectContext* ctx, uint32 newEntry)
+    {
+        ctx->GetValue<uint32>("dungeon clear last target entry")->Set(newEntry);
+        ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
+        ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
+        ctx->GetValue<Position&>("dungeon clear last position")->Get() = Position();
+        // Sticky trash target was picked for the previous boss's corridor; it
+        // doesn't necessarily lie in the new boss's corridor and can be far
+        // behind us. Re-pick from scratch on next engage-trash tick.
+        ctx->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+    }
+
     // True only when the bot is genuinely ENTITLED to open this door: it is
     // lock-gated and the bot satisfies the lock (holds the key item, or has the
     // required skill such as lockpicking). Everything else returns false and is
@@ -1067,13 +1105,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     uint32& doneNotEngagedTicks =
         context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->RefGet();
     if (engageDist < engageRange)
-    {
-        doneNotEngagedTicks = 0;
-        // Made it into engage range: clear the direct-pursuit give-up latch too,
-        // so a later approach to this same boss (it wandered back out) can use
-        // the direct-pursuit shortcut again instead of staying latched off it.
-        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-    }
+        ResetApproachOnEnteredEngageRange(context);
 
     // Bundle the per-tick approach state for the extracted phase steps below.
     AdvanceState st;
@@ -1108,19 +1140,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     uint32& rebuildAttempts =
         context->GetValue<uint32>("dungeon clear stride rebuild attempts")->RefGet();
     if (lastEntry != next->entry)
-    {
-        context->GetValue<uint32>("dungeon clear last target entry")->Set(next->entry);
-        stuck = 0;
-        posStuck = 0;
-        rebuildAttempts = 0;
-        doneNotEngagedTicks = 0;
-        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-        lastPos = Position();  // reset to (0,0,0) sentinel on boss change
-        // Sticky trash target was picked for the previous boss's corridor;
-        // it doesn't necessarily lie in the new boss's corridor and can be
-        // far behind us. Re-pick from scratch on next engage-trash tick.
-        context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    }
+        ResetApproachOnBossChange(context, next->entry);
 
     // Position-based stuck check. Sample current world position; if the
     // bot is supposedly moving but barely shifted since the previous tick,
