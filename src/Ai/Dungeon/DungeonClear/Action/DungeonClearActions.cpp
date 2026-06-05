@@ -1520,15 +1520,30 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // MoveTo gave us, without the per-point stops.
     MotionMaster* mm = bot->GetMotionMaster();
 
-    // Leave a healthy in-flight spline alone. NextHop above already advanced
-    // the follower cursor past the points we've glided over, so there's
-    // nothing to do but let it ride. Re-issuing now would StopMoving and
-    // relaunch (a visible hitch) — the very stutter we're removing. The
-    // IsWaitingForLastMove guard bridges the sub-tick window between issuing
-    // the spline and isMoving() reading true, so we never double-launch.
+    // Leave a healthy in-flight spline alone, but ONLY while it is genuinely
+    // still gliding (ESCORT generator active AND the move flag set). NextHop
+    // above already advanced the follower cursor past the points we've glided
+    // over, so a live glide just rides. Re-issuing one would StopMoving + Launch
+    // a fresh escort and hitch.
+    //
+    // We deliberately do NOT also gate on IsWaitingForLastMove here. That was
+    // the freeze bug: the LastMovement delay is sized to the WHOLE window's
+    // travel (capped at maxWaitForMove = 5s), so the instant the escort spline
+    // finalizes — at a window boundary, or early because the bot out-ran the
+    // runSpeed estimate — isMoving() drops to false yet IsWaitingForLastMove
+    // stayed true, and this guard sat the tank still for the rest of that delay
+    // (up to ~5s) while the status still read "moving". That is the mid-path
+    // "En route but frozen for seconds" and the pause squeezing through a narrow
+    // hallway. Keying solely on splineRunning re-issues the next window on the
+    // very next tick once the current one ends, so the legs chain seamlessly.
+    //
+    // No double-launch risk: MoveSplinePath -> Mutate(MOTION_SLOT_ACTIVE) calls
+    // the escort generator's Initialize()/Launch() synchronously (we're in the
+    // AI update, not a MotionMaster update), so isMoving()/splineRunning is
+    // already true on the next tick — splineRunning alone covers the launch.
     bool const splineRunning =
         mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
-    if (splineRunning || IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+    if (splineRunning)
     {
         stuck = 0;
         ClearStall(context);
@@ -1560,24 +1575,11 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 
         // Record NORMAL-priority movement so AttackAction::Attack still clears
         // the spline when a patrol aggros mid-glide (its interrupt gate is
-        // priority < MOVEMENT_COMBAT).
-        //
-        // The delay MUST track the spline's real travel time, not a constant.
-        // The re-issue guard above is
-        //   if (splineRunning || IsWaitingForLastMove(NORMAL)) return;
-        // and IsWaitingForLastMove stays true for `delay` ms. A fixed 1000ms
-        // delay was a latent stutter: whenever a window is short enough that
-        // the bot finishes gliding it in under a second (a near-route-end leg,
-        // an LOS-truncated chunk, or a short strided chunk), the spline
-        // finalizes and the bot stops, yet IsWaitingForLastMove keeps blocking
-        // the next issuance until the second is up — so the tank idles ~0.3-0.5s
-        // before the next glide. Glide-idle-glide-idle is the "step, pause,
-        // step" the tank showed, and the idle ending is the "snap forward".
-        // Sizing the delay to the window's path length makes the wait expire
-        // exactly when the spline does, so the next window issues immediately
-        // and the legs chain seamlessly. (Launch() sets MOVEMENTFLAG_FORWARD
-        // synchronously, so isMoving()/splineRunning is already true on the
-        // next tick — there is no issue→moving gap that needed a fixed bridge.)
+        // priority < MOVEMENT_COMBAT). The re-issue guard no longer keys off
+        // this delay (see splineRunning above), so its only remaining job is
+        // priority arbitration; sizing it to the window's travel time keeps it a
+        // faithful "this NORMAL move lasts ~this long" for the framework's other
+        // movement consumers without ever gating our own re-issue.
         float windowLen = 0.0f;
         for (size_t i = 1; i < window.size(); ++i)
             windowLen += (window[i] - window[i - 1]).magnitude();
@@ -2032,12 +2034,14 @@ bool DungeonClearDoorBlockedAction::Execute(Event /*event*/)
         return parkAndStall();
     }
 
-    // Leave a healthy in-flight spline alone (same re-issue guard as Advance);
-    // re-issuing would StopMoving + relaunch and stutter the walk-in.
+    // Leave a healthy in-flight spline alone, but ONLY while it is genuinely
+    // gliding (same splineRunning-only guard as Advance — gating on
+    // IsWaitingForLastMove froze the walk-in for the remainder of the
+    // window-sized delay whenever the spline finalized early).
     MotionMaster* mm = bot->GetMotionMaster();
     bool const splineRunning =
         mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
-    if (splineRunning || IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
+    if (splineRunning)
         return true;
     if (!IsMovingAllowed())
         return parkAndStall();
