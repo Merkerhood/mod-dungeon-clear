@@ -18,6 +18,7 @@
 #include "PathGenerator.h"    // NAV_* flags, VERTEX_SIZE, INVALID_POLYREF
 #include "Player.h"
 #include "Timer.h"            // getMSTime
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearGeometry.h"
 
 namespace
 {
@@ -39,26 +40,10 @@ namespace
     // the whole route just short of the door. We therefore re-check every
     // accepted push against the VMAP and revert any that would break a
     // sightline, so centering can never cause that truncation.
-    constexpr float LOS_Z_BUMP  = 1.5f;   // ~eye height, matches the producers
-    constexpr float LOS_MIN_HOP = 3.0f;   // sub-3yd hops are smoothing artifacts
-
-    // True iff the bot has a clear static-VMAP straight line between two world
-    // points. Short hops are treated as clear (they're Detour smoothing
-    // artifacts the producers also skip). A null map fails open (clear) so the
-    // guard never blocks centering when geometry can't be queried.
-    bool ChordClear(Player* bot, G3D::Vector3 const& a, G3D::Vector3 const& b)
-    {
-        float const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-        if ((dx * dx + dy * dy + dz * dz) < (LOS_MIN_HOP * LOS_MIN_HOP))
-            return true;
-        Map const* map = bot->GetMap();
-        if (!map)
-            return true;
-        return map->isInLineOfSight(a.x, a.y, a.z + LOS_Z_BUMP,
-                                    b.x, b.y, b.z + LOS_Z_BUMP,
-                                    bot->GetPhaseMask(), LINEOFSIGHT_CHECK_VMAP,
-                                    VMAP::ModelIgnoreFlags::Nothing);
-    }
+    // The static-VMAP chord check is shared with the route producers — see
+    // DungeonClearGeometry::ChordClear (short hops clear, null map fails open,
+    // ~eye-height raycast bump). Pull it in so the call sites stay unchanged.
+    using DungeonClearGeometry::ChordClear;
 
     // Modest A* pool for the convenience overload's own query. findDistanceTo
     // Wall / findNearestPoly are local searches — they do not need the

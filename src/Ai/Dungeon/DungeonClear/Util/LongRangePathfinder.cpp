@@ -6,6 +6,7 @@
 #include "LongRangePathfinder.h"
 
 #include "Ai/Dungeon/DungeonClear/Util/CorridorCenter.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -53,57 +54,10 @@ namespace
     constexpr float HOP_ARRIVE_RADIUS = 6.0f;
 
     // ---- LOS screen ------------------------------------------------------
-    // NOTE: intentionally duplicated from StridedPathfinder.cpp's
-    // LOSCleanPrefixCount so the hardened strided fallback stays byte-for-byte
-    // untouched in this change. Keep the two in sync; a follow-up can hoist
-    // this into DungeonClearUtil as the single source of truth.
-    constexpr float LOS_Z_BUMP = 1.5f;          // ~eye height bump for the raycast
-    constexpr float LOS_MIN_HOP = 3.0f;         // skip sub-3yd smoothing artifacts
-    constexpr size_t LOS_GRAZE_BRIDGE = 3;      // tolerate up to N consecutive corner grazes
-
-    // Walks the smoothed polyline's chords with a static-VMAP LOS check and
-    // returns how many *leading* points form a usable corridor (from index 0).
-    // Isolated corner grazes on sharp bends are bridged; a sustained
-    // wall-crossing truncates to the verified prefix. Same contract as the
-    // strided builder: pts[0] is the start, return value includes it.
-    size_t LOSCleanPrefixCount(Player* bot, std::vector<G3D::Vector3> const& pts)
-    {
-        if (!bot || pts.size() < 2)
-            return pts.size();
-        Map const* map = bot->GetMap();
-        if (!map)
-            return pts.size();
-        uint32 const phase = bot->GetPhaseMask();
-
-        auto losClear = [&](G3D::Vector3 const& a, G3D::Vector3 const& b) -> bool
-        {
-            float const dx = b.x - a.x;
-            float const dy = b.y - a.y;
-            float const dz = b.z - a.z;
-            if ((dx * dx + dy * dy + dz * dz) < (LOS_MIN_HOP * LOS_MIN_HOP))
-                return true;  // Detour smoothing artifact, too short to matter
-            return map->isInLineOfSight(a.x, a.y, a.z + LOS_Z_BUMP,
-                                        b.x, b.y, b.z + LOS_Z_BUMP,
-                                        phase, LINEOFSIGHT_CHECK_VMAP,
-                                        VMAP::ModelIgnoreFlags::Nothing);
-        };
-
-        size_t committed = 0;
-        size_t consecBlocked = 0;
-        for (size_t k = 0; k + 1 < pts.size(); ++k)
-        {
-            if (losClear(pts[k], pts[k + 1]))
-            {
-                committed = k + 1;
-                consecBlocked = 0;
-            }
-            else if (++consecBlocked > LOS_GRAZE_BRIDGE)
-            {
-                break;
-            }
-        }
-        return committed + 1;
-    }
+    // The graze-bridged clean-prefix walk now lives in DungeonClearGeometry
+    // (shared with StridedPathfinder / CorridorCenter). pts[0] is the start and
+    // the return value includes it, same contract as before.
+    using DungeonClearGeometry::LosCleanPrefixCount;
 
     // ---- our own big-pool query, reused across calls ---------------------
     // The query carries a ~2MB 65535-node A* pool. Re-allocating it on every
@@ -485,7 +439,7 @@ LongRangePathfinder::Result LongRangePathfinder::Finalize(Player* bot, RawResult
     // LOS-screen the smoothed corridor (corner grazes bridged; a sustained
     // wall-crossing truncates to the verified prefix). cleanPts counts from
     // index 0 and includes the leading start point.
-    size_t const cleanPts = LOSCleanPrefixCount(bot, pts);
+    size_t const cleanPts = LosCleanPrefixCount(bot, pts);
     if (cleanPts < 2)
     {
         // Corridor heads straight into static geometry from the start — hand

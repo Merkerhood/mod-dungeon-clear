@@ -16,6 +16,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonSpawnGraph.h"
 #include "Ai/Dungeon/DungeonClear/Util/CorridorCenter.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 
@@ -76,100 +77,13 @@ namespace
         return (type & PATHFIND_NOPATH) || (type & PATHFIND_SHORT) || (type & PATHFIND_SHORTCUT);
     }
 
-    // Vertical bump for the LOS raycast so floor-touching smoothed points
-    // don't false-fail on slope/stair transitions. Roughly player eye height.
-    constexpr float LOS_Z_BUMP = 1.5f;
-
-    // Hops below this distance get skipped — Detour's smoothing puts very
-    // short hops around concave corners that are guaranteed to LOS-pass
-    // and would only burn raycasts.
-    constexpr float LOS_MIN_HOP = 3.0f;
-
-    // Longest run of consecutive blocked chords we treat as a benign corner
-    // graze rather than a real obstruction. A sharp convex bend — the inside
-    // of a U/S turn — makes the ~4yd smoothed secants clip the wall corner
-    // for one to a few points before the corridor straightens out again. The
-    // navmesh itself routed safely around that corner and the follower issues
-    // a fresh <=4yd MoveTo per point (the engine re-paths each one), so these
-    // grazes never produce an actual wall-clip. A genuinely bad mmap poly
-    // bridging two rooms through solid geometry fails for a longer continuous
-    // run and is NOT bridged — we truncate the usable corridor there instead.
-    constexpr size_t LOS_GRAZE_BRIDGE = 3;
-
-    // Walks the smoothed polyline's consecutive chords with a static-VMAP LOS
-    // check and returns how many *leading* points form a usable corridor
-    // (counting from index 0). Returns pts.size() when the whole corridor is
-    // clean — the common case.
-    //
-    // On a sustained obstruction it returns the length of the clean prefix so
-    // the caller can still use the verified part and re-probe from its end
-    // next stride. That is far better than the old all-or-nothing reject,
-    // which discarded the entire probe and fell through to the bee-line tiers
-    // — and those tiers can't follow a bend at all, which is exactly why sharp
-    // U/S corridors used to fail outright.
-    //
-    // Isolated blocked chords (corner grazes) are tolerated up to
-    // LOS_GRAZE_BRIDGE consecutive failures; a clear chord resets the run.
-    //
-    // Static-VMAP-only (no game-object checks): doors and dynamic obstacles
-    // are handled elsewhere (DungeonClearBlockingDoorValue / engage triggers),
-    // and including them here would reject good corridors that happen to have
-    // a transient door across them.
-    size_t LOSCleanPrefixCount(Player* bot, std::vector<G3D::Vector3> const& pts)
-    {
-        if (!bot || pts.size() < 2)
-            return pts.size();
-        Map const* map = bot->GetMap();
-        if (!map)
-            return pts.size();
-        uint32 const phase = bot->GetPhaseMask();
-
-        auto losClear = [&](G3D::Vector3 const& a, G3D::Vector3 const& b) -> bool
-        {
-            float const dx = b.x - a.x;
-            float const dy = b.y - a.y;
-            float const dz = b.z - a.z;
-            if ((dx * dx + dy * dy + dz * dz) < (LOS_MIN_HOP * LOS_MIN_HOP))
-                return true;  // Detour smoothing artifact, too short to matter
-            return map->isInLineOfSight(a.x, a.y, a.z + LOS_Z_BUMP,
-                                        b.x, b.y, b.z + LOS_Z_BUMP,
-                                        phase, LINEOFSIGHT_CHECK_VMAP,
-                                        VMAP::ModelIgnoreFlags::Nothing);
-        };
-
-        size_t committed = 0;       // highest index reachable via a clean corridor
-        size_t consecBlocked = 0;   // length of the current blocked-chord run
-        for (size_t k = 0; k + 1 < pts.size(); ++k)
-        {
-            if (losClear(pts[k], pts[k + 1]))
-            {
-                committed = k + 1;
-                consecBlocked = 0;
-            }
-            else if (++consecBlocked > LOS_GRAZE_BRIDGE)
-            {
-                break;  // sustained obstruction — clean corridor ends at committed
-            }
-            // else: within the graze tolerance; don't commit past it until a
-            // clear chord confirms the corridor reconnected.
-        }
-        return committed + 1;
-    }
-
-    float Dist2D(float ax, float ay, float bx, float by)
-    {
-        float const dx = bx - ax;
-        float const dy = by - ay;
-        return std::sqrt(dx * dx + dy * dy);
-    }
-
-    float Dist3D(float ax, float ay, float az, float bx, float by, float bz)
-    {
-        float const dx = bx - ax;
-        float const dy = by - ay;
-        float const dz = bz - az;
-        return std::sqrt(dx * dx + dy * dy + dz * dz);
-    }
+    // LOS screen, distance helpers and the graze-bridged clean-prefix walk now
+    // live in DungeonClearGeometry (shared with LongRangePathfinder and
+    // CorridorCenter). Pull the names into this TU so the call sites below stay
+    // unchanged; LosCleanPrefixCount replaces the old local LOSCleanPrefixCount.
+    using DungeonClearGeometry::Dist2D;
+    using DungeonClearGeometry::Dist3D;
+    using DungeonClearGeometry::LosCleanPrefixCount;
 
     // Project (tx, ty, tz) from (cx, cy, cz) at the given 2D rotation about
     // the bee-line. zHint is the requested target z — we use it to hold
@@ -252,7 +166,7 @@ namespace
         // Count the LOS-clean leading points (corner grazes bridged; a real
         // wall-bridge truncates the prefix). cleanPts includes the leading
         // start point, so the usable candidate points are cleanPts - 1.
-        size_t const cleanPts = LOSCleanPrefixCount(bot, losInput);
+        size_t const cleanPts = LosCleanPrefixCount(bot, losInput);
         if (cleanPts < 2)
         {
             // Not even the first hop is clean — the corridor heads straight
