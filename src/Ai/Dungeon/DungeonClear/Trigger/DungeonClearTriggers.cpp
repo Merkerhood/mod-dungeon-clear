@@ -55,9 +55,17 @@ namespace
     // is a soft stop: `enabled` (and all boss progress) stays set, but every
     // trigger here goes inert so the tank holds exactly as it would under
     // `dc off`. See DungeonClearPausedValue.
-    bool IsEnabled(AiObjectContext* context)
+    //
+    // The driving ladder also runs ONLY on the elected leader. In a raid several
+    // tanks can have the flag set, but exactly one drives — the others follow it
+    // like any other member (see DungeonClearFollowTankTrigger). Only the leader
+    // ever reaches the leadership scan: followers don't set `enabled`, so they
+    // short-circuit on the first check. See DungeonClearUtil::FindLeaderTank.
+    bool IsEnabled(AiObjectContext* context, Player* bot)
     {
-        return AI_VALUE(bool, "dungeon clear enabled") && !AI_VALUE(bool, "dungeon clear paused");
+        if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
+            return false;
+        return DungeonClearUtil::IsDungeonClearLeader(bot);
     }
 
     bool IsBetweenPullsReady(Player* bot, AiObjectContext* context)
@@ -73,7 +81,7 @@ namespace
 
 bool DungeonClearIdleTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot || bot->IsInCombat() || bot->isDead())
         return false;
@@ -95,7 +103,7 @@ bool DungeonClearIdleTrigger::IsActive()
 
 bool DungeonClearAtBossTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot || bot->IsInCombat() || bot->isDead())
         return false;
@@ -147,7 +155,7 @@ bool DungeonClearAtBossTrigger::IsActive()
 
 bool DungeonClearBlockingTrashTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot || bot->IsInCombat() || bot->isDead())
         return false;
@@ -206,7 +214,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
 
 bool DungeonClearPartyDiedTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot)
         return false;
@@ -233,7 +241,7 @@ bool DungeonClearPartyDiedTrigger::IsActive()
 
 bool DungeonClearAllClearedTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot)
         return false;
@@ -251,7 +259,7 @@ bool DungeonClearAllClearedTrigger::IsActive()
 
 bool DungeonClearStalledTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot || bot->IsInCombat() || bot->isDead())
         return false;
@@ -272,7 +280,7 @@ bool DungeonClearStalledTrigger::IsActive()
 
 bool DungeonClearDoorBlockedTrigger::IsActive()
 {
-    if (!IsEnabled(context))
+    if (!IsEnabled(context, bot))
         return false;
     if (!bot || bot->IsInCombat() || bot->isDead())
         return false;
@@ -292,10 +300,11 @@ bool DungeonClearFollowTankTrigger::IsActive()
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
 
-    // Only redirect non-tank bots — the tank obviously doesn't follow itself.
-    if (PlayerbotAI::IsTank(bot))
-        return false;
-
+    // Redirect every non-leader bot to the leader — non-tanks AND non-leader
+    // (off-)tanks in a raid. The leader resolves "party tank" to itself, so the
+    // `tank != bot` guard below excludes only the leader (it doesn't follow
+    // itself); a non-leader tank follows the leader out of combat just like any
+    // DPS, then peels off to help tank once it enters combat (checked above).
     Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
     if (tank && tank != bot)
     {

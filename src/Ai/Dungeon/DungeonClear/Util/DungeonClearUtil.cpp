@@ -601,6 +601,47 @@ float DungeonClearUtil::RestMinMpPct()
     return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
 }
 
+Player* DungeonClearUtil::FindLeaderTank(Player* reference)
+{
+    if (!reference)
+        return nullptr;
+
+    Group* group = reference->GetGroup();
+    if (!group)
+    {
+        // Solo: a tank bot leads itself; anyone else has no leader.
+        return (PlayerbotAI::IsTank(reference) && GET_PLAYERBOT_AI(reference))
+                   ? reference : nullptr;
+    }
+
+    // Lowest-GUID alive tank bot on the reference's map. GetFirstMember walks
+    // every member of the group — including all raid sub-groups — so each member
+    // sees the same candidate set and elects the same leader.
+    Player* leader = nullptr;
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || !member->IsAlive())
+            continue;
+        if (member->GetMapId() != reference->GetMapId())
+            continue;
+        if (!PlayerbotAI::IsTank(member))
+            continue;
+        // Only bot tanks can drive — a real-player tank has no PlayerbotAI to
+        // run the clear, so it can never be the leader.
+        if (!GET_PLAYERBOT_AI(member))
+            continue;
+        if (!leader || member->GetGUID() < leader->GetGUID())
+            leader = member;
+    }
+    return leader;
+}
+
+bool DungeonClearUtil::IsDungeonClearLeader(Player* bot)
+{
+    return bot && FindLeaderTank(bot) == bot;
+}
+
 bool DungeonClearUtil::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread)
 {
     if (!bot)

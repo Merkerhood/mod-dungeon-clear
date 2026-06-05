@@ -98,15 +98,17 @@ bool DcOnAction::Execute(Event event)
         botAI->TellError("Not authorized to enable dungeon clear");
         return false;
     }
-    // Party chat fans `dc on` out to every bot the master owns, so non-tank
-    // followers land here too. They don't lead the clear, but they must follow
-    // the tank while it runs. That follow-tank behavior lives in the "dungeon
-    // clear" strategy, applied to every bot at login; re-assert it here as a
-    // safety net (e.g. a bot that logged in before contexts registered), then
-    // stay quiet — only the tank announces. The follower's follow-tank trigger
-    // self-activates off the tank's enabled flag via DungeonClearPartyTankValue,
-    // so nothing else is needed for them.
-    if (!PlayerbotAI::IsTank(bot))
+    // Party chat fans `dc on` out to every bot the master owns, so non-leader
+    // bots land here too — non-tanks AND, in a raid, non-leader (off-)tanks.
+    // They don't lead the clear, but they must follow the leader while it runs.
+    // That follow-tank behavior lives in the "dungeon clear" strategy, applied
+    // to every bot at login; re-assert it here as a safety net (e.g. a bot that
+    // logged in before contexts registered), then stay quiet — only the leader
+    // announces. The follower's follow-tank trigger self-activates off the
+    // leader's enabled flag via DungeonClearPartyTankValue, so nothing else is
+    // needed for them. Leadership is the lowest-GUID tank bot in the group, so
+    // exactly one bot takes the path below even with several tanks present.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
     {
         if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
             botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
@@ -185,13 +187,13 @@ bool DcOffAction::Execute(Event event)
         return false;
     }
 
-    // Non-tank followers have nothing to disable: their follow-tank trigger
-    // deactivates on its own the instant the tank clears its enabled flag
+    // Non-leader followers have nothing to disable: their follow-tank trigger
+    // deactivates on its own the instant the leader clears its enabled flag
     // (DungeonClearPartyTankValue then returns null), so they revert to
     // following the player automatically. Leave the inert strategy installed
     // and stay quiet — they must NOT strip it, or they'd stop following the
-    // tank on a subsequent `dc on`.
-    if (!PlayerbotAI::IsTank(bot))
+    // leader on a subsequent `dc on`.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
         return true;
 
     context->GetValue<bool>("dungeon clear enabled")->Set(false);
@@ -242,6 +244,11 @@ bool DcSkipAction::Execute(Event event)
         botAI->TellError("Not authorized to skip");
         return false;
     }
+    // Only the leader owns the run state. Non-leaders reached via the party-chat
+    // keyword fan-out stay quiet (the command/addon path already targets only
+    // the leader). Without this they'd each error "not enabled".
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return true;
     if (!AI_VALUE(bool, "dungeon clear enabled"))
     {
         botAI->TellError("Dungeon clear is not enabled.");
@@ -297,6 +304,13 @@ bool DcSkipAction::Execute(Event event)
 
 bool DcStatusAction::Execute(Event event)
 {
+    // Only the leader reports — both the command/addon dispatch and the internal
+    // refresh calls (from dc on/off/skip/go/pause) run on the leader, while the
+    // party-chat keyword fans out to every bot. Without this gate a raid's
+    // non-leader tanks would each emit a duplicate STATUS line to the addon.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return true;
+
     bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped");
@@ -327,6 +341,12 @@ bool DcStatusAction::Execute(Event event)
 
 bool DcBossesAction::Execute(Event event)
 {
+    // Only the leader answers the boss-list request — the addon tracks the
+    // leader, and the chat-keyword fan-out would otherwise have every raid tank
+    // reply with a duplicate list.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return true;
+
     auto const& bosses = AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
 
     std::string const param = event.getParam();
@@ -435,6 +455,10 @@ bool DcGoAction::Execute(Event event)
         botAI->TellError("Not authorized to run go command");
         return false;
     }
+    // Leader owns the run; non-leaders reached via the chat-keyword fan-out
+    // stay quiet (the command/addon path already targets only the leader).
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+        return true;
     if (!AI_VALUE(bool, "dungeon clear enabled"))
     {
         botAI->TellError("Dungeon clear is not enabled. Please enable it first.");
@@ -562,8 +586,8 @@ bool DcPauseAction::Execute(Event event)
     }
 
     // Followers have nothing to toggle: their follow-tank trigger reacts to the
-    // tank's paused flag via DungeonClearPartyTankValue. Stay quiet.
-    if (!PlayerbotAI::IsTank(bot))
+    // leader's paused flag via DungeonClearPartyTankValue. Stay quiet.
+    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
         return true;
 
     if (!AI_VALUE(bool, "dungeon clear enabled"))

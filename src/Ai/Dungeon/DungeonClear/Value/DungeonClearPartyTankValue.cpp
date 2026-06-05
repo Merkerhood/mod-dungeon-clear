@@ -5,42 +5,33 @@
 
 #include "DungeonClearPartyTankValue.h"
 
-#include "Group.h"
 #include "Player.h"
 #include "Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 
 Player* DungeonClearPartyTankValue::Calculate()
 {
     if (!bot)
         return nullptr;
-    Group* group = bot->GetGroup();
-    if (!group)
+
+    // The single elected leader for the whole group (party or raid). For the
+    // leader bot itself this resolves to `bot`; for every follower — non-tanks
+    // and non-leader (off-)tanks alike — it is the tank they should trail.
+    Player* leader = DungeonClearUtil::FindLeaderTank(bot);
+    if (!leader)
         return nullptr;
 
-    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-    {
-        Player* member = ref->GetSource();
-        if (!member || member == bot)
-            continue;
-        if (!member->IsAlive())
-            continue;
-        if (member->GetMapId() != bot->GetMapId())
-            continue;
-        if (!PlayerbotAI::IsTank(member))
-            continue;
+    // Only bot tanks can be elected, so this always resolves; guard anyway.
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return nullptr;
 
-        // Only bot tanks can have DC enabled. A real-player tank has no
-        // PlayerbotAI, so the cross-context lookup below is skipped.
-        PlayerbotAI* tankAI = GET_PLAYERBOT_AI(member);
-        if (!tankAI)
-            continue;
-
-        // A paused tank counts as "no DC tank" so followers stop following it
-        // and revert to the player — matching the tank's own paused behavior.
-        AiObjectContext* tankCtx = tankAI->GetAiObjectContext();
-        if (tankCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
-            !tankCtx->GetValue<bool>("dungeon clear paused")->Get())
-            return member;
-    }
+    // Expose the leader only while its clear is actively running and unpaused.
+    // A paused/disabled leader returns null so followers stop following it and
+    // revert to the player — matching the leader's own paused/off behavior.
+    AiObjectContext* leaderCtx = leaderAI->GetAiObjectContext();
+    if (leaderCtx->GetValue<bool>("dungeon clear enabled")->Get() &&
+        !leaderCtx->GetValue<bool>("dungeon clear paused")->Get())
+        return leader;
     return nullptr;
 }

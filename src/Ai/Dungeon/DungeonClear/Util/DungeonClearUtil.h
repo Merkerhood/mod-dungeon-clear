@@ -109,6 +109,25 @@ public:
     static bool IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                DungeonBossInfo const& boss, float staticRange);
 
+    // --- Raid / multi-tank leadership ---------------------------------------
+    // Elects the single tank that drives the clear for the whole group. A party
+    // has one tank, but a raid can have several (one per sub-group); without a
+    // single elected leader every tank would try to drive and each sub-group's
+    // members would trail their own tank instead of one raid leader. The leader
+    // is the lowest-GUID alive tank BOT on `reference`'s map — a deterministic,
+    // state-free choice that every member computes identically (GetFirstMember
+    // walks the whole raid, not just a sub-group), so they all agree on whom to
+    // follow. Real-player tanks are skipped (no PlayerbotAI to run the driving
+    // AI). Returns nullptr when no tank bot is present on the map. `reference`
+    // may be any group member: the issuing player, a follower, or a tank itself.
+    static Player* FindLeaderTank(Player* reference);
+
+    // True when `bot` is the elected dungeon-clear leader for its group (see
+    // FindLeaderTank). Only the leader runs the driving trigger ladder and owns
+    // the run's enabled/paused/progress state; every other member — non-tanks
+    // AND non-leader (off-)tanks alike — follows it via the follow-tank trigger.
+    static bool IsDungeonClearLeader(Player* bot);
+
     // The HP/mana percentages the between-pulls rest gate (IsPartyReady) holds
     // for. These are NOT fixed: they are clamped to mod-playerbots' own drink/eat
     // stop thresholds (AiPlayerbot.AlmostFullHealth / AiPlayerbot.HighMana). A

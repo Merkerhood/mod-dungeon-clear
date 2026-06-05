@@ -11,9 +11,13 @@
 class PlayerbotAI;
 class Player;
 
-// Returns the party tank whose dungeon-clear mode is currently enabled, or
-// nullptr. Used by non-tank party bots to redirect their follow target to the
-// tank for the duration of the clear instead of trailing the player master.
+// Returns the elected leader tank (DungeonClearUtil::FindLeaderTank) while its
+// dungeon-clear mode is enabled and unpaused, or nullptr otherwise. Used by all
+// non-leader bots — non-tanks and non-leader (off-)tanks in a raid alike — to
+// redirect their follow target to the leader for the duration of the clear
+// instead of trailing the player master. For the leader bot itself it resolves
+// to the bot, which is how the driving ladder and follow-tank trigger tell the
+// single leader apart from the followers it leads.
 class DungeonClearPartyTankValue : public CalculatedValue<Player*>
 {
 public:
