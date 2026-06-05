@@ -221,26 +221,6 @@ namespace
         return idx.seg < path.segments.size();
     }
 
-    bool StepFlatBackward(ChunkedPathfinder::Result const& path, FlatIndex& idx)
-    {
-        if (idx.pt > 0)
-        {
-            --idx.pt;
-            return true;
-        }
-        while (idx.seg > 0)
-        {
-            --idx.seg;
-            size_t const sz = path.segments[idx.seg].polyline.size();
-            if (sz > 0)
-            {
-                idx.pt = static_cast<uint32>(sz) - 1;
-                return true;
-            }
-        }
-        return false;
-    }
-
     float Dist3DSq(float px, float py, float pz, G3D::Vector3 const& q)
     {
         float const dx = px - q.x;
@@ -282,12 +262,23 @@ bool DungeonPathFollower::Resnap(Player* bot, ChunkedPathfinder::Result const& p
     float const py = bot->GetPositionY();
     float const pz = bot->GetPositionZ();
 
-    // Gather a window of polyline points around the current cursor in both
-    // directions, then pick the one closest to the bot in 3D that the bot can
-    // actually see in a straight line. The LOS gate guards against U-turns
-    // whose arms come within RESNAP_RADIUS: a physically-near point on the far
-    // arm is walled off, and snapping to it would skip the whole bend and leave
-    // the bot trying to cross the inside wall.
+    // Gather a window of polyline points AT OR AHEAD of the current cursor, then
+    // pick the one closest to the bot in 3D that the bot can actually see in a
+    // straight line. The LOS gate guards against U-turns whose arms come within
+    // RESNAP_RADIUS: a physically-near point on the far (forward) arm is walled
+    // off, and snapping to it would skip the whole bend and leave the bot trying
+    // to cross the inside wall.
+    //
+    // FORWARD-ONLY. The escort drives a one-way route, so the cursor must never
+    // regress to a point the bot already cleared. We used to also search BEHIND
+    // the cursor and pick the nearest visible point in either direction — but on
+    // a switchback/loop, an already-walked point on the parallel arm is often the
+    // physically nearest one, so after a trash chase (which leaves the cursor
+    // stale-behind the bot's real position) the resnap would grab that old point
+    // and march the tank back down corridor it had finished. Restricting the
+    // search to the cursor and forward eliminates the backtrack: the bot is
+    // standing among the points it just swept past, so the nearest forward point
+    // is right where it is, and the resume goes the way we're headed.
     //
     // BotCanSee is a static-VMAP raycast — the expensive part of this routine.
     // Rather than raycast every windowed point, collect candidates, sort by
@@ -320,22 +311,14 @@ bool DungeonPathFollower::Resnap(Player* bot, ChunkedPathfinder::Result const& p
                                        static_cast<uint64>(seg) * 100000ULL + pt});
     };
 
-    // Forward walk (starts at current point, includes it).
+    // Forward walk only (starts at the current point, includes it). No backward
+    // walk: snapping behind the cursor is the backtrack we are eliminating.
     FlatIndex fwd{state.segmentIdx, state.pointIdx};
     for (size_t step = 0; step <= RESNAP_WINDOW; ++step)
     {
         consider(fwd.seg, fwd.pt);
         if (!StepFlatForward(path, fwd))
             break;
-    }
-
-    // Backward walk (starts one point before current).
-    FlatIndex back{state.segmentIdx, state.pointIdx};
-    for (size_t step = 0; step < RESNAP_WINDOW; ++step)
-    {
-        if (!StepFlatBackward(path, back))
-            break;
-        consider(back.seg, back.pt);
     }
 
     if (candidates.empty())

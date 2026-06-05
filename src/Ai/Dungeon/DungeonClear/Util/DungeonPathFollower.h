@@ -94,9 +94,11 @@ public:
     // state.offPathTicks (incremented on off-path, reset on on-path).
     static bool IsOffPath(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
 
-    // Walks a window of polyline points around the current state, picks
-    // the one closest to the bot in 3D, and updates state.segmentIdx /
-    // state.pointIdx to it. Returns false if no candidate within
+    // Walks a window of polyline points AT OR AHEAD of the current state
+    // (never behind it — the escort is one-way, so the cursor must not
+    // regress to already-cleared corridor), picks the one closest to the
+    // bot in 3D that it can see, and updates state.segmentIdx /
+    // state.pointIdx to it. Returns false if no forward candidate within
     // RESNAP_RADIUS — caller should rebuild from current position.
     // Clears offPathTicks on success.
     static bool Resnap(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
