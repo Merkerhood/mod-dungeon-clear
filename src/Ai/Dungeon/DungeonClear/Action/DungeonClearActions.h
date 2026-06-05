@@ -10,6 +10,8 @@
 
 class PlayerbotAI;
 class Unit;
+class Creature;
+struct DungeonBossInfo;
 
 // Shared base for engage actions: walks into attack range and forces combat
 // via bot->Attack directly. We deliberately bypass the pull pipeline — its
@@ -34,6 +36,30 @@ class DungeonClearAdvanceAction : public MovementAction
 public:
     DungeonClearAdvanceAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear advance") {}
     bool Execute(Event event) override;
+
+private:
+    // Per-tick approach state computed once at the top of Execute and shared
+    // across the extracted phase steps below (the boss's effective live
+    // position, the engage-range gates, and the at-boss predicate).
+    struct AdvanceState
+    {
+        DungeonBossInfo const* next;
+        Creature* liveBoss;
+        float bossX, bossY, bossZ;
+        float engageDist, engageRange;
+        bool atBoss;
+    };
+
+    // A phase step either handles the tick (Execute returns the carried bool)
+    // or falls through to the next phase. Keeps Execute a short, readable ladder
+    // instead of one 750-line method. The counter-coupled tail (stuck recovery,
+    // direct pursuit, long-path drive) is still inline below the ladder.
+    enum class Step { Continue, ReturnTrue, ReturnFalse };
+
+    Step TryEngageHold(AdvanceState const& st);
+    Step TryLootYield(AdvanceState const& st);
+    Step TryBetweenPullsRest(AdvanceState const& st);
+    Step TryBossNotPresentStall(AdvanceState const& st);
 };
 
 class DungeonClearEngageTrashAction : public DungeonClearEngageActionBase

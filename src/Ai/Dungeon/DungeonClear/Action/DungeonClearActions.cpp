@@ -827,6 +827,194 @@ bool DungeonClearEngageActionBase::EngageDirect(Unit* target)
     return true;
 }
 
+// At the boss (close, on its floor) AND no anchored intermediate hops remain
+// unresolved → stop walking and let the at-boss trigger fire the pull. With
+// anchored routes the bot may be geometrically near the boss but still on the
+// wrong side of a wall; we keep walking in that case until anchors are cleared.
+// Likewise a boss one floor up is 3D-near but not atBoss, so the tank keeps
+// walking the route up to its level instead of parking underneath.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(AdvanceState const& st)
+{
+    DungeonBossInfo const* next = st.next;
+    Creature* const liveBoss = st.liveBoss;
+    float const engageDist = st.engageDist;
+    bool const atBoss = st.atBoss;
+
+    if (atBoss)
+    {
+        ChunkedPathfinder::Result const& currentPath =
+            AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
+        DungeonFollowerState const& followerNow =
+            AI_VALUE(DungeonFollowerState&, "dungeon clear follower state");
+        bool anchoredHopsPending = false;
+        if (currentPath.reachable && !currentPath.segments.empty())
+        {
+            // Only inspect segments still ahead of the follower's cursor.
+            // Anchored segments already walked past don't need to gate
+            // the engage handoff.
+            for (size_t i = followerNow.segmentIdx; i + 1 < currentPath.segments.size(); ++i)
+            {
+                PathSegment const& seg = currentPath.segments[i];
+                if (seg.anchored && bot->GetDistance(seg.ex, seg.ey, seg.ez) > seg.arriveRadius)
+                {
+                    anchoredHopsPending = true;
+                    break;
+                }
+            }
+        }
+        if (!anchoredHopsPending)
+        {
+            // Surface WHY we're holding: the at-boss trigger only pulls once the
+            // party is ready and no loot is pending. When it doesn't fire, this
+            // is the line that explains the otherwise-silent idle at the boss.
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] within engage range of {} ({:.0f}yd, live={}) -> holding "
+                      "for at-boss [partyReady={} availLoot={} canLoot={}]",
+                      bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
+                      IsBetweenPullsReady(bot) ? 1 : 0,
+                      AI_VALUE(bool, "has available loot") ? 1 : 0,
+                      AI_VALUE(bool, "can loot") ? 1 : 0);
+            if (bot->isMoving())
+                bot->StopMoving();
+            ClearStall(context);
+            // Parked at the boss waiting for the at-boss pull — not navigating,
+            // so clear the nav phase (status reads this as "idle / holding").
+            SetPhase(context, "");
+            return Step::ReturnFalse;
+        }
+    }
+    return Step::Continue;
+}
+
+// Loot yield (with commit-timeout). Step aside through the WHOLE loot lifecycle
+// so the loot system can pick up a nearby corpse: "has available loot" is true
+// only while a corpse is ~3-15yd away and flips FALSE at ~3yd (when "can loot"
+// flips TRUE). Advance (engine relevance 15) outranks the loot actions (open
+// loot is 8), so yielding on only one flag let advance win the tick at the 3yd
+// boundary and fire a boss-bound spline before open-loot ran — the
+// corpse<->boss oscillation. Yielding while EITHER flag is set keeps advance out
+// of the way until the loot is actually picked up.
+//
+// We also hold while ANY follower still has a corpse to pick up, so the tank
+// doesn't push to the next pull the instant its own loot is done and leave the
+// party scrambling to catch up. IsAnyPartyMemberLooting reads each follower's
+// own loot flags cross-context (same pattern as the party-tank lookup); the
+// shared commit-timeout below bounds the total wait.
+//
+// The timeout stops us waiting forever on loot the party can't finish
+// (group-loot rolls pending, bags full): after DC_LOOT_YIELD_TIMEOUT_MS we
+// force-advance; when no one is looting any more the flags clear and the timer
+// resets (so the next pull gets a fresh full window).
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceState const& /*st*/)
+{
+    // Before reading the flags, drop any loot we already gave up on from the
+    // stock stack/target (see StripSkippedLoot). Running here — at advance's
+    // relevance, above the loot pipeline — means stock can't re-pick a skipped
+    // corpse this tick, so the flags below and the timeout's give-up stay in
+    // sync and the yield doesn't re-arm on something we just abandoned.
+    DungeonClearUtil::StripSkippedLoot(botAI);
+    // Proactively skip a corpse with nothing takeable for us (un-finishable
+    // group-roll/reserved loot, or below DungeonClear.LootMinQuality) BEFORE we
+    // walk to it, so it never arms the yield at all — the event-driven analogue
+    // of the camp/timeout cutoffs below, which only fire after a wasted walk.
+    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
+    // Fast-skip a corpse we've been camped on too long (un-lootable) before it
+    // can burn the full yield timeout below; followers do the same in their
+    // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
+    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
+    uint32& lootYieldStart =
+        context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
+    bool const lootYield =
+        AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
+        DungeonClearUtil::IsAnyPartyMemberLooting(bot);
+    if (lootYield)
+    {
+        uint32 const now = getMSTime();
+        if (lootYieldStart == 0)
+            lootYieldStart = now;
+
+        if (now - lootYieldStart >= DC_LOOT_YIELD_TIMEOUT_MS)
+        {
+            // Waited long enough — give up on THIS corpse so we stop re-arming
+            // the yield on it (the corpse<->path ping-pong), then advance past.
+            // GiveUpCurrentLoot blacklists our committed loot; StripSkippedLoot
+            // next tick removes it so the flags clear. Don't reset lootYieldStart
+            // here: keep it expired so we keep advancing until the flags drop.
+            DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] loot-yield timed out after {}ms -> giving up on corpse, advancing",
+                     bot->GetName(), now - lootYieldStart);
+        }
+        else
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] advance yielding: loot in progress ({}ms)",
+                      bot->GetName(), now - lootYieldStart);
+            if (bot->isMoving())
+                bot->StopMoving();
+            return Step::ReturnFalse;
+        }
+    }
+    else
+    {
+        lootYieldStart = 0;  // not looting -> reset the commit timer
+    }
+    return Step::Continue;
+}
+
+// Between-pulls rest: yield so food/drink can run and stragglers catch up.
+// The multiplier suppresses wander actions during the wait.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& /*st*/)
+{
+    if (!IsBetweenPullsReady(bot))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
+        if (bot->isMoving())
+            bot->StopMoving();
+        return Step::ReturnFalse;
+    }
+    return Step::Continue;
+}
+
+// If this boss has no live spawn at all (and not even a corpse), stall so the
+// player can `dc skip` instead of being forced to re-enable the mode. Bosses
+// that legitimately despawn after kill are handled by the
+// InstanceScript::GetBossState probe in NextDungeonBossValue — they never reach
+// here.
+DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStall(AdvanceState const& st)
+{
+    DungeonBossInfo const* next = st.next;
+
+    if (!DungeonClearUtil::IsCreaturePresentOnMap(bot, next->entry))
+    {
+        // "Not present" only means "not spawned" once we're close enough that
+        // the boss's grid is certainly loaded. While we're still far, the grid
+        // simply hasn't streamed in yet (see DC_BOSS_GRID_LOADED_RANGE). Hard-
+        // stalling here froze the tank at the edge of a large room and it never
+        // walked in to load the grid -> deadlock; and because this returns
+        // before EnsureLongPath, with zero DC-channel output. Fall through and
+        // let Advance path toward the boss's static spawn coords instead.
+        float const distToBoss = bot->GetDistance(next->x, next->y, next->z);
+        if (distToBoss <= DC_BOSS_GRID_LOADED_RANGE)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] {} not in creature store at {:.0f}yd (<={:.0f}, grid "
+                     "loaded) -> stalling: genuinely not spawned",
+                     bot->GetName(), next->name, distToBoss, DC_BOSS_GRID_LOADED_RANGE);
+            StallDungeonClear(botAI,
+                "Can't reach " + next->name + ": not spawned on this map. Use 'dc skip' to move to the next boss.");
+            return Step::ReturnFalse;
+        }
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] {} not in creature store but {:.0f}yd away (>{:.0f}) "
+                  "-> advancing to stream its grid in",
+                  bot->GetName(), next->name, distToBoss, DC_BOSS_GRID_LOADED_RANGE);
+        // fall through to the normal advance below
+    }
+    return Step::Continue;
+}
+
 bool DungeonClearAdvanceAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
@@ -887,171 +1075,28 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
     }
 
-    // At the boss (close, on its floor) AND no anchored intermediate hops remain
-    // unresolved → stop walking and let the at-boss trigger fire the pull. With
-    // anchored routes the bot may be geometrically near the boss but still on the
-    // wrong side of a wall; we keep walking in that case until anchors are
-    // cleared. Likewise a boss one floor up is 3D-near but not atBoss, so the
-    // tank keeps walking the route up to its level instead of parking underneath.
-    if (atBoss)
-    {
-        ChunkedPathfinder::Result const& currentPath =
-            AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
-        DungeonFollowerState const& followerNow =
-            AI_VALUE(DungeonFollowerState&, "dungeon clear follower state");
-        bool anchoredHopsPending = false;
-        if (currentPath.reachable && !currentPath.segments.empty())
-        {
-            // Only inspect segments still ahead of the follower's cursor.
-            // Anchored segments already walked past don't need to gate
-            // the engage handoff.
-            for (size_t i = followerNow.segmentIdx; i + 1 < currentPath.segments.size(); ++i)
-            {
-                PathSegment const& seg = currentPath.segments[i];
-                if (seg.anchored && bot->GetDistance(seg.ex, seg.ey, seg.ez) > seg.arriveRadius)
-                {
-                    anchoredHopsPending = true;
-                    break;
-                }
-            }
-        }
-        if (!anchoredHopsPending)
-        {
-            // Surface WHY we're holding: the at-boss trigger only pulls once the
-            // party is ready and no loot is pending. When it doesn't fire, this
-            // is the line that explains the otherwise-silent idle at the boss.
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] within engage range of {} ({:.0f}yd, live={}) -> holding "
-                      "for at-boss [partyReady={} availLoot={} canLoot={}]",
-                      bot->GetName(), next->name, engageDist, liveBoss ? 1 : 0,
-                      IsBetweenPullsReady(bot) ? 1 : 0,
-                      AI_VALUE(bool, "has available loot") ? 1 : 0,
-                      AI_VALUE(bool, "can loot") ? 1 : 0);
-            if (bot->isMoving())
-                bot->StopMoving();
-            ClearStall(context);
-            // Parked at the boss waiting for the at-boss pull — not navigating,
-            // so clear the nav phase (status reads this as "idle / holding").
-            SetPhase(context, "");
-            return false;
-        }
-    }
+    // Bundle the per-tick approach state for the extracted phase steps below.
+    AdvanceState st;
+    st.next = &*next;
+    st.liveBoss = liveBoss;
+    st.bossX = bossX;
+    st.bossY = bossY;
+    st.bossZ = bossZ;
+    st.engageDist = engageDist;
+    st.engageRange = engageRange;
+    st.atBoss = atBoss;
 
-    // Loot yield (with commit-timeout). Step aside through the WHOLE loot
-    // lifecycle so the loot system can pick up a nearby corpse: "has available
-    // loot" is true only while a corpse is ~3-15yd away and flips FALSE at ~3yd
-    // (when "can loot" flips TRUE). Advance (engine relevance 15) outranks the
-    // loot actions (open loot is 8), so yielding on only one flag let advance
-    // win the tick at the 3yd boundary and fire a boss-bound spline before
-    // open-loot ran — the corpse<->boss oscillation. Yielding while EITHER flag
-    // is set keeps advance out of the way until the loot is actually picked up.
-    //
-    // We also hold while ANY follower still has a corpse to pick up, so the
-    // tank doesn't push to the next pull the instant its own loot is done and
-    // leave the party scrambling to catch up. IsAnyPartyMemberLooting reads
-    // each follower's own loot flags cross-context (same pattern as the party-
-    // tank lookup); the shared commit-timeout below bounds the total wait.
-    //
-    // The timeout stops us waiting forever on loot the party can't finish
-    // (group-loot rolls pending, bags full): after DC_LOOT_YIELD_TIMEOUT_MS we
-    // force-advance; when no one is looting any more the flags clear and the
-    // timer resets (so the next pull gets a fresh full window).
-    //
-    // Before reading the flags, drop any loot we already gave up on from the
-    // stock stack/target (see StripSkippedLoot). Running here — at advance's
-    // relevance, above the loot pipeline — means stock can't re-pick a skipped
-    // corpse this tick, so the flags below and the timeout's give-up stay in
-    // sync and the yield doesn't re-arm on something we just abandoned.
-    DungeonClearUtil::StripSkippedLoot(botAI);
-    // Proactively skip a corpse with nothing takeable for us (un-finishable
-    // group-roll/reserved loot, or below DungeonClear.LootMinQuality) BEFORE we
-    // walk to it, so it never arms the yield at all — the event-driven analogue
-    // of the camp/timeout cutoffs below, which only fire after a wasted walk.
-    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
-    // Fast-skip a corpse we've been camped on too long (un-lootable) before it
-    // can burn the full yield timeout below; followers do the same in their
-    // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
-    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
-    uint32& lootYieldStart =
-        context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
-    bool const lootYield =
-        AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
-        DungeonClearUtil::IsAnyPartyMemberLooting(bot);
-    if (lootYield)
-    {
-        uint32 const now = getMSTime();
-        if (lootYieldStart == 0)
-            lootYieldStart = now;
-
-        if (now - lootYieldStart >= DC_LOOT_YIELD_TIMEOUT_MS)
-        {
-            // Waited long enough — give up on THIS corpse so we stop re-arming
-            // the yield on it (the corpse<->path ping-pong), then advance past.
-            // GiveUpCurrentLoot blacklists our committed loot; StripSkippedLoot
-            // next tick removes it so the flags clear. Don't reset lootYieldStart
-            // here: keep it expired so we keep advancing until the flags drop.
-            DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] loot-yield timed out after {}ms -> giving up on corpse, advancing",
-                     bot->GetName(), now - lootYieldStart);
-        }
-        else
-        {
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] advance yielding: loot in progress ({}ms)",
-                      bot->GetName(), now - lootYieldStart);
-            if (bot->isMoving())
-                bot->StopMoving();
-            return false;
-        }
-    }
-    else
-    {
-        lootYieldStart = 0;  // not looting -> reset the commit timer
-    }
-
-    // Between-pulls rest: yield so food/drink can run and stragglers catch up.
-    // The multiplier suppresses wander actions during the wait.
-    if (!IsBetweenPullsReady(bot))
-    {
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
-        if (bot->isMoving())
-            bot->StopMoving();
-        return false;
-    }
-
-    // If this boss has no live spawn at all (and not even a corpse), stall
-    // so the player can `dc skip` instead of being forced to re-enable the
-    // mode. Bosses that legitimately despawn after kill are handled by the
-    // InstanceScript::GetBossState probe in NextDungeonBossValue — they
-    // never reach here.
-    if (!DungeonClearUtil::IsCreaturePresentOnMap(bot, next->entry))
-    {
-        // "Not present" only means "not spawned" once we're close enough that
-        // the boss's grid is certainly loaded. While we're still far, the grid
-        // simply hasn't streamed in yet (see DC_BOSS_GRID_LOADED_RANGE). Hard-
-        // stalling here froze the tank at the edge of a large room and it never
-        // walked in to load the grid -> deadlock; and because this returns
-        // before EnsureLongPath, with zero DC-channel output. Fall through and
-        // let Advance path toward the boss's static spawn coords instead.
-        float const distToBoss = bot->GetDistance(next->x, next->y, next->z);
-        if (distToBoss <= DC_BOSS_GRID_LOADED_RANGE)
-        {
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] {} not in creature store at {:.0f}yd (<={:.0f}, grid "
-                     "loaded) -> stalling: genuinely not spawned",
-                     bot->GetName(), next->name, distToBoss, DC_BOSS_GRID_LOADED_RANGE);
-            StallDungeonClear(botAI,
-                "Can't reach " + next->name + ": not spawned on this map. Use 'dc skip' to move to the next boss.");
-            return false;
-        }
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] {} not in creature store but {:.0f}yd away (>{:.0f}) "
-                  "-> advancing to stream its grid in",
-                  bot->GetName(), next->name, distToBoss, DC_BOSS_GRID_LOADED_RANGE);
-        // fall through to the normal advance below
-    }
+    // Phase ladder. Each step either handles the tick (and Execute returns the
+    // carried bool) or falls through to the next. The counter-coupled tail
+    // (stuck recovery / direct pursuit / long-path drive) stays inline below.
+    if (Step s = TryEngageHold(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryLootYield(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryBossNotPresentStall(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
 
     // Bookkeeping: reset position-based stuck counters when the boss
     // changes, so an in-flight stuck count from the previous pull doesn't
