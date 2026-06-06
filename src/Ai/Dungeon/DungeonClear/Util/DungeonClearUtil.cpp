@@ -587,16 +587,28 @@ InstanceScript* DungeonClearUtil::GetInstanceScript(Player* bot)
     return im ? im->GetInstanceScript() : nullptr;
 }
 
-float DungeonClearUtil::RestMinHpPct()
+float DungeonClearUtil::RestMinHpPct(Player* bot)
 {
+    // Per-run override wins: the group set a health rest target for this run, and
+    // DungeonClearNeedsEatTrigger makes bots actually eat up to it, so we use it
+    // verbatim (no playerbots clamp — even a target above AlmostFullHealth is
+    // reachable now). 0 means "inherit" and falls through.
+    if (uint32 const target = DcSettings::GetUInt(bot, "RestHealthPct"))
+        return static_cast<float>(target);
+
     // 90% is our "topped up enough to pull" ceiling. Clamp it to the level bots
     // actually eat back up to (AiPlayerbot.AlmostFullHealth, default 85) so the
     // gate never waits on HP a bot won't restore on its own.
     return std::min(90.0f, static_cast<float>(sPlayerbotAIConfig.almostFullHealth));
 }
 
-float DungeonClearUtil::RestMinMpPct()
+float DungeonClearUtil::RestMinMpPct(Player* bot)
 {
+    // Per-run override wins; see RestMinHpPct. DungeonClearNeedsDrinkTrigger makes
+    // bots drink up to this target, so it stays reachable above HighMana too.
+    if (uint32 const target = DcSettings::GetUInt(bot, "RestManaPct"))
+        return static_cast<float>(target);
+
     // 75% ceiling, clamped to the level bots actually drink back up to
     // (AiPlayerbot.HighMana, default 65). Bots stop drinking at HighMana, so a
     // higher gate would strand the tank waiting on slow natural mana regen.
@@ -1329,11 +1341,11 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
         // still reporting "En route" instead of "Waiting on".
         else if (float const maxSpread = sConfigMgr->GetOption<float>(
                      "DungeonClear.PartyMaxSpread", 25.0f);
-                 !DungeonClearUtil::IsPartyReady(bot, RestMinHpPct(), RestMinMpPct(), maxSpread))
+                 !DungeonClearUtil::IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), maxSpread))
         {
             stateStr = "resting";
-            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, RestMinHpPct(),
-                                                                            RestMinMpPct(), maxSpread);
+            std::string const who = DungeonClearUtil::DescribePartyNotReady(bot, RestMinHpPct(bot),
+                                                                            RestMinMpPct(bot), maxSpread);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else

@@ -60,6 +60,19 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear follow tank",
         { NextAction("dungeon clear follow tank", 25.0f) }));
 
+    // Rest-target override: top up to the run's chosen HP/mana before pulling.
+    // Relevance above advance (15) and follow-tank (25) so a bot below target
+    // sits and rests instead of walking; safely below the engage triggers,
+    // which can't fire anyway while the party is still recovering (the rest gate
+    // uses the same target). Only active when the run sets RestHealthPct /
+    // RestManaPct; otherwise the triggers are inert and stock rest is unchanged.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear needs drink",
+        { NextAction("drink", 26.0f) }));
+    triggers.push_back(new TriggerNode(
+        "dungeon clear needs eat",
+        { NextAction("food", 26.0f) }));
+
     // Chat-keyword triggers (`dc on/off/skip/status/bosses` + long aliases).
     // Folded in here so there is a single "dungeon clear" strategy: one name to
     // apply (via config or the login hook), which is what lets self-bots —

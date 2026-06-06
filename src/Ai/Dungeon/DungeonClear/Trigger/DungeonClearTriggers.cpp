@@ -17,6 +17,7 @@
 #include "Map.h"
 #include "Player.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
@@ -74,8 +75,8 @@ namespace
             return false;
         float const maxSpread = sConfigMgr->GetOption<float>(
             "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
-        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(),
-                                              DungeonClearUtil::RestMinMpPct(), maxSpread);
+        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
+                                              DungeonClearUtil::RestMinMpPct(bot), maxSpread);
     }
 }
 
@@ -324,4 +325,40 @@ bool DungeonClearFollowTankTrigger::IsActive()
     // action clears that GUID once it tears the follow down, so this stops
     // firing immediately after.
     return !AI_VALUE(ObjectGuid, "dungeon clear followed tank").IsEmpty();
+}
+
+namespace
+{
+    // Shared gate for the rest-target triggers: this bot is a living, out-of-
+    // combat member of an active DC run (the cross-bot party-tank value is
+    // non-null only while the leader's clear runs and is unpaused), and the run
+    // has set a non-zero rest target for the given key. Returns the target % (0
+    // when the trigger should stay inert).
+    uint32 RestTargetIfActive(Player* bot, AiObjectContext* context, char const* key)
+    {
+        if (!bot || bot->isDead() || bot->IsInCombat())
+            return 0;
+        if (!AI_VALUE(Player*, "dungeon clear party tank"))
+            return 0;
+        return DcSettings::GetUInt(bot, key);
+    }
+}
+
+bool DungeonClearNeedsDrinkTrigger::IsActive()
+{
+    uint32 const target = RestTargetIfActive(bot, context, "RestManaPct");
+    if (target == 0)
+        return false;
+    // Non-mana classes (warriors/rogues) never drink.
+    if (bot->GetMaxPower(POWER_MANA) == 0)
+        return false;
+    return bot->GetPowerPct(POWER_MANA) < static_cast<float>(target);
+}
+
+bool DungeonClearNeedsEatTrigger::IsActive()
+{
+    uint32 const target = RestTargetIfActive(bot, context, "RestHealthPct");
+    if (target == 0)
+        return false;
+    return bot->GetHealthPct() < static_cast<float>(target);
 }

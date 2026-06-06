@@ -492,8 +492,8 @@ namespace
     {
         float const maxSpread = sConfigMgr->GetOption<float>(
             "DungeonClear.PartyMaxSpread", DC_PARTY_MAX_SPREAD_DEFAULT);
-        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(),
-                                              DungeonClearUtil::RestMinMpPct(), maxSpread);
+        return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
+                                              DungeonClearUtil::RestMinMpPct(bot), maxSpread);
     }
 
     // Commit a freshly-built path into the cache and reset the follower so we

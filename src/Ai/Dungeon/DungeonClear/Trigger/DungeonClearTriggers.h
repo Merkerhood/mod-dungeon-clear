@@ -74,4 +74,25 @@ public:
     bool IsActive() override;
 };
 
+// Rest-target triggers. Fire on every bot in an active DC run (tank AND
+// followers) while out of combat and below the run's chosen rest target
+// (DungeonClear.RestManaPct / RestHealthPct). They drive the stock playerbots
+// "drink" / "food" actions so bots top up to the group's target even when it is
+// above mod-playerbots' own stop thresholds; DungeonClearMultiplier caps the
+// other side so a target below the stock stop is honoured too. Inert when the
+// target is 0 (inherit the playerbots value).
+class DungeonClearNeedsDrinkTrigger : public Trigger
+{
+public:
+    DungeonClearNeedsDrinkTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear needs drink", 1) {}
+    bool IsActive() override;
+};
+
+class DungeonClearNeedsEatTrigger : public Trigger
+{
+public:
+    DungeonClearNeedsEatTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear needs eat", 1) {}
+    bool IsActive() override;
+};
+
 #endif

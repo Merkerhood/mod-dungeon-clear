@@ -129,17 +129,19 @@ public:
     static bool IsDungeonClearLeader(Player* bot);
 
     // The HP/mana percentages the between-pulls rest gate (IsPartyReady) holds
-    // for. These are NOT fixed: they are clamped to mod-playerbots' own drink/eat
-    // stop thresholds (AiPlayerbot.AlmostFullHealth / AiPlayerbot.HighMana). A
-    // bot only eats back up to AlmostFullHealth and drinks back up to HighMana,
-    // then stops; requiring MORE than that would strand the tank waiting on slow
-    // natural regen for mana/HP the bot will never voluntarily restore. We take
-    // the lower of our own "good enough to pull" ceiling and the bot's recover
-    // target, so the gate is always reachable by resting regardless of how the
-    // server's AiPlayerbot.* thresholds are configured. See the README's
-    // "mod-playerbots interaction" section.
-    static float RestMinHpPct();
-    static float RestMinMpPct();
+    // for. These default to mod-playerbots' own drink/eat stop thresholds
+    // (AiPlayerbot.AlmostFullHealth / AiPlayerbot.HighMana): a stock bot only eats
+    // back up to AlmostFullHealth and drinks back up to HighMana, then stops, so
+    // we clamp the gate to those targets to keep it reachable by resting alone.
+    //
+    // When the run sets DungeonClear.RestHealthPct / RestManaPct (> 0) the group
+    // overrides those targets for this run: the gate uses the override directly
+    // (the matching DungeonClearNeeds{Eat,Drink} triggers make bots eat/drink up
+    // to it, so even a target above the playerbots stop value is reachable). The
+    // `bot` resolves the run owner for the override lookup; pass any member.
+    // See the README's "mod-playerbots interaction" section.
+    static float RestMinHpPct(Player* bot = nullptr);
+    static float RestMinMpPct(Player* bot = nullptr);
 
     // Returns true when the party has caught up and recovered enough to pull again:
     //  - every living party member on the bot's map has HP% >= minHpPct,

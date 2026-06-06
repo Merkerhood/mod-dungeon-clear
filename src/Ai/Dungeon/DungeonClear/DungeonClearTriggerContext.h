@@ -24,6 +24,8 @@ public:
         creators["dungeon clear stalled"] = &DungeonClearTriggerContext::stalled;
         creators["dungeon clear follow tank"] = &DungeonClearTriggerContext::follow_tank;
         creators["dungeon clear door blocked"] = &DungeonClearTriggerContext::door_blocked;
+        creators["dungeon clear needs drink"] = &DungeonClearTriggerContext::needs_drink;
+        creators["dungeon clear needs eat"] = &DungeonClearTriggerContext::needs_eat;
 
         // Chat-command triggers (one per keyword/alias).
         creators["dc on"] = &DungeonClearTriggerContext::dc_on;
@@ -44,6 +46,8 @@ private:
     static Trigger* stalled(PlayerbotAI* ai) { return new DungeonClearStalledTrigger(ai); }
     static Trigger* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankTrigger(ai); }
     static Trigger* door_blocked(PlayerbotAI* ai) { return new DungeonClearDoorBlockedTrigger(ai); }
+    static Trigger* needs_drink(PlayerbotAI* ai) { return new DungeonClearNeedsDrinkTrigger(ai); }
+    static Trigger* needs_eat(PlayerbotAI* ai) { return new DungeonClearNeedsEatTrigger(ai); }
 
     static Trigger* dc_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dc on"); }
     static Trigger* dungeon_clear_on(PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "dungeon clear on"); }

@@ -110,12 +110,20 @@ internal class shape, so an upstream rename of those registries surfaces as a
 
 ## mod-playerbots settings
 
-Between pulls the tank waits for the party to rest. Dungeon clear doesn't eat or
-drink itself — that's mod-playerbots, which restores health up to
-`AiPlayerbot.AlmostFullHealth` (default `85`) and mana up to `AiPlayerbot.HighMana`
-(default `65`), then stops. The rest gate tracks those two settings automatically,
-so the tank pulls as soon as the party finishes resting; **no config change is
-needed.** To make the tank wait for fuller bars, raise those thresholds.
+Between pulls the tank waits for the party to rest. By default eating/drinking is
+mod-playerbots' job, which restores health up to `AiPlayerbot.AlmostFullHealth`
+(default `85`) and mana up to `AiPlayerbot.HighMana` (default `65`), then stops.
+The rest gate tracks those two settings automatically, so the tank pulls as soon
+as the party finishes resting; **no config change is needed.**
+
+To rest to a different level **without touching the playerbots config** (which a
+group on a shared server can't see), set `DungeonClear.RestHealthPct` and/or
+`DungeonClear.RestManaPct` — overridable live from the companion addon's Settings
+panel, per run. `0` inherits the playerbots value. A non-zero value both raises
+the rest gate **and** drives the bots to eat/drink up to it (the
+`DungeonClearNeeds{Eat,Drink}` triggers top up past the stock stop; the
+`DungeonClearMultiplier` caps below it), so a group can rest harder — or pull
+faster — than the server-wide default.
 
 A few other playerbots ranges also affect runs: `AiPlayerbot.LootDistance`,
 `ReactDistance` (pull range), `SightDistance` (target scan), and `FollowDistance`.

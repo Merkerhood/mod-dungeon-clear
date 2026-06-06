@@ -65,6 +65,34 @@ DungeonClear.LootMinQuality = 0
 DungeonClear.IgnoreChests = 1
 
 #
+#    DungeonClear.RestHealthPct
+#        Health % the party tops up to between pulls while clearing, overriding
+#        mod-playerbots' AiPlayerbot.AlmostFullHealth for the run. Bots eat up to
+#        this value and the tank holds the advance until everyone reaches it, so
+#        a group can rest harder (or pull faster) than the server-wide default
+#        without touching the playerbots config they can't see.
+#            0 = inherit AiPlayerbot.AlmostFullHealth (no override)
+#            1-100 = eat/wait up to this health %
+#
+#        Default: 0 (inherit)
+#
+
+DungeonClear.RestHealthPct = 0
+
+#
+#    DungeonClear.RestManaPct
+#        Mana % the party tops up to between pulls while clearing, overriding
+#        mod-playerbots' AiPlayerbot.HighMana for the run. Bots drink up to this
+#        value and the tank holds the advance until every mana user reaches it.
+#            0 = inherit AiPlayerbot.HighMana (no override)
+#            1-100 = drink/wait up to this mana %
+#
+#        Default: 0 (inherit)
+#
+
+DungeonClear.RestManaPct = 0
+
+#
 #    DungeonClear.PartyMaxSpread
 #        Max distance (yards) the tank may lead a party member while clearing
 #        before it holds its advance and waits for everyone to catch up. Lower
