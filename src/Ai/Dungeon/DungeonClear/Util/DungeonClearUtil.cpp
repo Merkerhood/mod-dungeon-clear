@@ -1237,11 +1237,19 @@ namespace
         uint32 const count =
             static_cast<uint32>(AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses").size());
 
-        // FNV-1a over the four words. Collisions are harmless: the only cost of
+        // Fold in the map + instance id so the detector always fires when the
+        // tank crosses into a different instance (clear one dungeon, walk into
+        // the next; or step from a dungeon into the raid it gates). Without it a
+        // transition where {mask,skipped,selected,count} happen to coincide
+        // would leave the addon showing the prior dungeon's bosses.
+        uint32 const mapId = bot->GetMapId();
+        uint32 const instanceId = bot->GetInstanceId();
+
+        // FNV-1a over the words. Collisions are harmless: the only cost of
         // a missed change is a slightly stale boss row until the next real
         // transition or an explicit request.
         uint64 h = 1469598103934665603ull;
-        for (uint32 w : {mask, skipped, selected, count})
+        for (uint32 w : {mask, skipped, selected, count, mapId, instanceId})
         {
             h ^= w;
             h *= 1099511628211ull;
