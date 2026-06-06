@@ -65,27 +65,6 @@ namespace
         return it != liveness.end() ? it->second : BossLiveState{false, false};
     }
 
-    // From a same-tier candidate list (all in encounter-index order), pick the
-    // first boss the bounded reachability probe confirms reachable, else the
-    // lowest-index one. A lower-index boss walled off behind an unopened event
-    // shouldn't wedge the bot when a reachable boss sits right after it; when
-    // the probe is unsure about all of them (the common post-kill case) we fall
-    // back to the lowest-index boss.
-    //
-    // Do NOT re-rank by straight-line distance: the route to the next boss
-    // often loops away from it, so a later boss reads as nearer and the target
-    // jumps ahead multiple bosses.
-    std::optional<DungeonBossInfo> FirstReachableOrFront(
-        Player* bot, std::vector<DungeonBossInfo> const& cands)
-    {
-        if (cands.empty())
-            return std::nullopt;
-        for (DungeonBossInfo const& info : cands)
-            if (DungeonClearUtil::IsReachable(bot, info.x, info.y, info.z))
-                return info;
-        return cands.front();  // lowest index; reachability unconfirmed
-    }
-
     // From the encounter-ordered candidate list, pick the boss to head toward.
     // `stickyEntry` is the boss chosen on the previous computation;
     // `stickyEncounterIndex` is its DBC encounter index when `haveStickyIndex`
@@ -111,13 +90,23 @@ namespace
     // (e.g. via a manual `dungeon clear boss #3` selection, or by skipping
     // early bosses) would otherwise walk back to boss #1 on every kill. We take
     // the candidates with encounter index strictly greater than the boss we
-    // just left and pick within them; only if nothing remains ahead do we wrap
-    // to the full set to mop up any lower-index bosses left behind.
+    // just left and pick the lowest-index one; only if nothing remains ahead do
+    // we wrap to the full set to mop up any lower-index bosses left behind.
     //
-    // A boss that turns out to be unreachable after commit is handled by
-    // Advance's stall/skip path, not by silently re-targeting.
-    std::optional<DungeonBossInfo> PickTarget(Player* bot,
-                                              std::vector<DungeonBossInfo>& cands,
+    // STRICTLY ORDINAL — NO REACHABILITY RE-RANK. We pick by encounter index
+    // alone and never skip a lower-index boss because a bounded path probe
+    // reads it "unreachable." That probe tests the boss's STATIC spawn anchor,
+    // which for pool-spawn bosses (the Wailing Caverns Disciples — Anacondra,
+    // Cobrahn, Pythas, Serpentis) is an arbitrary pooled anchor that usually
+    // isn't where the live boss stands, so it routinely probes as NOPATH and
+    // the old "first reachable" pick skipped straight past the real next boss
+    // to a far one with a good anchor (e.g. killing Anacondra jumped the target
+    // to Verdan the Everliving, the last boss). Sequential in-order selection
+    // is the contract: Advance walks toward the chosen boss using its LIVE
+    // coords when found (falling back to the static anchor only to stream the
+    // grid in), and a boss that genuinely can't be reached is handled by
+    // Advance's stall -> manual `dc skip` path, not by silently re-targeting.
+    std::optional<DungeonBossInfo> PickTarget(std::vector<DungeonBossInfo>& cands,
                                               uint32 stickyEntry,
                                               uint32 stickyEncounterIndex,
                                               bool haveStickyIndex)
@@ -131,20 +120,19 @@ namespace
                 if (info.entry == stickyEntry)
                     return info;
 
-        // Commit released: prefer the next boss after the one we just left.
+        // `cands` arrives in encounter-index order, so the first match is
+        // always the lowest-index one.
+
+        // Commit released: head to the lowest-index boss strictly after the
+        // one we just left.
         if (haveStickyIndex)
-        {
-            std::vector<DungeonBossInfo> ahead;
-            ahead.reserve(cands.size());
             for (DungeonBossInfo const& info : cands)
                 if (info.encounterIndex > stickyEncounterIndex)
-                    ahead.push_back(info);
-            if (std::optional<DungeonBossInfo> pick = FirstReachableOrFront(bot, ahead))
-                return pick;
-        }
+                    return info;
 
-        // Fresh selection (no prior commit) or wrap-around (nothing ahead).
-        return FirstReachableOrFront(bot, cands);
+        // Fresh selection (no prior commit) or wrap-around (nothing ahead):
+        // lowest-index survivor.
+        return cands.front();
     }
 }
 
@@ -281,7 +269,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             }
 
     std::optional<DungeonBossInfo> pick =
-        PickTarget(bot, cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
+        PickTarget(cands, stickyEntry, stickyEncounterIndex, haveStickyIndex);
 
     // Record the commit so the next computation holds it. Storing 0 on an empty
     // result releases the commit cleanly when the dungeon is cleared or every
