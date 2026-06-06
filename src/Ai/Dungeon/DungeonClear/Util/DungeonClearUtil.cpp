@@ -1030,6 +1030,10 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
     AiObjectContext* ctx = botAI->GetAiObjectContext();
 
     uint32 const minQuality = DcSettings::GetUInt(bot, "LootMinQuality");
+    // When set, the tank never stops for chests (or any other world object) —
+    // only creature corpses are worth a detour. Default on: chests routinely
+    // sat off the route and snared the navmesh approach. See DungeonClear.conf.
+    bool const ignoreChests = DcSettings::GetBool(bot, "IgnoreChests");
 
     // Drain EVERY in-range unworthy corpse this tick, not just the single
     // nearest. Each pass judges the loot the bot would commit to next — stock's
@@ -1058,9 +1062,10 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
         if (target.guid.IsEmpty())
             break;  // nothing left to judge
 
-        // Classify the next pickup. Dungeon-clear stops only for creature
-        // CORPSES that hold loot we'd take, and for genuine treasure CHESTS;
-        // everything else is skipped so the bot never detours onto it.
+        // Classify the next pickup. Dungeon-clear stops for creature CORPSES
+        // that hold loot we'd take, and (only when IgnoreChests is off) for
+        // genuine treasure CHESTS; everything else is skipped so the bot never
+        // detours onto it.
         bool keep = false;
         if (Creature* creature = botAI->GetCreature(target.guid))
         {
@@ -1073,12 +1078,14 @@ bool DungeonClearUtil::MaybeSkipUnworthyLoot(PlayerbotAI* botAI)
         }
         else if (GameObject* go = botAI->GetGameObject(target.guid))
         {
-            // A gameobject. Stop only for real chests. Herbalism / mining
-            // gathering veins are also chest-type gameobjects, but are gated by
-            // a profession-skill lock — skillId carries that profession — so
-            // exclude them; every non-chest gameobject (fishing hole, lever,
-            // quest object) is excluded by type.
-            keep = go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
+            // A gameobject. With IgnoreChests on (the default) no world object
+            // is ever worth a detour — the bot stops only for corpses. With it
+            // off, stop only for real chests. Herbalism / mining gathering veins
+            // are also chest-type gameobjects, but are gated by a profession-
+            // skill lock — skillId carries that profession — so exclude them;
+            // every non-chest gameobject (fishing hole, lever, quest object) is
+            // excluded by type.
+            keep = !ignoreChests && go->GetGoType() == GAMEOBJECT_TYPE_CHEST &&
                    target.skillId != SKILL_HERBALISM && target.skillId != SKILL_MINING;
         }
         // else: loose item loot or an unresolvable guid -> not a corpse or chest.

@@ -44,6 +44,7 @@ struct DcSettingDef
 inline constexpr DcSettingDef kDcSettings[] =
 {
     { "LootMinQuality",        DcType::UInt,   0,   0,   6,  true  },
+    { "IgnoreChests",          DcType::Bool,   1,   0,   1,  true  },
     { "PreventBotRelease",     DcType::Bool,   1,   0,   1,  true  },
     { "PartyMaxSpread",        DcType::Float, 25,  10,  60,  true  },
     { "BossEngageRangeFloor",  DcType::Float, 12,   5,  40,  true  },

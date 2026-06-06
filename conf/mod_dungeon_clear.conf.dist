@@ -51,6 +51,20 @@ DungeonClear.PreventBotRelease = 1
 DungeonClear.LootMinQuality = 0
 
 #
+#    DungeonClear.IgnoreChests
+#        When enabled, the tank ignores treasure chests (and every other
+#        world object on the ground) while clearing, only ever stopping for
+#        creature corpses. Keeps the run from detouring to — and getting stuck
+#        navigating around — chests the party doesn't need. Disable to restore
+#        the old behaviour of looting reachable chests along the route.
+#            0 = loot chests too      1 = ignore chests (corpses only)
+#
+#        Default: 1 (ignore chests)
+#
+
+DungeonClear.IgnoreChests = 1
+
+#
 #    DungeonClear.PartyMaxSpread
 #        Max distance (yards) the tank may lead a party member while clearing
 #        before it holds its advance and waits for everyone to catch up. Lower
