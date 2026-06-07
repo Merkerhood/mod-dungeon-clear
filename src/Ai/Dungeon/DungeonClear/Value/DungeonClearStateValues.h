@@ -38,6 +38,26 @@ public:
     DungeonClearPausedValue(PlayerbotAI* botAI) : ManualSetValue<bool>(botAI, false, "dungeon clear paused") {}
 };
 
+// Short human phrase describing WHY the run is paused, so the status panel can
+// tell the player whether they paused it themselves or whether the tank
+// auto-paused on a door it can't open. Set at each of the two pause sites
+// (DcPauseAction for a manual pause, DungeonClearDoorBlockedAction for the
+// door auto-pause) the moment `dungeon clear paused` flips true; read by
+// BuildStatusPayload only while paused. Cleared alongside the paused flag on
+// resume / dc on / dc off / death / cleared so a stale reason can't leak into
+// the next pause. Empty falls back to a generic "holding position".
+class DungeonClearPauseReasonValue : public ManualSetValue<std::string&>
+{
+public:
+    DungeonClearPauseReasonValue(PlayerbotAI* botAI)
+        : ManualSetValue<std::string&>(botAI, data, "dungeon clear pause reason")
+    {
+    }
+
+private:
+    std::string data;
+};
+
 class DungeonClearSkippedValue : public ManualSetValue<std::unordered_set<uint32>&>
 {
 public:

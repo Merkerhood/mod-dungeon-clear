@@ -320,6 +320,7 @@ namespace
         if (Player* bot = botAI->GetBot())
             DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
         ctx->GetValue<bool>("dungeon clear paused")->Set(false);
+        ctx->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
         ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
@@ -2024,6 +2025,10 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         if (!AI_VALUE(bool, "dungeon clear paused"))
         {
             context->GetValue<bool>("dungeon clear paused")->Set(true);
+            // Record the cause so the status panel shows the door reason rather
+            // than a generic hold (manual pause stamps its own reason instead).
+            context->GetValue<std::string&>("dungeon clear pause reason")->Get() =
+                "a closed door is blocking the path";
             if (MotionMaster* mm = bot->GetMotionMaster())
                 mm->Clear();
             bot->StopMovingOnCurrentPos();

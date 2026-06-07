@@ -1503,9 +1503,13 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
     {
         // Paused takes precedence over every running sub-state — the addon
         // paints this state yellow. `enabled` stays 1 so the addon can see the
-        // eventual resume.
+        // eventual resume. `detail` carries WHY we're paused (set at the pause
+        // site: a manual hold vs. a door the tank can't open) so the panel can
+        // report the cause; the addon supplies the "boss progress saved"
+        // reassurance line. Fall back to a generic hold if no reason was stamped.
         stateStr = "paused";
-        detail = "Holding position; boss progress saved.";
+        std::string const& pauseReason = AI_VALUE(std::string&, "dungeon clear pause reason");
+        detail = pauseReason.empty() ? "holding position" : pauseReason;
     }
     else if (enabled && bot)
     {

@@ -175,6 +175,7 @@ bool DcOnAction::Execute(Event event)
     // disable path: dc off, skip-to-empty, and DisableDungeonClear.
     DungeonClearUtil::MarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
+    context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
@@ -224,6 +225,7 @@ bool DcOffAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear enabled")->Set(false);
     DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
+    context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
@@ -623,6 +625,10 @@ bool DcPauseAction::Execute(Event event)
         // stops navigating and followers peel off — exactly like dc off — but
         // all boss progress is preserved for resume.
         context->GetValue<bool>("dungeon clear paused")->Set(true);
+        // Record why so the status panel can distinguish a manual pause from the
+        // tank auto-pausing on a door it can't open. Read by BuildStatusPayload.
+        context->GetValue<std::string&>("dungeon clear pause reason")->Get() =
+            "paused at your request";
 
         // Stop the in-flight advance glide so it doesn't coast to its endpoint.
         // Only out of combat: mid-fight the combat engine owns movement and we
@@ -665,6 +671,7 @@ bool DcPauseAction::Execute(Event event)
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
 
     context->GetValue<bool>("dungeon clear paused")->Set(false);
+    context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";

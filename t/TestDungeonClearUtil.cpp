@@ -464,6 +464,7 @@ protected:
         context->SetValue<std::optional<DungeonBossInfo>>("next dungeon boss", std::nullopt);
         context->SetRefValue<std::unordered_set<uint32>>("dungeon clear skipped", {});
         context->SetRefValue<std::string>("dungeon clear stall reason", "");
+        context->SetRefValue<std::string>("dungeon clear pause reason", "");
         context->SetValue<Unit*>("current target", nullptr);
         context->SetValue<ObjectGuid>("dungeon clear blocking door", ObjectGuid::Empty);
         context->SetValue<bool>("has available loot", false);
@@ -496,13 +497,28 @@ TEST_F(DungeonClearStatusTest, StatusDisabled)
     EXPECT_EQ(DungeonClearUtil::BuildStatusPayload(botAI), expected);
 }
 
-// Test status push when mod-dungeon-clear is paused
+// Test status push when paused with no recorded reason: detail falls back to a
+// generic hold so the panel never shows an empty paused state.
 TEST_F(DungeonClearStatusTest, StatusPaused)
 {
     context->SetValue<bool>("dungeon clear enabled", true);
     context->SetValue<bool>("dungeon clear paused", true);
 
-    std::string expected = "STATUS\t1\t0\tNone\t\t0\tpaused\tHolding position; boss progress saved.";
+    std::string expected = "STATUS\t1\t0\tNone\t\t0\tpaused\tholding position";
+    EXPECT_EQ(DungeonClearUtil::BuildStatusPayload(botAI), expected);
+}
+
+// Test status push when paused with a recorded reason (manual hold or a door
+// the tank can't open): the reason rides in the detail field for the panel.
+TEST_F(DungeonClearStatusTest, StatusPausedWithReason)
+{
+    context->SetValue<bool>("dungeon clear enabled", true);
+    context->SetValue<bool>("dungeon clear paused", true);
+    context->SetRefValue<std::string>("dungeon clear pause reason",
+                                      "a closed door is blocking the path");
+
+    std::string expected =
+        "STATUS\t1\t0\tNone\t\t0\tpaused\ta closed door is blocking the path";
     EXPECT_EQ(DungeonClearUtil::BuildStatusPayload(botAI), expected);
 }
 
