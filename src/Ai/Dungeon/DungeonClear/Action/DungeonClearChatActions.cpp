@@ -227,6 +227,7 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
     // Advanced pull resets each run (the toggle is a per-run preference).
+    context->GetValue<uint32>("dungeon clear pull setting")->Set(0u);
     context->GetValue<bool>("dungeon clear pull mode")->Set(false);
     DungeonClearUtil::SetLeaderDazeImmunity(bot, false);
     ResetPullTransient(context);
@@ -282,6 +283,7 @@ bool DcOffAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
+    context->GetValue<uint32>("dungeon clear pull setting")->Set(0u);
     context->GetValue<bool>("dungeon clear pull mode")->Set(false);
     DungeonClearUtil::SetLeaderDazeImmunity(bot, false);
     ResetPullTransient(context);
@@ -773,37 +775,58 @@ bool DcPullAction::Execute(Event event)
         return false;
     }
 
+    // Tri-state preference: 0 Off, 1 On, 2 Dynamic (see DungeonClearPullSetting-
+    // Value). The addon sends an explicit "off"/"on"/"dynamic"; a bare toggle
+    // cycles Off -> On -> Dynamic -> Off for the chat keyword / .dc pull case.
     std::string const param = event.getParam();
-    bool const current = AI_VALUE(bool, "dungeon clear pull mode");
-    bool target;
-    if (param == "on")
-        target = true;
-    else if (param == "off")
-        target = false;
+    uint32 const current = AI_VALUE(uint32, "dungeon clear pull setting");
+    uint32 setting;
+    if (param == "off")
+        setting = 0u;
+    else if (param == "on")
+        setting = 1u;
+    else if (param == "dynamic" || param == "dyn")
+        setting = 2u;
     else
-        target = !current;
+        setting = (current + 1u) % 3u;  // bare toggle cycles the three states
 
-    context->GetValue<bool>("dungeon clear pull mode")->Set(target);
+    // Dynamic is not yet implemented, so it drives no behavior: only the explicit
+    // "On" state arms the actual pull-to-camp maneuver. Keep the behavioral bool
+    // in lock-step so every existing reader (triggers, multiplier, GetLeaderPull-
+    // Info) stays untouched — Dynamic simply reads as "pull off" for now.
+    bool const active = (setting == 1u);
+
+    context->GetValue<uint32>("dungeon clear pull setting")->Set(setting);
+    context->GetValue<bool>("dungeon clear pull mode")->Set(active);
     // Make the driving tank daze-proof for the pull session so the pull-to-camp
     // drag-back (run AWAY from the pack -> every hit lands from behind) can't be
     // crippled by a Daze slow. Revoked when pull mode goes off.
-    DungeonClearUtil::SetLeaderDazeImmunity(bot, target);
+    DungeonClearUtil::SetLeaderDazeImmunity(bot, active);
     // Seed the party camp at the tank's current spot so the party has somewhere to
     // hold the instant pull mode comes on — before the first pull marks a real
     // camp. In pull mode the party holds/leapfrogs camp-to-camp instead of
     // following (see DungeonClearUtil::GetLeaderCampHold).
-    if (target)
+    if (active)
         context->GetValue<Position&>("dungeon clear camp position")->Get() =
             Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+    char const* const label =
+        setting == 1u ? "ON" : (setting == 2u ? "DYNAMIC" : "OFF");
     DC_PULL_INFO("[DC:{}] advanced-pull mode {} by {}", bot->GetName(),
-                 target ? "ENABLED" : "DISABLED", param.empty() ? "toggle" : param);
-    // Turning pull off (explicitly or by toggle) mid-maneuver aborts it: reset the
-    // phase so the combat maneuver stands down and the reaper releases the party.
-    if (!target)
+                 label, param.empty() ? "toggle" : param);
+    // Leaving the active On state (to Off, to Dynamic, or by toggle) mid-maneuver
+    // aborts it: reset the phase so the combat maneuver stands down and the reaper
+    // releases the party.
+    if (!active)
         ResetPullTransient(context);
 
-    DungeonClearUtil::SendAddonMessage(
-        botAI, std::string("CHAT\tAdvanced pull ") + (target ? "enabled." : "disabled."));
+    std::string chat = "CHAT\tAdvanced pull ";
+    if (setting == 1u)
+        chat += "enabled.";
+    else if (setting == 2u)
+        chat += "set to dynamic (auto-pull; not yet active, holding off).";
+    else
+        chat += "disabled.";
+    DungeonClearUtil::SendAddonMessage(botAI, chat);
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }

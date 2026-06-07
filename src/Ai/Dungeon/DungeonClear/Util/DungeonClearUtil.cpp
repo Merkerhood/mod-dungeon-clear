@@ -2200,7 +2200,12 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
     std::string stateStr = "off";
     std::string detail;
     bool const paused = AI_VALUE(bool, "dungeon clear paused");
+    // `pullMode` is the behavioral gate (a pull maneuver is actually armed) and
+    // drives the state/detail wording below; `pullSetting` is the user's tri-state
+    // preference (Off/On/Dynamic) reported to the addon's control. They differ for
+    // Dynamic, which is a stored preference with no behavior yet (bool stays off).
     bool const pullMode = AI_VALUE(bool, "dungeon clear pull mode");
+    uint32 const pullSetting = AI_VALUE(uint32, "dungeon clear pull setting");
     uint32 const pullPhase = AI_VALUE(uint32, "dungeon clear pull phase");
     std::string const bossName = next.has_value() ? next->name : "the boss";
 
@@ -2321,10 +2326,12 @@ std::string DungeonClearUtil::BuildStatusPayload(PlayerbotAI* botAI)
              << skipped.size() << "\t"
              << stateStr << "\t"
              << detail << "\t"
-             // Trailing field (index 8): advanced-pull toggle, for the addon's
-             // Pull button + readout. Appended so older addons ignoring it stay
-             // compatible (same pattern as the BOSS wing field).
-             << (pullMode ? "1" : "0");
+             // Trailing field (index 8): advanced-pull preference as a tri-state
+             // (0 Off / 1 On / 2 Dynamic) for the addon's segmented control + tiny
+             // cycle. Appended so older addons ignoring it stay compatible (same
+             // pattern as the BOSS wing field); they read "2" as not-"1" = off,
+             // which is the correct behavior while Dynamic is a no-op stub.
+             << pullSetting;
 
     return addonMsg.str();
 }

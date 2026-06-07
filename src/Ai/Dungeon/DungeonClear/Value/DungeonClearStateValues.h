@@ -524,6 +524,25 @@ public:
     }
 };
 
+// User-facing tri-state advanced-pull *preference* (the addon's Off/On/Dynamic
+// control), distinct from the behavioral `dungeon clear pull mode` bool above:
+//   0 Off     — no advanced pull; the bool is false.
+//   1 On      — always pull-to-camp; the bool is true.
+//   2 Dynamic — let the AI decide when to pull. NOT YET IMPLEMENTED; for now it
+//               behaves as Off (the bool stays false) but the preference is
+//               stored and reported so the UI can offer it ahead of the feature.
+// DcPullAction is the single writer and keeps the bool in lock-step (true only
+// for On). Reset to 0 alongside the run state (dc on / dc off). Leader-owned and
+// surfaced in the STATUS payload for the addon's segmented control / tiny cycle.
+class DungeonClearPullSettingValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPullSettingValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull setting")
+    {
+    }
+};
+
 // Current advanced-pull sub-phase (DcPullPhase cast to uint32):
 //   0 Idle      — no pull in progress.
 //   1 Forming   — camp stamped; holding a beat so followers go passive first.
