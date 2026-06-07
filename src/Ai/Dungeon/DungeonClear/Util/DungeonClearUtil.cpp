@@ -138,6 +138,13 @@ namespace
     // tight enough to keep adjacent floors apart.
     constexpr float DC_DOOR_Z_BAND = 6.0f;
 
+    // Below this vertical offset a candidate is treated as on the bot's own
+    // level: slopes, stairs and ramps stay under it within a corridor
+    // lookahead. WotLK inter-floor gaps are larger, so a genuine other-level
+    // mob always exceeds it. Shared by IsLevelReachable (trash) and
+    // IsAtBossEngage (boss-arrival floor guard).
+    constexpr float DC_Z_LEVEL_TOLERANCE = 5.0f;
+
     // A closed door reduced to its GO-origin point, carried with Z so the
     // corridor tests can reject doors on another floor.
     struct DoorPt { float x, y, z; };
@@ -469,25 +476,53 @@ bool DungeonClearUtil::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
     float const by = live ? live->GetPositionY() : boss.y;
     float const bz = live ? live->GetPositionZ() : boss.z;
 
+    float const engageRange = BossEngageRange(bot, ctx, boss, staticRange);
+
     // Straight-line aggro-bubble gate (same value the trigger ladder reads).
-    if (bot->GetDistance(bx, by, bz) >= BossEngageRange(bot, ctx, boss, staticRange))
+    if (bot->GetDistance(bx, by, bz) >= engageRange)
         return false;
 
-    // Floor guard: a 3D-close boss on a different vertical level — the tank
-    // passing *under* a ledge/upper-floor boss en route to the ramp — is NOT
-    // navigationally arrived. IsLevelReachable short-circuits true for a boss on
-    // the tank's own level (dz within tolerance, the common case → no probe
-    // cost), and otherwise confirms an actual ground path that ends on the
-    // boss's level. A boss directly overhead fails that probe (PathGenerator
-    // clamps the straight-up destination back to the tank's own floor), so the
-    // handoff is deferred and the advance action keeps walking the route up to
-    // the boss's floor, where dz collapses and the pull fires for real. Skipped
-    // when the boss isn't loaded (static coords, necessarily far — there is no
-    // under-the-ledge case to guard against).
-    if (live && !IsLevelReachable(bot, live))
+    // Same-floor fast path: within tolerance the straight-line distance is the
+    // real approach distance (slopes/ramps stay under it), so trust the gate
+    // above. Skips the path probe in the overwhelmingly common case.
+    float const dz = std::fabs(bz - bot->GetPositionZ());
+    if (dz <= DC_Z_LEVEL_TOLERANCE)
+        return true;
+
+    // Static coords (boss not loaded) are necessarily far and only reached on
+    // the tank's own floor; no under/over-the-ledge case to guard against.
+    if (!live)
+        return true;
+
+    // Vertically separated: a 3D-close boss may be a whole floor below or above
+    // — the tank on a balcony/walkway directly over Rethilgore, or parked under
+    // an upper-floor boss like Fenrus. Straight-line proximity is then a lie:
+    // the real approach winds down stairs/ramps and the boss can neither be
+    // pulled (no LOS / out of its own aggro band) nor does the tank ever reach
+    // it, so the at-boss handoff fires and the run dead-stops in "Holding near".
+    //
+    // The old guard (IsLevelReachable) only asked whether SOME ground path to
+    // the boss's level exists — which, in a connected dungeon, it almost always
+    // does — so it failed to catch this. Require instead that the NAVIGATIONAL
+    // distance to the boss is itself within engage range: a real arrival, not a
+    // long detour down. A boss directly overhead clamps off-mesh (PathGenerator
+    // snaps the destination back to the tank's own floor) and fails the
+    // end-on-boss-level check; a balcony boss produces a long stairs path and
+    // fails the length check. Either way the handoff defers and Advance keeps
+    // walking the route to the boss's floor, where dz collapses and the pull
+    // fires for real.
+    PathGenerator gen(bot);
+    gen.CalculatePath(bx, by, bz, /*forceDest*/ false);
+    if (gen.GetPathType() != PATHFIND_NORMAL)
         return false;
 
-    return true;
+    Movement::PointsArray const& path = gen.GetPath();
+    if (path.empty())
+        return false;
+    if (std::fabs(path.back().z - bz) > DC_Z_LEVEL_TOLERANCE)
+        return false;
+
+    return gen.getPathLength() <= engageRange;
 }
 
 bool DungeonClearUtil::IsDoorClosed(GameObject const* go)
@@ -676,13 +711,11 @@ bool DungeonClearUtil::IsLevelReachable(Player* bot, Unit* u)
     if (!bot || !u)
         return false;
 
-    // Below this vertical offset the candidate is on the bot's own level:
+    // Within DC_Z_LEVEL_TOLERANCE the candidate is on the bot's own level:
     // slopes, stairs and ramps stay under it within a corridor lookahead, so
     // we trust the caller's 2D corridor/cone/LOS test and skip the probe.
-    // WotLK inter-floor gaps are larger than this, so a genuine other-level
-    // mob always falls through to the pathfinder check below.
-    constexpr float DC_Z_LEVEL_TOLERANCE = 5.0f;
-
+    // Otherwise a genuine other-level mob falls through to the pathfinder
+    // check below.
     float const dz = std::fabs(u->GetPositionZ() - bot->GetPositionZ());
     if (dz <= DC_Z_LEVEL_TOLERANCE)
         return true;
