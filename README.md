@@ -48,10 +48,40 @@ being inside a dungeon.
 | `.dc status` | `dc status` |
 | `.dc bosses` | `dc bosses` |
 
-### Advanced pull (`dc pull`)
+## Pull modes
 
-A toggle that changes how the tank takes trash packs. Instead of walking into a
-pack and fighting on top of it, the tank:
+How the tank takes trash packs on the way to each boss. There are three modes,
+selected from the addon's pull control (or the `dc pull` toggle / setting):
+
+| Mode | Behaviour |
+|---|---|
+| **Leeroy** *(default)* | Walk straight into each pack and fight on top of it. Fast, no choreography. |
+| **Advanced** | Pull every pack back to a held camp before fighting it. Careful, but slow. |
+| **Dynamic** | Decide per pack: Leeroy a lone pack, Advanced-pull a clustered or oversized one. |
+
+> ### ❗ Start with Leeroy
+>
+> **Leeroy is the default and is the right choice for almost every dungeon.** The
+> tank's threat, the party's DPS, and bot self-healing handle ordinary trash
+> packs fine when fought in place, and Leeroy keeps a clear moving at full speed.
+>
+> **Advanced and Dynamic make a clear dramatically slower** — every pull adds a
+> camp-setup, a tag, and a drag-back round trip. Only reach for **Advanced** in
+> the specific spots where Leeroy is *failing* — packs so large or so tightly
+> stacked that fighting them in place wipes the party. **Dynamic** is the
+> compromise: it Leeroys by default and only pays the Advanced cost on the packs
+> that actually need it, so it's slower than pure Leeroy but faster than forcing
+> Advanced everywhere.
+
+### Leeroy (default)
+
+The tank walks into each pack and fights it where it stands, party following
+normally. No camps, no tagging, no drag-back — just clear and move on. This is
+the fastest mode and what you should use unless a particular pull is wiping you.
+
+### Advanced (`dc pull`)
+
+Instead of walking into a pack and fighting on top of it, the tank:
 
 1. marks a **camp** a good distance back along the already-cleared route
    (`DungeonClear.PullSetback`), pushed further if needed so the fight won't aggro
@@ -67,10 +97,27 @@ pack and fighting on top of it, the tank:
 4. **releases** the party to fight the moment the tank reaches camp.
 
 If a held, passive member is hurt (a patrol clipped the camp) the pull aborts and
-the whole party is released to defend (`DungeonClear.PullSafetyHpPct`). Pull mode
-is per-run and resets with the clear.
+the whole party is released to defend (`DungeonClear.PullSafetyHpPct`). Advanced
+pull is correct but **much slower** than Leeroy because of the camp/tag/drag round
+trip on every pack — use it only where Leeroy can't hold.
 
-The `.dc` slash command always works. **Chat keywords and follow-tank need the
+### Dynamic
+
+Dynamic keeps Leeroy as the baseline and upgrades to an Advanced pull only when a
+pack warrants it, deciding fresh for each pack the tank approaches:
+
+- a **lone** pack — nothing else within `DungeonClear.PullDynamicChainRadius`
+  (line-of-sight, not behind a closed door) and at or under
+  `DungeonClear.PullDynamicLargePackThreshold` mobs — is **Leeroy**-pulled;
+- a **clustered** room (another pack inside the chain radius) or an oversized lone
+  pack is handled with the careful **Advanced** pull-to-camp.
+
+Each pack gets one stable verdict, and the addon's status readout shows what
+Dynamic chose. It is slower than pure Leeroy but spends the Advanced cost only on
+the packs that need it.
+
+Pull mode is per-run and resets with the clear. The `.dc` slash command always
+works. **Chat keywords and follow-tank need the
 `dungeon clear` strategy applied** — the login hook applies it to bots present
 at login, but the only path that reaches a self-bot created mid-session is the
 playerbots config. Add to your deployed `playerbots.conf`:
