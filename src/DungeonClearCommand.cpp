@@ -17,8 +17,14 @@
 #include "ChatCommand.h"
 #include "Group.h"
 #include "Player.h"
+#include "StringFormat.h"
+
+#include <cmath>
 
 #include "DungeonClearDispatch.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettingsRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 
 using namespace Acore::ChatCommands;
 
@@ -36,6 +42,63 @@ namespace
         if (!DungeonClearDispatch::DispatchToTankBots(issuer, action, param))
             handler->SendSysMessage("No tank bot found in your group.");
 
+        return true;
+    }
+
+    // Format a resolved raw double per the registry type, so the printout reads
+    // the way the conf line is written (true/false, ints, floats).
+    std::string FormatDcValue(DcSettingDef const& d, double raw)
+    {
+        switch (d.type)
+        {
+            case DcType::Bool:
+                return raw != 0.0 ? "true" : "false";
+            case DcType::UInt:
+            case DcType::Int:
+                return Acore::StringFormat("{}", static_cast<int64>(std::lround(raw)));
+            case DcType::Float:
+            default:
+                return Acore::StringFormat("{:.2f}", raw);
+        }
+    }
+
+    // Dumps every DungeonClear tunable as the module actually reads it: the live
+    // conf/default value, plus the per-run effective value when the issuer's run
+    // has an addon override active. This is a pure read of sConfigMgr through the
+    // DcSettings accessor, so it reflects exactly what the AI sees this tick —
+    // use it to confirm whether a conf edit took effect (no `.reload config`).
+    bool HandleConfig(ChatHandler* handler)
+    {
+        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+        if (!issuer)
+        {
+            handler->SendSysMessage("This command must be used in-game.");
+            return true;
+        }
+
+        // Resolve the run owner (leader tank) so we can surface per-run overrides.
+        // Empty when the issuer isn't in a DC run — then only conf/defaults show.
+        Player* leader = DungeonClearUtil::FindLeaderTank(issuer);
+        ObjectGuid const runOwner = leader ? leader->GetGUID() : ObjectGuid::Empty;
+
+        handler->SendSysMessage("DungeonClear config (effective values; * = addon override):");
+        for (DcSettingDef const& d : kDcSettings)
+        {
+            double const confVal = DcSettings::GetEffectiveRaw(ObjectGuid::Empty, d);
+            double const effVal  = DcSettings::GetEffectiveRaw(runOwner, d);
+            bool const overridden =
+                !runOwner.IsEmpty() && DcSettings::HasOverride(runOwner, d.key);
+
+            std::string line;
+            if (overridden)
+                line = Acore::StringFormat("  * DungeonClear.{} = {} (conf {})",
+                                           d.key, FormatDcValue(d, effVal),
+                                           FormatDcValue(d, confVal));
+            else
+                line = Acore::StringFormat("    DungeonClear.{} = {}",
+                                           d.key, FormatDcValue(d, confVal));
+            handler->SendSysMessage(line);
+        }
         return true;
     }
 }
@@ -57,6 +120,7 @@ public:
             { "status", HandleStatus, SEC_PLAYER, Console::No },
             { "bosses", HandleBosses, SEC_PLAYER, Console::No },
             { "go",     HandleGo,     SEC_PLAYER, Console::No },
+            { "config", HandleConfig, SEC_PLAYER, Console::No },
         };
         static ChatCommandTable root = { { "dc", dcTable } };
         return root;
