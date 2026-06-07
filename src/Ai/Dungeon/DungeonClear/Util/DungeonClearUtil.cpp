@@ -23,9 +23,12 @@
 #include <vector>
 
 #include "AttackersValue.h"
+#include "CellImpl.h"
 #include "Config.h"
 #include "Creature.h"
 #include "GameObject.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Group.h"
 #include "ItemTemplate.h"
 #include "LootMgr.h"
@@ -626,18 +629,18 @@ bool DungeonClearUtil::IsDoorClosed(GameObject const* go)
     return (go->GetGoState() == GO_STATE_READY) != startOpen;
 }
 
-bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
+bool DungeonClearUtil::ClosedDoorBetween(WorldObject* from, float tx, float ty,
                                          float tz, float corridorWidth)
 {
-    if (!bot)
+    if (!from)
         return false;
-    Map* map = bot->GetMap();
+    Map* map = from->GetMap();
     if (!map)
         return false;
 
-    float const bx = bot->GetPositionX();
-    float const by = bot->GetPositionY();
-    float const bz = bot->GetPositionZ();
+    float const bx = from->GetPositionX();
+    float const by = from->GetPositionY();
+    float const bz = from->GetPositionZ();
     float const widthSq = corridorWidth * corridorWidth;
     // Floor span of the bot->target line (plus tolerance). A door outside it
     // sits on another level and isn't actually in the way (stacked decks /
@@ -1093,24 +1096,38 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
     float const chainRadius = std::max(chainCfg, safeRadius);
 
-    // Candidate hostiles ahead — the same set the pull / camp scans read.
-    GuidVector const& farTargets =
-        ctx->GetValue<GuidVector>("dungeon clear far targets")->Get();
-    GuidVector const& possibleTargets =
-        ctx->GetValue<GuidVector>("possible targets")->Get();
-    GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
+    // Candidate hostiles: gather them with a server-side grid search centred on the
+    // PACK (target), NOT on the bot's own scan lists. The bot-cached "far targets"
+    // value is range-limited to the bot, throttled (500ms), and was the root of the
+    // late-ADVANCED flip: a neighbour pack near the target but on the far side of the
+    // tank's approach only entered the bot's view as it walked up, so the verdict
+    // resolved at point-blank instead of from first sight. A search around the target
+    // sees the whole neighbourhood the instant the pack is picked, regardless of where
+    // the tank stands or what it can see — the classification becomes a property of
+    // the ROOM, stable across the entire approach. Radius covers the target pack
+    // (kPackRadius), a neighbour at the full chain reach, and that neighbour's own
+    // pack spread, so nothing the math could count is missed.
+    float const searchRadius = chainRadius * 2.0f + kPackRadius * 2.0f;
+    std::list<Creature*> nearby;
+    Acore::AnyUnitInObjectRangeCheck check(target, searchRadius);
+    Acore::CreatureListSearcher<Acore::AnyUnitInObjectRangeCheck> searcher(
+        target, nearby, check);
+    Cell::VisitObjects(target, searcher, searchRadius);
 
     std::vector<Unit*> hostiles;
-    hostiles.reserve(candidates.size() + 1);
-    for (ObjectGuid guid : candidates)
+    hostiles.reserve(nearby.size() + 1);
+    for (Creature* c : nearby)
     {
-        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
-        if (!u || !u->IsAlive() || !bot->IsHostileTo(u))
+        if (!c || !c->IsAlive() || !bot->IsHostileTo(c))
             continue;
-        hostiles.push_back(u);
+        // Critters / non-combat pets / passive ambient never form a pull pack or a
+        // chaining add — exclude them so they can't pad the pack-size count.
+        if (c->IsCritter() || c->IsTotem())
+            continue;
+        hostiles.push_back(c);
     }
-    // The target must be in the set so its pack is well-defined even if the scan
-    // missed it this cache cycle.
+    // The target itself must be in the set so its pack is well-defined even if the
+    // grid visitor somehow skipped it (despawn race / off-grid edge).
     if (std::find(hostiles.begin(), hostiles.end(), target) == hostiles.end())
         hostiles.push_back(target);
 
@@ -1142,7 +1159,12 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     {
         if (target->GetExactDist2d(u) > chainBroadPhase)
             return false;
-        if (ClosedDoorBetween(bot, u->GetPositionX(), u->GetPositionY(),
+        // Door test runs PACK->neighbour (target as origin), not bot->neighbour, so a
+        // door is "between" the two PACKS regardless of where the tank is standing.
+        // Using the bot here was the other half of the bot-position dependence: the
+        // bot->neighbour chord clips a different set of doors as the tank rounds a
+        // corner, which flipped the verdict mid-approach.
+        if (ClosedDoorBetween(target, u->GetPositionX(), u->GetPositionY(),
                               u->GetPositionZ()))
             return false;
         PathGenerator gen(target);
@@ -1181,9 +1203,10 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     // corridor/boss-arrival floor guards use elsewhere in this file.
     bool const advanced = DungeonClearMath::ClassifyDynamicPull(
         mobs, targetIdx, kPackRadius, chainRadius, largePack, DC_Z_LEVEL_TOLERANCE);
-    DC_PULL_DEBUG("[DC:{}] dynamic: classified target {} among {} forward hostiles "
-                  "(chain {:.1f}, large-pack {}) -> {}", bot->GetName(),
-                  target->GetGUID().ToString(), mobs.size(), chainRadius, largePack,
+    DC_PULL_DEBUG("[DC:{}] dynamic: classified target {} among {} hostiles within "
+                  "{:.0f}yd of the pack (chain {:.1f}, large-pack {}) -> {}",
+                  bot->GetName(), target->GetGUID().ToString(), mobs.size(),
+                  searchRadius, chainRadius, largePack,
                   advanced ? "ADVANCED" : "LEEROY");
     return advanced;
 }
@@ -1237,34 +1260,18 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
 
     // Per-pack latch, UPGRADE-ONLY while approaching the SAME pack.
     //
-    // The first verdict on a pack is taken the tick it comes into scan range —
-    // exactly when the room is least visible: neighbours at the far end of the
-    // corridor haven't been scanned yet, and line of sight to them is occluded by
-    // the very pack the tank is walking up to. A first-sight "Leeroy" can therefore
-    // miss a second pack that only resolves as the tank closes. So we keep
-    // re-checking a Leeroy verdict as the bot approaches and allow it to UPGRADE to
-    // Advanced — but never downgrade, and once Advanced it is locked for the rest of
-    // the approach. That removes the first-sight blind spot in the only direction
-    // that matters (toward caution) while still giving each pack ONE stable, non-
-    // flapping decision: the party is never churned Leeroy<->Advanced tick to tick.
-    //
-    // The re-check cadence is DISTANCE-AWARE. The neighbour scan does LOS + closed-
-    // door tests per mob, so while the pack is still far we throttle it to a few
-    // evaluations a second. But the verdict is time-critical near the commit range: a
-    // neighbour only resolves into the path scan as the tank closes, and a flat
-    // throttle can let the Leeroy->Advanced upgrade land a tick or two AFTER the pull
-    // already committed Leeroy — the tank charges in with no camp staged and the party
-    // strung out behind it ("everyone out of place"). So once the pack is inside the
-    // approach window we reclassify EVERY tick: the upgrade then fires the instant a
-    // neighbour resolves and is final BEFORE commit, leaving the parallel party-advance
-    // time to pre-stage the camp. Re-checks still stop entirely once Advanced (locked)
-    // — the every-tick cost is bounded to the brief, decisive approach window. The
-    // window is the actual (aggro-derived) commit range plus a buffer, so it always
-    // opens a few ticks BEFORE the pull would commit, whatever that pack's aggro is.
-    constexpr uint32 kRecheckFarMs = 400;
-    constexpr float kApproachBuffer = 8.0f;
-    float const kApproachWindow =
-        PullCommitRange(bot, target, 26.0f) + kApproachBuffer;
+    // ClassifyPullAdvanced now sizes up the pack with a search centred on the PACK
+    // itself (positions, navmesh paths and door tests all measured from the target,
+    // never from the tank), so the verdict is a stable property of the room: it reads
+    // the SAME from 35yd out as from point-blank. The first-sight decision is therefore
+    // already correct and no longer needs to be chased down as the tank closes — the
+    // old "neighbour only resolves at the last second" blind spot is gone. We still
+    // re-check on a throttle and allow a Leeroy verdict to UPGRADE to Advanced (never
+    // downgrade), but only to catch genuine CHANGES in the room — a patrol wandering
+    // into chain range, a pack pulled by another fight — not to compensate for our own
+    // movement. Once Advanced it is locked for the rest of the approach. One stable,
+    // non-flapping decision per pack; the party is never churned Leeroy<->Advanced.
+    constexpr uint32 kRecheckMs = 400;
     ObjectGuid const latched =
         context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Get();
     bool const sameTarget = (latched == target->GetGUID());
@@ -1274,22 +1281,18 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
         // Already Advanced for this pack: locked, never reconsidered.
         if (curBool)
             return;
-        // Standing Leeroy: re-check upgrade-only. Throttle only while far; inside
-        // the approach window reclassify every tick so the verdict can't lag commit.
+        // Standing Leeroy: re-check on a throttle, upgrade-only.
         uint32 const now = getMSTime();
-        if (bot->GetExactDist2d(target) > kApproachWindow)
-        {
-            uint32 const since =
-                context->GetValue<uint32>("dungeon clear pull decision since")->Get();
-            if (since != 0 && (now - since) < kRecheckFarMs)
-                return;
-        }
+        uint32 const since =
+            context->GetValue<uint32>("dungeon clear pull decision since")->Get();
+        if (since != 0 && (now - since) < kRecheckMs)
+            return;
         context->GetValue<uint32>("dungeon clear pull decision since")->Set(now);
         if (ClassifyPullAdvanced(botAI, target))
         {
             apply(true, 2u);
             DC_PULL_INFO("[DC:{}] dynamic verdict UPGRADED for pack {}: LEEROY -> "
-                         "ADVANCED (neighbour resolved on approach)",
+                         "ADVANCED (room changed — patrol/neighbour entered chain range)",
                          bot->GetName(), target->GetGUID().ToString());
         }
         return;

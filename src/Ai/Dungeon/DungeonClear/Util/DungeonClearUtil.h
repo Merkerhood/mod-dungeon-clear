@@ -176,7 +176,7 @@ public:
     static bool IsDoorClosed(GameObject const* go);
 
     // True if a closed `GAMEOBJECT_TYPE_DOOR` sits on the straight 2D line from
-    // the bot to (tx,ty), within `corridorWidth` of it, on the bot/target floor
+    // `from` to (tx,ty), within `corridorWidth` of it, on the from/target floor
     // (Z), and projecting to the INTERIOR of that chord. Used to veto engaging a
     // boss/pack on the FAR side of a shut door (the navmesh may let the tank clip
     // through, so it would otherwise bee-line onto/through the door). Computed
@@ -185,7 +185,9 @@ public:
     // target, which let the tank run through, clear it, and walk back. The Z and
     // interior-projection gates keep the straight chord from grazing a door on
     // another deck or in a parallel corridor and vetoing a valid near-side pull.
-    static bool ClosedDoorBetween(Player* bot, float tx, float ty, float tz,
+    // `from` is any world object (usually the bot, but the dynamic-pull chain gate
+    // passes the PACK so the door test is independent of where the tank stands).
+    static bool ClosedDoorBetween(WorldObject* from, float tx, float ty, float tz,
                                   float corridorWidth = 8.0f);
 
     // Distance TRAVELLED ALONG the long-path (from the bot) to where the route
