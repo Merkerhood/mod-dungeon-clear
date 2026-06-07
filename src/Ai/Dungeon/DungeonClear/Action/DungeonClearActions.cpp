@@ -2629,13 +2629,17 @@ bool DungeonClearFilterLootAction::Execute(Event /*event*/)
 // instead of the party running out to the tank.
 namespace
 {
-    // How close the pull target must be before a pull is COMMITTED. The corridor
-    // scan detects packs out to ~35yd; committing only once the pack is this close
-    // keeps the tag a short, consistent run on EVERY pull (first and subsequent
-    // alike). Until then Advance glides the tank closer (blocking-trash stands
-    // down in pull mode so it can't engage first). Kept in sync with the copy in
-    // DungeonClearTriggers.cpp.
-    constexpr float DC_PULL_START_RANGE = 20.0f;
+    // How close the pull target must be before a pull is COMMITTED — i.e. the tank
+    // stops gliding, holds, and waits in Forming for the party to set at the camp
+    // BEFORE it steps in to tag. This MUST sit outside the pack's aggro radius
+    // (~20yd for a same-level mob): commit any closer and the tank face-pulls the
+    // pack mid-glide ("unplanned aggro while scouting"), so the party never gets to
+    // stage at the camp first — the whole point of an advanced pull. 26yd leaves a
+    // few yards of margin past aggro while staying well inside the ~35yd detection
+    // band. Until the pack is this close Advance glides the tank in (blocking-trash
+    // stands down in pull mode so it can't engage first). Kept in sync with the copy
+    // in DungeonClearTriggers.cpp.
+    constexpr float DC_PULL_START_RANGE = 26.0f;
     // Per-leg watchdog (tag / return) — abort a leg that makes no progress so a
     // navmesh wedge can never freeze the pull.
     constexpr uint32 DC_PULL_LEG_TIMEOUT_MS = 10000;
@@ -2984,6 +2988,13 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     }
 
     uint32 const since = AI_VALUE(uint32, "dungeon clear pull since");
+    // `since` is stamped by DcSetPullPhase via its OWN getMSTime() call, which can
+    // read a millisecond LATER than the `now` captured at the top of Execute. So on
+    // the very tick we transition into Returning (above), now < since and a raw
+    // `now - since` underflows to ~4.29e9 — instantly tripping the leg-timeout and
+    // dumping the tank into "fight in place", which is why the pull-back to camp
+    // worked or failed at random (a millisecond-boundary race). Clamp the elapsed.
+    uint32 const legElapsed = now > since ? now - since : 0u;
     float const dist = bot->GetExactDist(&camp);
 
     if (dist <= DC_PULL_CAMP_ARRIVE)
@@ -2998,20 +3009,20 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
         return false;
     }
 
-    if ((now - since) > DC_PULL_LEG_TIMEOUT_MS)
+    if (legElapsed > DC_PULL_LEG_TIMEOUT_MS)
     {
         // Return leg wedged — fight where we are rather than freeze.
         DcSetPullPhase(context, DcPullPhase::Engage);
         DC_PULL_INFO("[DC:{}] advanced-pull: return leg wedged at {:.1f}yd from camp "
                      "after {} ms -> fighting in place",
-                     bot->GetName(), dist, now - since);
+                     bot->GetName(), dist, legElapsed);
         return false;
     }
 
     // Run to camp. Own the tick (return true even on a duplicate move) so stock
     // combat chase/attack can't grab the tank and fight at the pack instead.
     DC_PULL_TRACE("[DC:{}] pull returning: {:.1f}yd to camp ({} ms into leg)",
-                  bot->GetName(), dist, now - since);
+                  bot->GetName(), dist, legElapsed);
     MoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
            /*idle*/ false, /*react*/ false, /*normal_only*/ false,
            /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);

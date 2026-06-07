@@ -48,8 +48,10 @@ namespace
     // enough that the run-in reaches the pack and the drag-back is short. The
     // corridor scan sees packs out to ~35yd, so without this the camp lands in
     // the run-in's overshoot dead band and every pull after the first whiffs.
-    // Must stay aligned with DC_PULL_START_RANGE in DungeonClearActions.cpp.
-    constexpr float DC_PULL_START_RANGE = 20.0f;
+    // Must stay aligned with DC_PULL_START_RANGE in DungeonClearActions.cpp
+    // (commit outside the pack's aggro radius so the tank Forms and the party sets
+    // at camp before the tag, instead of face-pulling mid-glide).
+    constexpr float DC_PULL_START_RANGE = 26.0f;
 
     // Between-pulls wait policy. Tank holds advance/trash-engage until the party
     // has caught up, rested, and tank-side loot is collected. The HP/mana
