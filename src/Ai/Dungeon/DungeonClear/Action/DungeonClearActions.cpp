@@ -856,7 +856,13 @@ namespace
         float const d = crumbs.back().GetExactDist2d(&cur);
         if (d < kSpacing)
             return;
-        if (d > kJump)
+        // Discontinuity guard is 3D: a drop-down / ledge can move the tank only a
+        // few yards in plan view but a long way vertically. A 2D-only guard treats
+        // that as contiguous trail, so a camp later picked across the seam sits on
+        // a different floor and the move to it straight-lines through the geometry
+        // (the "under the map" symptom). 3D distance catches the vertical jump and
+        // restarts the trail so consecutive crumbs are always a straight walk apart.
+        if (crumbs.back().GetExactDist(&cur) > kJump)
         {
             crumbs.clear();  // discontinuity — restart the contiguous trail
             crumbs.push_back(cur);

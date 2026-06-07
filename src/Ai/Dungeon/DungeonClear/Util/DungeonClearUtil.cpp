@@ -1038,6 +1038,27 @@ bool DungeonClearUtil::IsPullPhaseHolding(uint32 phase)
            phase == static_cast<uint32>(DcPullPhase::Returning);
 }
 
+namespace
+{
+    // True only when a COMPLETE navmesh route (PATHFIND_NORMAL) exists from the
+    // bot to `p`. Mirrors ComputeCorridor's gate exactly. The camp helpers pick
+    // points off the breadcrumb trail, but a trail can span a navmesh seam (a
+    // drop-down, a ledge, a doorway) that is short in plan view yet not walkable
+    // in a straight line. The move to such a point falls back to a straight
+    // spline that clips terrain — the "tank runs under the map" symptom. Probing
+    // the candidate with the same PathGenerator the move itself uses guarantees
+    // every committed camp is reachable over a generated path. Bounded cost: one
+    // Detour query per probe, and callers probe only points they would return.
+    bool IsNavReachable(Player* bot, Position const& p)
+    {
+        if (!bot)
+            return false;
+        PathGenerator gen(bot);
+        gen.CalculatePath(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
+        return gen.GetPathType() == PATHFIND_NORMAL;
+    }
+}
+
 std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
                                                           float setback, float safeRadius,
                                                           float maxDrag,
@@ -1116,14 +1137,24 @@ std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Un
     for (std::size_t i = crumbs.size(); i-- > 0; )
     {
         Position const& c = crumbs[i];
-        float const seg = prev.GetExactDist2d(&c);
+        // 3D segment length: this is the real walked distance, and it makes the
+        // discontinuity guard catch a vertical jump (a drop-down / ledge) that a
+        // 2D measure would miss — the trail must stay contiguous in space, not
+        // just in plan view, or a later camp pick lands on the wrong floor.
+        float const seg = prev.GetExactDist(&c);
         prev = c;
         if (seg > kJumpGuard)
             break;  // discontinuity behind us — stop here
         along += seg;
+        // Only ever return / fall back to a crumb the move can reach over a
+        // complete generated path. A crumb within kJumpGuard but across a
+        // navmesh seam would otherwise be committed and the move to it would
+        // straight-line under the map.
+        if (!IsNavReachable(bot, c))
+            continue;
         float const clear = clearanceAt(c);
-        float const drag = tankPos.GetExactDist2d(&c);
-        if (along > bestAlong)  // farthest back so far (fallback)
+        float const drag = tankPos.GetExactDist(&c);
+        if (along > bestAlong)  // farthest reachable back so far (fallback)
         {
             best = c;
             bestClear = clear;
@@ -1168,8 +1199,14 @@ std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Un
             if (!snap.ok)
                 continue;
             Position cand(snap.x, snap.y, snap.z);
+            // The straight-back projection ignores walls: the snapped point can
+            // land on-mesh but on the far side of a wall / on another level. Only
+            // keep it if a complete generated path reaches it, so the move never
+            // straight-lines through the geometry in between.
+            if (!IsNavReachable(bot, cand))
+                continue;
             float const c = clearanceAt(cand);
-            float const drag = tankPos.GetExactDist2d(&cand);
+            float const drag = tankPos.GetExactDist(&cand);
             if (drag > bestDrag)
             {
                 best = cand;
@@ -1222,11 +1259,18 @@ std::optional<Position> DungeonClearUtil::ComputeTrailCamp(PlayerbotAI* botAI,
     for (std::size_t i = crumbs.size(); i-- > 0; )
     {
         Position const& c = crumbs[i];
-        float const seg = prev.GetExactDist2d(&c);
+        // 3D segment length (see ComputeSafeCamp): true walked distance, and the
+        // guard catches a vertical drop a 2D measure would treat as contiguous.
+        float const seg = prev.GetExactDist(&c);
         prev = c;
         if (seg > kJumpGuard)
             break;  // discontinuity behind us — stop here
         along += seg;
+        // Only trail to a crumb the party can reach over a complete generated
+        // path — a seam crumb would make the follower move straight-line under
+        // the map.
+        if (!IsNavReachable(bot, c))
+            continue;
         if (along > bestAlong)
         {
             best = c;
