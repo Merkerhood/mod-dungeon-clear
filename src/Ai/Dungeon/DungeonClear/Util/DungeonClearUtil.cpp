@@ -1190,6 +1190,59 @@ std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Un
     return best;
 }
 
+std::optional<Position> DungeonClearUtil::ComputeTrailCamp(PlayerbotAI* botAI,
+                                                           float setback, float maxDrag)
+{
+    if (!botAI)
+        return std::nullopt;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return std::nullopt;
+    AiObjectContext* ctx = botAI->GetAiObjectContext();
+
+    if (maxDrag < setback)
+        maxDrag = setback;
+
+    Position const tankPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+
+    std::vector<Position> const& crumbs =
+        ctx->GetValue<std::vector<Position>&>("dungeon clear breadcrumbs")->Get();
+
+    // Walk BACK along the trail (newest -> oldest) accumulating corridor distance,
+    // exactly like ComputeSafeCamp's preferred branch but without the clearance
+    // gate: take the first point at least `setback` behind us, stopping at maxDrag
+    // or a trail discontinuity (kJumpGuard). Track the farthest contiguous point
+    // as the fallback when the trail is shorter than the full setback (e.g. right
+    // after a fight, before the tank has laid much new trail).
+    constexpr float kJumpGuard = 12.0f;
+    Position best = tankPos;
+    float bestAlong = 0.0f;
+    Position prev = tankPos;
+    float along = 0.0f;
+    for (std::size_t i = crumbs.size(); i-- > 0; )
+    {
+        Position const& c = crumbs[i];
+        float const seg = prev.GetExactDist2d(&c);
+        prev = c;
+        if (seg > kJumpGuard)
+            break;  // discontinuity behind us — stop here
+        along += seg;
+        if (along > bestAlong)
+        {
+            best = c;
+            bestAlong = along;
+        }
+        if (along >= setback)
+            return c;
+        if (along >= maxDrag)
+            break;
+    }
+
+    // Trail too short to reach the full setback: trail the farthest point we have
+    // (the party simply stacks closer behind the tank until more trail accrues).
+    return best;
+}
+
 bool DungeonClearUtil::IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius)
 {
     if (!leader)

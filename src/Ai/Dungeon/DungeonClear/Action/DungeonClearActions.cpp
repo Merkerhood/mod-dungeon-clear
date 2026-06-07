@@ -1189,9 +1189,53 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     if (AI_VALUE(bool, "dungeon clear pull mode"))
     {
         Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
-        if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
-            camp.GetPositionZ() == 0.0f)
+        bool const campUnset =
+            camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
+            camp.GetPositionZ() == 0.0f;
+        if (campUnset)
             camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+
+        // TRAIL the camp forward while merely scouting (phase Idle, out of combat).
+        // Without this the camp stays frozen at the LAST fight's spot until a new
+        // pull commits, so after every camp fight the tank glides ahead to the next
+        // pack while the party runs all the way BACK to the stale camp — the huge
+        // tank/party gap the player reported. By creeping the camp to a point
+        // PullSetback behind the moving tank each tick, hold-at-camp re-issues the
+        // followers toward it so they walk ALONG behind the tank and pause at its
+        // trailing position, exactly as a real party would. The prospective-camp
+        // publish in DungeonClearPullAction::Idle owns the camp once a pack is
+        // actually in range (it biases toward the pack), so defer to it then; this
+        // only covers the pure-scout gap (no pack detected / post-fight glide).
+        // Forward-only: adopt the new trailing point only when it sits closer to
+        // the tank than the current camp (i.e. more forward), with a few yards of
+        // hysteresis, so tick jitter never churns it or drags the party backward.
+        uint32 const pullPhase = AI_VALUE(uint32, "dungeon clear pull phase");
+        std::optional<DungeonBossInfo> const nextForTrail =
+            AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+        bool const noPackInRange =
+            !nextForTrail.has_value() ||
+            !DungeonClearUtil::FindPullTarget(botAI, *nextForTrail);
+        if (!bot->IsInCombat() &&
+            pullPhase == static_cast<uint32>(DcPullPhase::Idle) && noPackInRange)
+        {
+            float const setback = DcSettings::GetFloat(bot, "PullSetback");
+            float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+            if (std::optional<Position> trail =
+                    DungeonClearUtil::ComputeTrailCamp(botAI, setback, maxDrag))
+            {
+                Position const tankPos(bot->GetPositionX(), bot->GetPositionY(),
+                                       bot->GetPositionZ());
+                if (campUnset ||
+                    trail->GetExactDist2d(&tankPos) + 3.0f < camp.GetExactDist2d(&tankPos))
+                {
+                    camp = *trail;
+                    DC_PULL_TRACE("[DC:{}] scout: trailing camp -> ({:.1f},{:.1f},{:.1f}) "
+                                  "{:.1f}yd behind tank", bot->GetName(),
+                                  camp.GetPositionX(), camp.GetPositionY(),
+                                  camp.GetPositionZ(), tankPos.GetExactDist2d(&camp));
+                }
+            }
+        }
     }
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
