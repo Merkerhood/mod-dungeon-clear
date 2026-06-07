@@ -520,6 +520,34 @@ float DungeonClearUtil::BossEngageRange(Player* bot, AiObjectContext* ctx,
     return range;
 }
 
+float DungeonClearUtil::PullCommitRange(Player* bot, Unit* target, float staticRange)
+{
+    if (!bot || !target)
+        return staticRange;
+    if (!DcSettings::GetBool(bot, "DynamicAggroRange"))
+        return staticRange;
+
+    Creature* c = target->ToCreature();
+    if (!c)
+        return staticRange;             // players/totems: keep the fixed fallback
+
+    float const margin = DcSettings::GetFloat(bot, "AggroRangeMargin");
+    float const floorYd = DcSettings::GetFloat(bot, "PullCommitRangeFloor");
+    float const capYd = DcSettings::GetFloat(bot, "PullCommitRangeCap");
+
+    // Stop just as the tank would enter the pack's real aggro bubble: the core's own
+    // notice distance (Creature::GetAggroRange, already level/config-scaled and
+    // clamped 5-45yd) + both reaches + a small margin, so the commit fires a hair
+    // BEFORE the pack would pull on its own. Identical formula to BossEngageRange.
+    float range = c->GetAggroRange(bot) + c->GetCombatReach()
+                + bot->GetCombatReach() + margin;
+    if (range < floorYd)
+        range = floorYd;
+    if (range > capYd)
+        range = capYd;
+    return range;
+}
+
 bool DungeonClearUtil::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                       DungeonBossInfo const& boss, float staticRange)
 {
@@ -1222,19 +1250,21 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
     //
     // The re-check cadence is DISTANCE-AWARE. The neighbour scan does LOS + closed-
     // door tests per mob, so while the pack is still far we throttle it to a few
-    // evaluations a second. But the verdict is time-critical near the commit range
-    // (DC_PULL_START_RANGE, 20yd): a neighbour's LOS typically only clears as the
-    // tank closes, and a flat throttle can let the Leeroy->Advanced upgrade land a
-    // tick or two AFTER the pull already committed Leeroy — the tank charges in with
-    // no camp staged and the party strung out behind it ("everyone out of place").
-    // So once the pack is inside the approach window we reclassify EVERY tick: the
-    // upgrade then fires the instant a neighbour resolves and is final BEFORE commit,
-    // leaving the parallel party-advance time to pre-stage the camp. Re-checks still
-    // stop entirely once Advanced (locked) — the every-tick cost is bounded to the
-    // brief, decisive approach window. kApproachWindow sits above DC_PULL_START_RANGE
-    // so the verdict is settled with margin to spare before the pull would commit.
+    // evaluations a second. But the verdict is time-critical near the commit range: a
+    // neighbour only resolves into the path scan as the tank closes, and a flat
+    // throttle can let the Leeroy->Advanced upgrade land a tick or two AFTER the pull
+    // already committed Leeroy — the tank charges in with no camp staged and the party
+    // strung out behind it ("everyone out of place"). So once the pack is inside the
+    // approach window we reclassify EVERY tick: the upgrade then fires the instant a
+    // neighbour resolves and is final BEFORE commit, leaving the parallel party-advance
+    // time to pre-stage the camp. Re-checks still stop entirely once Advanced (locked)
+    // — the every-tick cost is bounded to the brief, decisive approach window. The
+    // window is the actual (aggro-derived) commit range plus a buffer, so it always
+    // opens a few ticks BEFORE the pull would commit, whatever that pack's aggro is.
     constexpr uint32 kRecheckFarMs = 400;
-    constexpr float kApproachWindow = 30.0f;
+    constexpr float kApproachBuffer = 8.0f;
+    float const kApproachWindow =
+        PullCommitRange(bot, target, 26.0f) + kApproachBuffer;
     ObjectGuid const latched =
         context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Get();
     bool const sameTarget = (latched == target->GetGUID());

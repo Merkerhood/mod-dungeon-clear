@@ -66,6 +66,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
     { "PullMaxDrag",           DcType::Float,100,  20, 200,  true  },
 
+    // PullCommitRange{Floor,Cap}: how close the pack must be before the tank stops,
+    // holds, and waits for the party at camp BEFORE stepping in to tag. Sized to the
+    // pack's REAL aggro radius (Creature::GetAggroRange + reaches + AggroRangeMargin
+    // — the same exact core value the boss handoff uses) so the tank Forms just
+    // OUTSIDE aggro instead of face-pulling mid-glide. Clamped to [floor,cap]; the
+    // cap stays inside the ~35yd pull-detection band. Honoured only while
+    // DynamicAggroRange = 1; otherwise the fixed fallback applies.
+    { "PullCommitRangeFloor",  DcType::Float, 16,   5,  40,  true  },
+    { "PullCommitRangeCap",    DcType::Float, 34,  10,  60,  true  },
+
     // Dynamic pull (setting 2): the tank auto-picks Leeroy vs Advanced per pack.
     // ChainRadius is how close ANOTHER pack must be to the target pack before the
     // pull is treated as a multi-pack room and handled with the careful Advanced

@@ -536,10 +536,11 @@ bool DungeonClearPullTrigger::IsActive()
     // tank to arrive and only then trudging forward. The blocking-trash trigger
     // still stands down in pull mode, so Advance keeps driving the glide.
     float const toTrash = bot->GetExactDist2d(trash);
-    DC_PULL_DEBUG("[DC:{}] pull trigger: active — target {} at {:.1f}yd ({})",
-                  bot->GetName(), trash->GetGUID().ToString(), toTrash,
-                  toTrash > DC_PULL_START_RANGE ? "glide + advance party camp"
-                                                : "commit");
+    float const commitRange =
+        DungeonClearUtil::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
+    DC_PULL_DEBUG("[DC:{}] pull trigger: active — target {} at {:.1f}yd (commit {:.1f}, {})",
+                  bot->GetName(), trash->GetGUID().ToString(), toTrash, commitRange,
+                  toTrash > commitRange ? "glide + advance party camp" : "commit");
     return true;
 }
 

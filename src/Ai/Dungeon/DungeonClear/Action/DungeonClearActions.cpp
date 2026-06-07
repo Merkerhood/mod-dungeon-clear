@@ -2629,16 +2629,15 @@ bool DungeonClearFilterLootAction::Execute(Event /*event*/)
 // instead of the party running out to the tank.
 namespace
 {
-    // How close the pull target must be before a pull is COMMITTED — i.e. the tank
-    // stops gliding, holds, and waits in Forming for the party to set at the camp
-    // BEFORE it steps in to tag. This MUST sit outside the pack's aggro radius
-    // (~20yd for a same-level mob): commit any closer and the tank face-pulls the
-    // pack mid-glide ("unplanned aggro while scouting"), so the party never gets to
-    // stage at the camp first — the whole point of an advanced pull. 26yd leaves a
-    // few yards of margin past aggro while staying well inside the ~35yd detection
-    // band. Until the pack is this close Advance glides the tank in (blocking-trash
-    // stands down in pull mode so it can't engage first). Kept in sync with the copy
-    // in DungeonClearTriggers.cpp.
+    // STATIC FALLBACK commit range — the distance at which the tank stops gliding,
+    // holds, and waits in Forming for the party to set at the camp BEFORE it steps in
+    // to tag. The live value is normally DungeonClearUtil::PullCommitRange, sized to
+    // the pack's REAL aggro radius so the tank Forms just outside where it would
+    // face-pull; this constant only applies when DynamicAggroRange is off or the
+    // target isn't a creature. It still sits outside a same-level mob's ~20yd aggro so
+    // even the fallback doesn't face-pull. Until the pack is this close Advance glides
+    // the tank in (blocking-trash stands down in pull mode so it can't engage first).
+    // Kept in sync with the copy in DungeonClearTriggers.cpp.
     constexpr float DC_PULL_START_RANGE = 26.0f;
     // Per-leg watchdog (tag / return) — abort a leg that makes no progress so a
     // navmesh wedge can never freeze the pull.
@@ -2704,7 +2703,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // fall behind the previous/seed camp. We still yield (return false) so
             // Advance keeps gliding the tank; the camp update is a pure side effect.
             float const toTrash = bot->GetExactDist2d(trash);
-            if (toTrash > DC_PULL_START_RANGE)
+            // Commit only once the pack is within its OWN aggro range (+ margin), so
+            // the tank stops to Form just outside where it would otherwise face-pull.
+            float const commitRange =
+                DungeonClearUtil::PullCommitRange(bot, trash, DC_PULL_START_RANGE);
+            if (toTrash > commitRange)
             {
                 float const setback = DcSettings::GetFloat(bot, "PullSetback");
                 float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
@@ -2728,7 +2731,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                                       "({:.1f},{:.1f},{:.1f}) {:.1f}yd from pack while "
                                       "tank closes", bot->GetName(),
                                       trash->GetGUID().ToString(), toTrash,
-                                      DC_PULL_START_RANGE, camp.GetPositionX(),
+                                      commitRange, camp.GetPositionX(),
                                       camp.GetPositionY(), camp.GetPositionZ(),
                                       candToTrash);
                         return false;
@@ -2737,7 +2740,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 DC_PULL_TRACE("[DC:{}] pull idle: target {} at {:.1f}yd > start range "
                               "{:.1f} -> glide closer before committing",
                               bot->GetName(), trash->GetGUID().ToString(), toTrash,
-                              DC_PULL_START_RANGE);
+                              commitRange);
                 return false;
             }
             // Pick the camp: a generous distance back along the cleared route

@@ -142,6 +142,17 @@ public:
     static float BossEngageRange(Player* bot, AiObjectContext* ctx,
                                  DungeonBossInfo const& boss, float staticRange);
 
+    // The distance at which an advanced pull is COMMITTED: the tank stops gliding,
+    // holds, and waits for the party to set at the camp BEFORE it steps in to tag.
+    // Derived from `target`'s REAL aggro radius (the exact core value from
+    // Creature::GetAggroRange + both reaches + AggroRangeMargin, identical to the
+    // boss handoff) so the tank Forms just OUTSIDE aggro and never face-pulls the
+    // pack mid-glide — the whole point of the careful pull. Clamped to the
+    // PullCommitRange floor/cap (the cap stays inside the ~35yd detection band).
+    // Falls back to `staticRange` for a non-creature target or when the
+    // DynamicAggroRange config is off. Cheap — no allocation, no pathfinding.
+    static float PullCommitRange(Player* bot, Unit* target, float staticRange);
+
     // True when the tank is close enough AND on a navigable level with the boss
     // to hand off from route-following to the decisive engage pull. The 3D
     // distance alone (BossEngageRange) treats a boss one floor up/down as
