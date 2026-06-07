@@ -34,6 +34,7 @@
 #define DC_PULL_DEBUG(...) LOG_DEBUG(DC_PULL_LOG_CATEGORY, __VA_ARGS__)
 #define DC_PULL_TRACE(...) LOG_TRACE(DC_PULL_LOG_CATEGORY, __VA_ARGS__)
 
+class WorldObject;
 class Player;
 class Unit;
 class Creature;
