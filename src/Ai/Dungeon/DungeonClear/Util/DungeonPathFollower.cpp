@@ -158,20 +158,15 @@ DungeonPathFollower::Hop DungeonPathFollower::NextHop(Player* bot, ChunkedPathfi
     return hop;
 }
 
-bool DungeonPathFollower::IsOffPath(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state)
+float DungeonPathFollower::RouteDeviation(Player* bot, ChunkedPathfinder::Result const& path,
+                                          DungeonFollowerState const& state)
 {
     if (!bot || path.segments.empty() || state.segmentIdx >= path.segments.size())
-    {
-        state.offPathTicks = 0;
-        return false;
-    }
+        return 0.0f;
 
     std::optional<G3D::Vector3> cur = PointAt(path, state.segmentIdx, state.pointIdx);
     if (!cur.has_value())
-    {
-        state.offPathTicks = 0;
-        return false;
-    }
+        return 0.0f;
 
     float const px = bot->GetPositionX();
     float const py = bot->GetPositionY();
@@ -189,7 +184,19 @@ bool DungeonPathFollower::IsOffPath(Player* bot, ChunkedPathfinder::Result const
         dist2 = dx * dx + dy * dy;
     }
 
-    bool const off = dist2 > OFF_PATH_THRESHOLD * OFF_PATH_THRESHOLD;
+    return std::sqrt(dist2);
+}
+
+bool DungeonPathFollower::IsOffPath(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state)
+{
+    if (!bot || path.segments.empty() || state.segmentIdx >= path.segments.size() ||
+        !PointAt(path, state.segmentIdx, state.pointIdx).has_value())
+    {
+        state.offPathTicks = 0;
+        return false;
+    }
+
+    bool const off = RouteDeviation(bot, path, state) > OFF_PATH_THRESHOLD;
     if (off)
         ++state.offPathTicks;
     else

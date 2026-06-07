@@ -1751,6 +1751,40 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     if (!IsMovingAllowed())
         return false;
 
+    // Re-entry leg must be a GENERATED path. After a trash chase the tank ends
+    // well off the planned line; the Resnap above re-anchored the cursor to the
+    // nearest VISIBLE forward route point, but the bot is still physically off
+    // the corridor. The escort spline's opening leg is a STRAIGHT segment from
+    // the live position straight to that point — BotCanSee only cleared a thin
+    // eye-ray, so the floor-walking straight line still cuts across wall corners
+    // / the inside of a bend (the "snaps back through the wall after combat"
+    // report). While off the line, rejoin with a PathGenerator-built route
+    // (MoveTo generates a wall-following path); the continuous glide resumes on a
+    // later tick once RouteDeviation drops back under the on-corridor threshold.
+    float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
+    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
+    {
+        // Cancel any stale straight spline so it can't shadow the pathed re-entry.
+        StopActiveSplineGlide(bot);
+        bool const rejoining =
+            MoveTo(next->mapId, hop.point.x, hop.point.y, hop.point.z,
+                   /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                   /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] off-line {:.1f}yd -> rejoining route via generated path to "
+                  "({:.1f},{:.1f},{:.1f}) (seg {} pt {}, moved={})",
+                  bot->GetName(), deviation, hop.point.x, hop.point.y, hop.point.z,
+                  follower.segmentIdx, follower.pointIdx, rejoining);
+        stuck = 0;
+        ClearStall(context);
+        SetPhase(context, "moving");
+        // Own the tick whether or not MoveTo issued: a false return is the benign
+        // duplicate / waiting-on-last-move case (the pathed re-entry is already in
+        // flight), and we must never fall through to launch the straight escort
+        // spline while the bot is still off the line.
+        return true;
+    }
+
     // Build the spline window from the current cursor. It stops before any
     // jump leg (handled by the JumpTo branch above on a later tick) and at
     // MAX_SPLINE_WINDOW_POINTS. window[0] is the live position; [1..] are
@@ -2357,6 +2391,25 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     if (hop.isJump)
     {
         JumpTo(mapId, hop.point.x, hop.point.y, hop.point.z, MovementPriority::MOVEMENT_NORMAL);
+        ClearStall(context);
+        return true;
+    }
+
+    // Re-entry leg must be a generated path (same rationale as Advance): if a
+    // bump/knockback left the bot off the corridor, the escort spline's opening
+    // straight leg back to the route clips wall corners. Rejoin via PathGenerator
+    // (MoveTo) while off the line; the glide resumes once back on it.
+    float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
+    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
+    {
+        StopActiveSplineGlide(bot);
+        MoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
+               /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+               /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] door walk-in off-line {:.1f}yd -> rejoining route via "
+                  "generated path (seg {} pt {})",
+                  bot->GetName(), deviation, follower.segmentIdx, follower.pointIdx);
         ClearStall(context);
         return true;
     }

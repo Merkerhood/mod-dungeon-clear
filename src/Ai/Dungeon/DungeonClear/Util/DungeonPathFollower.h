@@ -94,6 +94,16 @@ public:
     // state.offPathTicks (incremented on off-path, reset on on-path).
     static bool IsOffPath(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
 
+    // Pure 2D perpendicular distance from the bot to the current route segment
+    // (the prev->cur / cur->next legs around the cursor). No state mutation,
+    // unlike IsOffPath. Callers use it to decide whether the bot is physically
+    // on the corridor: a continuous escort spline launched from off the line
+    // opens with a STRAIGHT leg back to the route that clips wall corners, so an
+    // off-line bot must rejoin via a generated path (MoveTo) first. Returns 0
+    // when the route has no resolvable current point.
+    static float RouteDeviation(Player* bot, ChunkedPathfinder::Result const& path,
+                                DungeonFollowerState const& state);
+
     // Walks a window of polyline points AT OR AHEAD of the current state
     // (never behind it — the escort is one-way, so the cursor must not
     // regress to already-cleared corridor), picks the one closest to the
