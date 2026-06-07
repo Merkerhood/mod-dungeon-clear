@@ -53,31 +53,36 @@ being inside a dungeon.
 How the tank takes trash packs on the way to each boss. There are three modes,
 selected from the addon's pull control (or the `dc pull` toggle / setting):
 
-| Mode | Behaviour |
-|---|---|
-| **Leeroy** *(default)* | Walk straight into each pack and fight on top of it. Fast, no choreography. |
-| **Advanced** | Pull every pack back to a held camp before fighting it. Careful, but slow. |
-| **Dynamic** | Decide per pack: Leeroy a lone pack, Advanced-pull a clustered or oversized one. |
+| Mode | Behaviour | Speed | Risk |
+|---|---|---|---|
+| **Leeroy** *(default)* | Walk straight into each pack and fight on top of it. No choreography. | Fastest | Highest |
+| **Advanced** | Pull every pack back to a held camp before fighting it. | Slowest | Lowest |
+| **Dynamic** | Decide per pack: Leeroy a lone pack, Advanced-pull a clustered or oversized one. | Middle | Middle |
 
-> ### ❗ Start with Leeroy
+> ### ❗ Pick a mode for the content
 >
-> **Leeroy is the default and is the right choice for almost every dungeon.** The
-> tank's threat, the party's DPS, and bot self-healing handle ordinary trash
-> packs fine when fought in place, and Leeroy keeps a clear moving at full speed.
+> The three modes trade **speed against risk** — there's no single "best" one, it
+> depends on what you're clearing.
 >
-> **Advanced and Dynamic make a clear dramatically slower** — every pull adds a
-> camp-setup, a tag, and a drag-back round trip. Only reach for **Advanced** in
-> the specific spots where Leeroy is *failing* — packs so large or so tightly
-> stacked that fighting them in place wipes the party. **Dynamic** is the
-> compromise: it Leeroys by default and only pays the Advanced cost on the packs
-> that actually need it, so it's slower than pure Leeroy but faster than forcing
-> Advanced everywhere.
+> - **Leeroy** is the **fastest** mode but carries the **most risk**: the tank
+>   fights every pack in place with no setup. Use it in **easy content** the party
+>   can comfortably out-gear and out-heal, where the speed is free.
+> - **Advanced** is the **slowest** mode but the **most careful**: every pack is
+>   pulled back to a held camp before the fight, so packs are taken one controlled
+>   group at a time. Use it in **hard content or raids**, where a sloppy pull
+>   wipes the group.
+> - **Dynamic** is the **middle ground**: it Leeroys the easy packs and only pays
+>   the Advanced cost on the dangerous ones. Use it in **zones with a mix** of
+>   trivial and threatening pulls, so you don't slow down for trash that doesn't
+>   need it.
 
 ### Leeroy (default)
 
 The tank walks into each pack and fights it where it stands, party following
 normally. No camps, no tagging, no drag-back — just clear and move on. This is
-the fastest mode and what you should use unless a particular pull is wiping you.
+the **fastest** mode, and also the **highest-risk** one since nothing is staged
+before the fight. It's the right call in **easy content** the party can comfortably
+handle in place; in harder content a bad pull has no safety margin.
 
 ### Advanced (`dc pull`)
 
@@ -98,8 +103,9 @@ Instead of walking into a pack and fighting on top of it, the tank:
 
 If a held, passive member is hurt (a patrol clipped the camp) the pull aborts and
 the whole party is released to defend (`DungeonClear.PullSafetyHpPct`). Advanced
-pull is correct but **much slower** than Leeroy because of the camp/tag/drag round
-trip on every pack — use it only where Leeroy can't hold.
+pull is the **slowest** mode because of the camp/tag/drag round trip on every
+pack, but it's the **most careful** — it's the mode for **hard content and raids**
+where taking packs one controlled group at a time is worth the extra time.
 
 ### Dynamic
 
@@ -113,8 +119,37 @@ pack warrants it, deciding fresh for each pack the tank approaches:
   pack is handled with the careful **Advanced** pull-to-camp.
 
 Each pack gets one stable verdict, and the addon's status readout shows what
-Dynamic chose. It is slower than pure Leeroy but spends the Advanced cost only on
-the packs that need it.
+Dynamic chose. It sits in the **middle** on both speed and risk — slower than pure
+Leeroy but faster than forcing Advanced everywhere, and safer than Leeroy on the
+packs that matter. It's the mode for **zones with a mix** of easy and hard pulls,
+where you want full speed through the trivial packs and the careful camp-pull only
+where it's actually needed.
+
+#### Tuning how aggressive Dynamic is
+
+Two settings move Dynamic's verdict toward more Leeroy (**aggressive** — faster,
+riskier) or more Advanced (**passive** — slower, safer). Both default to a
+balanced point; nudge them per realm to taste:
+
+| Setting | Default | More aggressive (Leeroy more) | More passive (Advanced more) |
+|---|---|---|---|
+| `DungeonClear.PullDynamicChainRadius` | `15.0` | **Lower** it — only packs almost on top of each other count as a cluster, so more rooms are Leeroy'd. | **Raise** it — packs farther apart still count as one room, so more rooms get the careful camp-pull. |
+| `DungeonClear.PullDynamicLargePackThreshold` | `5` | **Raise** it — bigger lone packs are still Leeroy'd (set very high to always Leeroy a lone pack regardless of size). | **Lower** it — even modest lone packs get Advanced-pulled. |
+
+- **Chain radius** is measured nearest-mob to nearest-mob, on the same floor and
+  reachable by a short navmesh path (around a corner counts; through a wall or a
+  closed door does not). It is **floored at `DungeonClear.PullCampSafeRadius`** —
+  the verdict never Leeroys a fight closer to a neighbour than the Advanced camp
+  itself would keep clear, so setting it below `PullCampSafeRadius` has no effect.
+  Raise it above `PullCampSafeRadius` to make Dynamic more cautious still.
+- **Large-pack threshold** only applies to a pack that is otherwise **lone** (no
+  neighbour inside the chain radius); a clustered room is always Advanced-pulled
+  regardless of size.
+
+For an all-aggressive feel that still camps genuine danger, keep the threshold
+high and the chain radius near its floor; for an all-careful feel, raise the chain
+radius and drop the threshold. Going all the way in either direction effectively
+turns Dynamic into Leeroy or Advanced — at which point just pick that mode.
 
 Pull mode is per-run and resets with the clear. The `.dc` slash command always
 works. **Chat keywords and follow-tank need the
