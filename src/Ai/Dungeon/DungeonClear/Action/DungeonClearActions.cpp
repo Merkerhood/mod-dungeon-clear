@@ -3105,6 +3105,20 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
         context->GetValue<Unit*>("current target")->Set(target);
         if (!bot->IsInCombat())
             bot->SetInCombatWith(target);
+
+        // Already in sight of the pack: don't lurch the body onto the mob. The
+        // SetInCombatWith above flips the bot into the combat engine next tick,
+        // where its own rotation/heal logic (un-suppressed there, unlike the stock
+        // proactive pickers DC mutes for followers) handles positioning. This is
+        // the case the non-combat assist now covers that it used to drop: an idle
+        // follower WITH line of sight that DC's multiplier otherwise leaves stuck.
+        if (bot->IsWithinLOSInMap(target))
+        {
+            DC_PULL_TRACE("[DC:{}] assist camp: in sight of pack ({:.1f}yd) -> "
+                          "committed + forced combat, rotation takes over",
+                          bot->GetName(), bot->GetExactDist(target));
+            return true;
+        }
     }
 
     DC_PULL_TRACE("[DC:{}] assist camp: closing on out-of-LOS fight ({:.1f}yd, "

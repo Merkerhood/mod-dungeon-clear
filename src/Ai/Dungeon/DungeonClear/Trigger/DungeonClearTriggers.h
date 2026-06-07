@@ -182,15 +182,17 @@ public:
 };
 
 // Follower-only, non-combat. Fires while this bot's leader tank is in the
-// advanced-pull camp fight (phase Engage, leader in combat) AND this bot has no
-// LOS target of its own to engage. This is the corner case the LOS-blind assist
-// exists for: the drag-back can park the pack out of the camp's line of sight,
-// so a follower sitting at camp never sees it and the stock target picker
-// (AttackersValue, which LOS-filters) never acquires it — the party would stand
-// idle and the camp would never enter combat. Drives DungeonClearAssistCampAction
-// to close on the fight and regain sight. Outranks hold-at-camp so it preempts
-// the camp yield. Inert the instant a valid attacker is in sight (stock combat
-// takes over then). See DungeonClearUtil::IsLeaderCampFightActive.
+// advanced-pull camp fight (phase Engage, leader in combat) and this bot is not
+// yet in combat — REGARDLESS of line of sight. The drag-back can park the pack
+// out of the camp's line of sight, but an idle follower can't self-engage even
+// WITH sight: DC's multiplier suppresses the stock proactive-engagement pickers
+// for every follower while a clear is active, so the party stands idle and the
+// camp never enters combat. Drives DungeonClearAssistCampAction, which
+// force-targets the pack and forces the bot into combat — flipping it into the
+// combat engine where its own rotation/heal logic (un-suppressed there) runs.
+// Outranks hold-at-camp so it preempts the camp yield. Goes inert the instant the
+// bot is in combat (the combat-engine twin below takes any out-of-LOS handoff).
+// See DungeonClearUtil::IsLeaderCampFightActive.
 class DungeonClearAssistCampTrigger : public Trigger
 {
 public:
