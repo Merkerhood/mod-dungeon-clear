@@ -11,7 +11,8 @@
 bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
                                            std::size_t targetIdx, float packRadius,
                                            float chainRadius,
-                                           std::uint32_t largePackThreshold)
+                                           std::uint32_t largePackThreshold,
+                                           float zTolerance)
 {
     std::size_t const n = mobs.size();
     if (n == 0 || targetIdx >= n)
@@ -23,8 +24,16 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         float const dy = mobs[a].y - mobs[b].y;
         return std::sqrt(dx * dx + dy * dy);
     };
+    // Same floor: the inter-mob height gap is within tolerance. WotLK floor-to-
+    // floor gaps comfortably exceed it, so this separates a ledge/ramp pack
+    // overhead from one the tank can actually walk into.
+    auto sameLevel = [&](std::size_t a, std::size_t b)
+    {
+        return std::fabs(mobs[a].z - mobs[b].z) <= zTolerance;
+    };
 
-    // Union-Find connected components at packRadius. n is tiny, so O(n^2) is fine.
+    // Union-Find connected components at packRadius (2D) AND on the same level.
+    // n is tiny, so O(n^2) is fine.
     std::vector<std::size_t> parent(n);
     for (std::size_t i = 0; i < n; ++i)
         parent[i] = i;
@@ -39,7 +48,7 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
     };
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = i + 1; j < n; ++j)
-            if (dist2d(i, j) <= packRadius)
+            if (dist2d(i, j) <= packRadius && sameLevel(i, j))
                 parent[find(i)] = find(j);
 
     std::size_t const targetRoot = find(targetIdx);
@@ -53,7 +62,8 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         return true;
 
     // Threatening neighbours: an OTHER pack with a chainEligible mob within
-    // chainRadius of any target-pack mob.
+    // chainRadius (2D) and on the same level as any target-pack mob. A neighbour
+    // directly above/below is a different floor's problem, not this pull's.
     for (std::size_t i = 0; i < n; ++i)
     {
         if (find(i) == targetRoot || !mobs[i].chainEligible)
@@ -62,7 +72,7 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         {
             if (find(j) != targetRoot)
                 continue;
-            if (dist2d(i, j) <= chainRadius)
+            if (dist2d(i, j) <= chainRadius && sameLevel(i, j))
                 return true;
         }
     }

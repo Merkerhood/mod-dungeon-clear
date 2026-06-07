@@ -69,9 +69,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     // Dynamic pull (setting 2): the tank auto-picks Leeroy vs Advanced per pack.
     // ChainRadius is how close ANOTHER pack must be to the target pack before the
     // pull is treated as a multi-pack room and handled with the careful Advanced
-    // maneuver; below it (an isolated pack) the tank just Leeroys it. Smaller =
-    // Leeroys more. LargePackThreshold forces Advanced for a single big pack even
-    // with no neighbour. See DungeonClearUtil::ClassifyPullAdvanced.
+    // maneuver; below it (an isolated pack) the tank just Leeroys it. The effective
+    // chain distance is floored at PullCampSafeRadius (the clearance the Advanced
+    // camp keeps from other packs) so the decision can never pick a Leeroy fight
+    // closer to a neighbour than the careful pull would itself tolerate — raising
+    // this above PullCampSafeRadius makes Dynamic more cautious still; lowering it
+    // has no effect below that floor. The decision and the clearance test are also
+    // height-aware (a pack a floor above/below never counts). LargePackThreshold
+    // forces Advanced for a single big pack even with no neighbour. See
+    // DungeonClearUtil::ClassifyPullAdvanced.
     { "PullDynamicChainRadius",     DcType::Float, 15,  5,  40,  true  },
     { "PullDynamicLargePackThreshold", DcType::UInt, 5,  1,  20,  true  },
 

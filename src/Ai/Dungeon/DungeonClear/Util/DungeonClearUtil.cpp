@@ -1050,8 +1050,20 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     // Same intra-pack grouping ComputeSafeCamp uses, so "pack" means the same
     // thing across the feature.
     constexpr float kPackRadius = 12.0f;
-    float const chainRadius = DcSettings::GetFloat(bot, "PullDynamicChainRadius");
     uint32 const largePack = DcSettings::GetUInt(bot, "PullDynamicLargePackThreshold");
+
+    // The chain radius is the distance at which a NEIGHBOUR pack makes this a
+    // "careful" (Advanced) pull. It must never be SMALLER than the clearance the
+    // Advanced camp placer itself keeps from other packs (PullCampSafeRadius):
+    // otherwise Dynamic could pick Leeroy on a neighbour 18yd away that the camp
+    // logic (25yd) considers unsafe — the in-place fight would then start inside
+    // the very radius the careful pull was designed to respect, the two halves of
+    // the feature contradicting each other. Bind the decision to the camp's own
+    // safety radius so the verdict and the placement can never disagree; a player
+    // may still RAISE PullDynamicChainRadius above it to be more cautious still.
+    float const chainCfg = DcSettings::GetFloat(bot, "PullDynamicChainRadius");
+    float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
+    float const chainRadius = std::max(chainCfg, safeRadius);
 
     // Candidate hostiles ahead — the same set the pull / camp scans read.
     GuidVector const& farTargets =
@@ -1091,11 +1103,16 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
             u != target && target->IsWithinLOSInMap(u) &&
             !ClosedDoorBetween(bot, u->GetPositionX(), u->GetPositionY(),
                                u->GetPositionZ());
-        mobs.push_back({u->GetPositionX(), u->GetPositionY(), chainEligible});
+        mobs.push_back({u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(),
+                        chainEligible});
     }
 
+    // DC_Z_LEVEL_TOLERANCE: a mob more than this far above/below is on another
+    // floor (a ledge/ramp) — it must not merge into the pack or count as a
+    // chaining neighbour just because it is near in plan view. Same constant the
+    // corridor/boss-arrival floor guards use elsewhere in this file.
     bool const advanced = DungeonClearMath::ClassifyDynamicPull(
-        mobs, targetIdx, kPackRadius, chainRadius, largePack);
+        mobs, targetIdx, kPackRadius, chainRadius, largePack, DC_Z_LEVEL_TOLERANCE);
     DC_PULL_DEBUG("[DC:{}] dynamic: classified target {} among {} forward hostiles "
                   "(chain {:.1f}, large-pack {}) -> {}", bot->GetName(),
                   target->GetGUID().ToString(), mobs.size(), chainRadius, largePack,
@@ -1150,17 +1167,51 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
         return;
     }
 
-    // Per-pack latch: keep the standing verdict while approaching the SAME pack,
-    // so the party isn't churned between follow and hold each tick as neighbouring
-    // packs drift in and out of the far-targets scan.
+    // Per-pack latch, UPGRADE-ONLY while approaching the SAME pack.
+    //
+    // The first verdict on a pack is taken the tick it comes into scan range —
+    // exactly when the room is least visible: neighbours at the far end of the
+    // corridor haven't been scanned yet, and line of sight to them is occluded by
+    // the very pack the tank is walking up to. A first-sight "Leeroy" can therefore
+    // miss a second pack that only resolves as the tank closes. So we keep
+    // re-checking a Leeroy verdict as the bot approaches and allow it to UPGRADE to
+    // Advanced — but never downgrade, and once Advanced it is locked for the rest of
+    // the approach. That removes the first-sight blind spot in the only direction
+    // that matters (toward caution) while still giving each pack ONE stable, non-
+    // flapping decision: the party is never churned Leeroy<->Advanced tick to tick.
+    // Re-checks are throttled (the neighbour scan does LOS + closed-door tests) so
+    // they cost a few evaluations a second at most, and stop entirely once Advanced.
+    constexpr uint32 kRecheckMs = 400;
     ObjectGuid const latched =
         context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Get();
-    if (latched == target->GetGUID())
-        return;
+    bool const sameTarget = (latched == target->GetGUID());
 
+    if (sameTarget)
+    {
+        // Already Advanced for this pack: locked, never reconsidered.
+        if (curBool)
+            return;
+        // Standing Leeroy: re-check on a throttle, upgrade-only.
+        uint32 const now = getMSTime();
+        uint32 const since = context->GetValue<uint32>("dungeon clear pull decision since")->Get();
+        if (since != 0 && (now - since) < kRecheckMs)
+            return;
+        context->GetValue<uint32>("dungeon clear pull decision since")->Set(now);
+        if (ClassifyPullAdvanced(botAI, target))
+        {
+            apply(true, 2u);
+            DC_PULL_INFO("[DC:{}] dynamic verdict UPGRADED for pack {}: LEEROY -> "
+                         "ADVANCED (neighbour resolved on approach)",
+                         bot->GetName(), target->GetGUID().ToString());
+        }
+        return;
+    }
+
+    // New pack: size it up fresh and stamp the latch + re-check clock.
     bool const advanced = ClassifyPullAdvanced(botAI, target);
     context->GetValue<ObjectGuid>("dungeon clear pull decision target")
         ->Set(target->GetGUID());
+    context->GetValue<uint32>("dungeon clear pull decision since")->Set(getMSTime());
     apply(advanced, advanced ? 2u : 1u);
     DC_PULL_INFO("[DC:{}] dynamic verdict for pack {}: {}", bot->GetName(),
                  target->GetGUID().ToString(), advanced ? "ADVANCED" : "LEEROY");
@@ -1226,6 +1277,12 @@ std::optional<Position> DungeonClearUtil::ComputeSafeCamp(PlayerbotAI* botAI, Un
         if (!u || !u->IsAlive() || u == target)
             continue;
         if (!bot->IsHostileTo(u))
+            continue;
+        // On another floor (a pack on a ledge/ramp directly above or below): it
+        // can't aggro the camp fight, so it must not push the camp farther back.
+        // Same height gate the Dynamic decision and the corridor scans use, so
+        // placement and classification agree about what "near" means in 3D.
+        if (std::fabs(u->GetPositionZ() - target->GetPositionZ()) > DC_Z_LEVEL_TOLERANCE)
             continue;
         if (u->GetExactDist2d(target) <= kPackRadius)
             continue;  // packmate — fought regardless of where camp sits

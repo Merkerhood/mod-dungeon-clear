@@ -330,11 +330,17 @@ DungeonClear.PullMaxDrag = 100.0
 #    DungeonClear.PullDynamicChainRadius
 #        Dynamic pull (the addon's "Dynamic" advanced-pull state) only. When the
 #        tank scans the next pack, this is how close ANOTHER pack must be (yards,
-#        nearest-mob to nearest-mob, and only if in line of sight / not behind a
-#        closed door) before the engagement is treated as a multi-pack room and
-#        handled with the careful Advanced pull-to-camp. A lone pack with nothing
-#        within this radius is Leeroy-pulled (run in and fight in place). Smaller =
-#        Leeroys more often; larger = Advanced-pulls more often.
+#        nearest-mob to nearest-mob, on the same floor, and only if in line of
+#        sight / not behind a closed door) before the engagement is treated as a
+#        multi-pack room and handled with the careful Advanced pull-to-camp. A lone
+#        pack with nothing within this radius is Leeroy-pulled (run in and fight in
+#        place). Larger = Advanced-pulls more often.
+#
+#        The effective distance is floored at PullCampSafeRadius: the decision
+#        never picks a Leeroy fight closer to a neighbour than the Advanced camp
+#        itself keeps clear, so the two halves of the feature can't disagree.
+#        Setting this below PullCampSafeRadius therefore has no effect; raise it
+#        above to make Dynamic more cautious still.
 #
 #        Default: 15.0
 #

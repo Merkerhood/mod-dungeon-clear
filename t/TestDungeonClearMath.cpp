@@ -107,17 +107,18 @@ namespace
     constexpr float kPackR = 12.0f;
     constexpr float kChainR = 15.0f;
     constexpr unsigned kLarge = 5u;
+    constexpr float kZTol = 5.0f;  // DC_Z_LEVEL_TOLERANCE
 
     bool Classify(std::vector<DynPullMob> const& m, std::size_t t)
     {
-        return DungeonClearMath::ClassifyDynamicPull(m, t, kPackR, kChainR, kLarge);
+        return DungeonClearMath::ClassifyDynamicPull(m, t, kPackR, kChainR, kLarge, kZTol);
     }
 }
 
 // A single lone mob -> Leeroy.
 TEST(DungeonClearDynamicPullTest, SingleMobLeeroy)
 {
-    std::vector<DynPullMob> mobs = { {0.0f, 0.0f, false} };
+    std::vector<DynPullMob> mobs = { {0.0f, 0.0f, 0.0f, false} };
     EXPECT_FALSE(Classify(mobs, 0));
 }
 
@@ -125,7 +126,7 @@ TEST(DungeonClearDynamicPullTest, SingleMobLeeroy)
 TEST(DungeonClearDynamicPullTest, LoneSmallPackLeeroy)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, false}, {3.0f, 0.0f, false}, {0.0f, 4.0f, false}
+        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false}, {0.0f, 4.0f, 0.0f, false}
     };
     EXPECT_FALSE(Classify(mobs, 0));
 }
@@ -136,9 +137,9 @@ TEST(DungeonClearDynamicPullTest, TwoPacksNearbyAdvanced)
 {
     std::vector<DynPullMob> mobs = {
         // target pack near origin
-        {0.0f, 0.0f, false}, {3.0f, 0.0f, false},
+        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
         // second pack: nearest mob (16,0) is 13yd from target mob (3,0)
-        {16.0f, 0.0f, true}, {19.0f, 0.0f, true}
+        {16.0f, 0.0f, 0.0f, true}, {19.0f, 0.0f, 0.0f, true}
     };
     EXPECT_TRUE(Classify(mobs, 0));
 }
@@ -147,8 +148,8 @@ TEST(DungeonClearDynamicPullTest, TwoPacksNearbyAdvanced)
 TEST(DungeonClearDynamicPullTest, NeighbourBeyondChainRadiusLeeroy)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, false}, {3.0f, 0.0f, false},
-        {30.0f, 0.0f, true}, {33.0f, 0.0f, true}
+        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
+        {30.0f, 0.0f, 0.0f, true}, {33.0f, 0.0f, 0.0f, true}
     };
     EXPECT_FALSE(Classify(mobs, 0));
 }
@@ -159,8 +160,8 @@ TEST(DungeonClearDynamicPullTest, NeighbourBeyondChainRadiusLeeroy)
 TEST(DungeonClearDynamicPullTest, NeighbourNotEligibleLeeroy)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, false}, {3.0f, 0.0f, false},
-        {16.0f, 0.0f, false}, {19.0f, 0.0f, false}  // 13yd away but gated out
+        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
+        {16.0f, 0.0f, 0.0f, false}, {19.0f, 0.0f, 0.0f, false}  // 13yd away but gated out
     };
     EXPECT_FALSE(Classify(mobs, 0));
 }
@@ -170,8 +171,8 @@ TEST(DungeonClearDynamicPullTest, LargeLonePackAdvanced)
 {
     // 6 mobs all within pack radius of each other, no other pack.
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, false}, {2.0f, 0.0f, false}, {4.0f, 0.0f, false},
-        {0.0f, 2.0f, false}, {2.0f, 2.0f, false}, {4.0f, 2.0f, false}
+        {0.0f, 0.0f, 0.0f, false}, {2.0f, 0.0f, 0.0f, false}, {4.0f, 0.0f, 0.0f, false},
+        {0.0f, 2.0f, 0.0f, false}, {2.0f, 2.0f, 0.0f, false}, {4.0f, 2.0f, 0.0f, false}
     };
     EXPECT_TRUE(Classify(mobs, 0));
 }
@@ -180,8 +181,44 @@ TEST(DungeonClearDynamicPullTest, LargeLonePackAdvanced)
 TEST(DungeonClearDynamicPullTest, ThresholdSizedLonePackLeeroy)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, false}, {2.0f, 0.0f, false}, {4.0f, 0.0f, false},
-        {0.0f, 2.0f, false}, {2.0f, 2.0f, false}
+        {0.0f, 0.0f, 0.0f, false}, {2.0f, 0.0f, 0.0f, false}, {4.0f, 0.0f, 0.0f, false},
+        {0.0f, 2.0f, 0.0f, false}, {2.0f, 2.0f, 0.0f, false}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// 3D: a chain-eligible neighbour 13yd away in plan view but a full floor (20yd)
+// ABOVE the target -> Leeroy. A flat 2D test would have flagged it as a chaining
+// pack; the height gate keeps the upstairs pull out of this floor's decision.
+TEST(DungeonClearDynamicPullTest, NeighbourOnFloorAboveLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
+        {16.0f, 0.0f, 20.0f, true}, {19.0f, 0.0f, 20.0f, true}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// 3D: the SAME 2D geometry but the neighbour is on our level (within zTolerance)
+// -> Advanced, proving the height gate is what flips it, not the plan-view layout.
+TEST(DungeonClearDynamicPullTest, NeighbourOnSameLevelAdvanced)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
+        {16.0f, 0.0f, 3.0f, true}, {19.0f, 0.0f, 3.0f, true}
+    };
+    EXPECT_TRUE(Classify(mobs, 0));
+}
+
+// 3D: a would-be packmate stacked directly overhead (same x/y, 20yd up) must NOT
+// merge into the target pack and inflate it past the large-pack threshold. Five
+// mobs on the floor (at threshold) + one overhead -> Leeroy.
+TEST(DungeonClearDynamicPullTest, OverheadMobDoesNotInflatePack)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false}, {2.0f, 0.0f, 0.0f, false}, {4.0f, 0.0f, 0.0f, false},
+        {0.0f, 2.0f, 0.0f, false}, {2.0f, 2.0f, 0.0f, false},
+        {2.0f, 1.0f, 20.0f, false}  // directly overhead — different floor
     };
     EXPECT_FALSE(Classify(mobs, 0));
 }

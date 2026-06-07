@@ -571,6 +571,22 @@ public:
     }
 };
 
+// Millisecond timestamp of the last Dynamic re-classification of the LATCHED pack.
+// The verdict for a pack is upgrade-only while approaching it: a first-sight
+// Leeroy (taken when the far end of the room is still unscanned / occluded) is
+// re-checked as the bot closes and may UPGRADE to Advanced, but never downgrades,
+// and an Advanced verdict locks for good. This throttles those re-checks so the
+// (LOS + closed-door) neighbour scan runs a few times a second at most rather than
+// every engine tick. 0 = never re-checked yet. Reset with the pull transient.
+class DungeonClearPullDecisionSinceValue : public ManualSetValue<uint32>
+{
+public:
+    DungeonClearPullDecisionSinceValue(PlayerbotAI* botAI)
+        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull decision since")
+    {
+    }
+};
+
 // Current advanced-pull sub-phase (DcPullPhase cast to uint32):
 //   0 Idle      — no pull in progress.
 //   1 Forming   — camp stamped; holding a beat so followers go passive first.

@@ -130,6 +130,7 @@ namespace
         // sized up fresh rather than inheriting the interrupted engagement's call.
         context->GetValue<uint32>("dungeon clear pull decision")->Set(0u);
         context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Set(ObjectGuid::Empty);
+        context->GetValue<uint32>("dungeon clear pull decision since")->Set(0u);
     }
 
     // Shared resume path. Rebuilds the transient navigation cache so Advance
