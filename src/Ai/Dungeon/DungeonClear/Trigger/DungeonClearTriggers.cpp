@@ -517,21 +517,18 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
     }
 
-    // Only commit to a pull once the pack is within run-in reach. Until then the
-    // blocking-trash trigger stands down in pull mode (see below) and Advance
-    // glides the tank closer, so the camp stamped at commit time is always close
-    // enough for the run-in to reach the pack and the drag-back to stay short.
+    // We fire even while the pack is still beyond run-in reach (FindPullTarget
+    // already caps the look-ahead at ~35yd). The action does NOT commit yet — its
+    // Idle branch yields to Advance to glide the tank closer — but running it now
+    // lets it PUBLISH a prospective camp each glide tick so the party walks up to
+    // the camp IN PARALLEL with the tank's approach instead of waiting for the
+    // tank to arrive and only then trudging forward. The blocking-trash trigger
+    // still stands down in pull mode, so Advance keeps driving the glide.
     float const toTrash = bot->GetExactDist2d(trash);
-    if (toTrash > DC_PULL_START_RANGE)
-    {
-        DC_PULL_DEBUG("[DC:{}] pull trigger: target {} at {:.1f}yd > start range {:.1f} "
-                      "-> hold, glide closer", bot->GetName(),
-                      trash->GetGUID().ToString(), toTrash, DC_PULL_START_RANGE);
-        return false;
-    }
-
-    DC_PULL_DEBUG("[DC:{}] pull trigger: commit to pull — target {} at {:.1f}yd",
-                  bot->GetName(), trash->GetGUID().ToString(), toTrash);
+    DC_PULL_DEBUG("[DC:{}] pull trigger: active — target {} at {:.1f}yd ({})",
+                  bot->GetName(), trash->GetGUID().ToString(), toTrash,
+                  toTrash > DC_PULL_START_RANGE ? "glide + advance party camp"
+                                                : "commit");
     return true;
 }
 
