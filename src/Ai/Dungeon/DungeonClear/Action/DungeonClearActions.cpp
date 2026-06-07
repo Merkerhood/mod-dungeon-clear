@@ -3125,10 +3125,22 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         // follower, so yielding here can't let it drift off toward the tank.
         return passive;
     }
+    // Priority matters the moment the party is already IN COMBAT when a pull
+    // commits — e.g. a dynamic LEEROY->ADVANCED upgrade that lands after the tank
+    // (and the following party) already ran into the pack. During a holding phase
+    // (passive) the party MUST retreat to the camp even mid-fight, so move at
+    // MOVEMENT_COMBAT — the same priority the tank's drag-back uses — otherwise a
+    // MOVEMENT_NORMAL move loses to the stock combat MoveChase generator already
+    // installed on the engaged follower and it just DPSes the pack where it stands
+    // (the "party didn't run back, chaos" case). While merely scouting between pulls
+    // (passive == false, usually out of combat) NORMAL is right: it must NOT stomp
+    // the loot/rest pipeline the party runs at camp.
+    MovementPriority const prio = passive ? MovementPriority::MOVEMENT_COMBAT
+                                          : MovementPriority::MOVEMENT_NORMAL;
     bool const moved =
         MoveTo(bot->GetMapId(), camp.GetPositionX(), camp.GetPositionY(), camp.GetPositionZ(),
                /*idle*/ false, /*react*/ false, /*normal_only*/ false,
-               /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
+               /*exact_waypoint*/ false, prio);
     DC_PULL_TRACE("[DC:{}] hold-at-camp: walking to camp ({:.1f}yd, passive={}, moved={})",
                   bot->GetName(), toCamp, passive, moved);
     return true;
