@@ -132,7 +132,8 @@ bool DungeonClearAtBossTrigger::IsActive()
     Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
     float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
-    if (DungeonClearUtil::ClosedDoorBetween(bot, bx, by))
+    float const bz = liveBoss ? liveBoss->GetPositionZ() : next->z;
+    if (DungeonClearUtil::ClosedDoorBetween(bot, bx, by, bz))
         return false;
 
     // When the long-path cache is anchored (registered route), make sure
@@ -241,8 +242,15 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // tick the scan first sees the pack — which let the tank run through, clear
     // it, and walk back. With the pack vetoed, door-blocked parks at the door;
     // this re-evaluates the instant the door opens.
-    if (DungeonClearUtil::ClosedDoorBetween(bot, trash->GetPositionX(), trash->GetPositionY()))
+    if (DungeonClearUtil::ClosedDoorBetween(bot, trash->GetPositionX(),
+                                            trash->GetPositionY(), trash->GetPositionZ()))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] blocking-trash: vetoed pack {} ({:.1f}yd) — closed door "
+                  "between us and it on our floor",
+                  bot->GetName(), trash->GetGUID().ToString(), bot->GetExactDist(trash));
         return false;
+    }
 
     return true;
 }

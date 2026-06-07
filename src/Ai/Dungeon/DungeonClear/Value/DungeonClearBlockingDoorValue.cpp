@@ -5,6 +5,7 @@
 
 #include "DungeonClearBlockingDoorValue.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -34,6 +35,12 @@ namespace
     // there"; 8yd catches the jamb without reaching across a dungeon wall
     // into a parallel corridor (stone walls are thicker than that gap).
     constexpr float DOOR_CORRIDOR_WIDTH = 8.0f;
+    // Vertical tolerance. A door more than this above/below the route leg sits
+    // on another floor (a stacked deck, a ramp over/under us) and is not
+    // blocking, even when its 2D origin lands on the centerline. The whole scan
+    // is otherwise 2D, so without this a door directly over/under the path
+    // falsely flagged it. Mirrors DC_DOOR_Z_BAND in DungeonClearUtil.
+    constexpr float DOOR_Z_BAND = 6.0f;
 
 }
 
@@ -68,9 +75,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     // route. The polyline is the real smoothed corridor geometry.
     float prevX = bot->GetPositionX();
     float prevY = bot->GetPositionY();
+    float prevZ = bot->GetPositionZ();
     float accumulated = 0.0f;
 
-    struct Seg { float ax, ay, bx, by; };
+    struct Seg { float ax, ay, az, bx, by, bz; };
     std::vector<Seg> segments;
 
     bool reachedLookAhead = false;
@@ -83,10 +91,11 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         {
             float const dx = pathSeg.ex - prevX;
             float const dy = pathSeg.ey - prevY;
-            segments.push_back(Seg{prevX, prevY, pathSeg.ex, pathSeg.ey});
+            segments.push_back(Seg{prevX, prevY, prevZ, pathSeg.ex, pathSeg.ey, pathSeg.ez});
             accumulated += std::sqrt(dx * dx + dy * dy);
             prevX = pathSeg.ex;
             prevY = pathSeg.ey;
+            prevZ = pathSeg.ez;
             if (accumulated >= DOOR_LOOK_AHEAD)
                 break;
             continue;
@@ -96,10 +105,11 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         {
             float const dx = pt.x - prevX;
             float const dy = pt.y - prevY;
-            segments.push_back(Seg{prevX, prevY, pt.x, pt.y});
+            segments.push_back(Seg{prevX, prevY, prevZ, pt.x, pt.y, pt.z});
             accumulated += std::sqrt(dx * dx + dy * dy);
             prevX = pt.x;
             prevY = pt.y;
+            prevZ = pt.z;
             if (accumulated >= DOOR_LOOK_AHEAD)
             {
                 reachedLookAhead = true;
@@ -130,6 +140,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
 
         float const gx = go->GetPositionX();
         float const gy = go->GetPositionY();
+        float const gz = go->GetPositionZ();
         float const distFromBotSq = (gx - botX) * (gx - botX) + (gy - botY) * (gy - botY);
         // Cull early — a door 200yd from the bot can't be in the first 80yd
         // of corridor either.
@@ -137,9 +148,17 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
                             (DOOR_LOOK_AHEAD + DOOR_CORRIDOR_WIDTH))
             continue;
 
+        // Nearest 2D approach of the route to the door, but only over legs that
+        // share the door's floor (Z). A door over/under a leg — near in
+        // plan-view but a deck away — is skipped, so it can't flag the corridor
+        // and park the tank short of a doorway it never actually reaches.
         float minDistSq = std::numeric_limits<float>::max();
         for (auto const& seg : segments)
         {
+            float const loZ = std::min(seg.az, seg.bz) - DOOR_Z_BAND;
+            float const hiZ = std::max(seg.az, seg.bz) + DOOR_Z_BAND;
+            if (gz < loZ || gz > hiZ)
+                continue;
             float const d2 = DungeonClearMath::DistSqToSegment2D(gx, gy, seg.ax, seg.ay, seg.bx, seg.by);
             if (d2 < minDistSq)
                 minDistSq = d2;

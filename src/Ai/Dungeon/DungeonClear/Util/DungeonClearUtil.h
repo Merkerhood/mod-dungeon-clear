@@ -121,13 +121,16 @@ public:
     static bool IsDoorClosed(GameObject const* go);
 
     // True if a closed `GAMEOBJECT_TYPE_DOOR` sits on the straight 2D line from
-    // the bot to (tx,ty), within `corridorWidth` of it. Used to veto engaging a
+    // the bot to (tx,ty), within `corridorWidth` of it, on the bot/target floor
+    // (Z), and projecting to the INTERIOR of that chord. Used to veto engaging a
     // boss/pack on the FAR side of a shut door (the navmesh may let the tank clip
     // through, so it would otherwise bee-line onto/through the door). Computed
     // FRESH per call on purpose — the cached "dungeon clear blocking door" value
     // (500ms) can still read empty at the moment a scan first sees the far-side
-    // target, which let the tank run through, clear it, and walk back.
-    static bool ClosedDoorBetween(Player* bot, float tx, float ty,
+    // target, which let the tank run through, clear it, and walk back. The Z and
+    // interior-projection gates keep the straight chord from grazing a door on
+    // another deck or in a parallel corridor and vetoing a valid near-side pull.
+    static bool ClosedDoorBetween(Player* bot, float tx, float ty, float tz,
                                   float corridorWidth = 8.0f);
 
     // Distance TRAVELLED ALONG the long-path (from the bot) to where the route
@@ -143,7 +146,7 @@ public:
     // blocker until the tank was already on top of it.
     static float DistAlongPathToClosedDoor(
         Player* bot, ChunkedPathfinder::Result const& path,
-        float doorX, float doorY, float maxLookAhead);
+        float doorX, float doorY, float doorZ, float maxLookAhead);
 
     // --- Raid / multi-tank leadership ---------------------------------------
     // Elects the single tank that drives the clear for the whole group. A party

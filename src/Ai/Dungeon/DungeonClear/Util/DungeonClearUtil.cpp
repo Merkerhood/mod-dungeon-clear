@@ -127,15 +127,30 @@ namespace
     // band misses wide gates.
     constexpr float DC_DOOR_BAND = 8.0f;
 
-    // Closed `GAMEOBJECT_TYPE_DOOR`s on the map, as 2D points, culled to within
-    // `radius` of (cx,cy). Used to truncate the corridor trash scan at the first
-    // door so the tank never picks a pack on the FAR side of a shut door — some
-    // doors aren't modeled as solid in the navmesh, so the corridor runs straight
-    // through them. Mirrors the closed-state logic in DungeonClearBlockingDoorValue.
-    std::vector<std::pair<float, float>> CollectClosedDoors(Map* map, float cx,
-                                                            float cy, float radius)
+    // Vertical tolerance for matching a door to a leg of the route (or to a
+    // target). A door's GO origin Z sits at its OWN floor; the route point we
+    // test it against is on the walking surface. Beyond this gap the door is on
+    // a different level — a stacked ship deck, a ramp above/below — and must not
+    // count as blocking. The door tests are otherwise 2D, so without this a door
+    // directly over or under a point that is merely near in plan-view falsely
+    // blocks the corridor (parks the tank short, vetoes near-side packs). Wide
+    // enough to absorb a doorway threshold/lip and minor navmesh-vs-GO Z drift,
+    // tight enough to keep adjacent floors apart.
+    constexpr float DC_DOOR_Z_BAND = 6.0f;
+
+    // A closed door reduced to its GO-origin point, carried with Z so the
+    // corridor tests can reject doors on another floor.
+    struct DoorPt { float x, y, z; };
+
+    // Closed `GAMEOBJECT_TYPE_DOOR`s on the map, culled to within `radius` of
+    // (cx,cy). Used to truncate the corridor trash scan at the first door so the
+    // tank never picks a pack on the FAR side of a shut door — some doors aren't
+    // modeled as solid in the navmesh, so the corridor runs straight through
+    // them. Mirrors the closed-state logic in DungeonClearBlockingDoorValue.
+    std::vector<DoorPt> CollectClosedDoors(Map* map, float cx, float cy,
+                                           float radius)
     {
-        std::vector<std::pair<float, float>> doors;
+        std::vector<DoorPt> doors;
         if (!map)
             return doors;
         float const r2 = radius * radius;
@@ -148,20 +163,30 @@ namespace
             float const gy = go->GetPositionY();
             if ((gx - cx) * (gx - cx) + (gy - cy) * (gy - cy) > r2)
                 continue;
-            doors.emplace_back(gx, gy);
+            doors.push_back(DoorPt{gx, gy, go->GetPositionZ()});
         }
         return doors;
     }
 
-    // True if any door point lies within DC_DOOR_BAND of segment a→b.
-    bool SegmentHitsClosedDoor(Seg2D const& s,
-                               std::vector<std::pair<float, float>> const& doors)
+    // True if any door lies within DC_DOOR_BAND (2D) of segment a→b AND on the
+    // segment's floor (door Z within DC_DOOR_Z_BAND of the segment's Z span).
+    // The Z gate stops a door one deck up/down — near in plan-view but not on
+    // this leg of the route — from truncating the scan. `az`/`bz` are the Z of
+    // the segment's two endpoints.
+    bool SegmentHitsClosedDoor(Seg2D const& s, float az, float bz,
+                               std::vector<DoorPt> const& doors)
     {
         float const bandSq = DC_DOOR_BAND * DC_DOOR_BAND;
+        float const loZ = std::min(az, bz) - DC_DOOR_Z_BAND;
+        float const hiZ = std::max(az, bz) + DC_DOOR_Z_BAND;
         for (auto const& d : doors)
-            if (DungeonClearMath::DistSqToSegment2D(d.first, d.second,
+        {
+            if (d.z < loZ || d.z > hiZ)
+                continue;
+            if (DungeonClearMath::DistSqToSegment2D(d.x, d.y,
                                                     s.ax, s.ay, s.bx, s.by) <= bandSq)
                 return true;
+        }
         return false;
     }
 
@@ -294,7 +319,7 @@ Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
     // engage things that actually block the next leg of the route.
     // Truncate at the first closed door (see FindBlockingTrashOnPath) so a pack
     // on the far side of a shut, navmesh-passable door is never picked.
-    std::vector<std::pair<float, float>> const doors =
+    auto const doors =
         CollectClosedDoors(bot->GetMap(), bot->GetPositionX(), bot->GetPositionY(),
                            maxLookAhead + DC_DOOR_BAND);
 
@@ -306,7 +331,7 @@ Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
         G3D::Vector3 const& a = corridor[i];
         G3D::Vector3 const& b = corridor[i + 1];
         Seg2D const s{a.x, a.y, b.x, b.y};
-        if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
+        if (!doors.empty() && SegmentHitsClosedDoor(s, a.z, b.z, doors))
             break;
         segments.push_back(s);
         float const dx = b.x - a.x;
@@ -484,7 +509,7 @@ bool DungeonClearUtil::IsDoorClosed(GameObject const* go)
 }
 
 bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
-                                         float corridorWidth)
+                                         float tz, float corridorWidth)
 {
     if (!bot)
         return false;
@@ -494,7 +519,15 @@ bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
 
     float const bx = bot->GetPositionX();
     float const by = bot->GetPositionY();
+    float const bz = bot->GetPositionZ();
     float const widthSq = corridorWidth * corridorWidth;
+    // Floor span of the bot->target line (plus tolerance). A door outside it
+    // sits on another level and isn't actually in the way (stacked decks /
+    // ramps), even though its 2D origin lands near this straight chord.
+    float const loZ = std::min(bz, tz) - DC_DOOR_Z_BAND;
+    float const hiZ = std::max(bz, tz) + DC_DOOR_Z_BAND;
+
+    float const segLenSq = (tx - bx) * (tx - bx) + (ty - by) * (ty - by);
 
     for (auto const& kv : map->GetGameObjectBySpawnIdStore())
     {
@@ -502,21 +535,44 @@ bool DungeonClearUtil::ClosedDoorBetween(Player* bot, float tx, float ty,
         if (!IsDoorClosed(go))
             continue;
 
-        // Within corridorWidth of the bot->target segment? DistSqToSegment2D
-        // clamps to the segment, so a small value means the door lies on the
-        // line between them (or at an endpoint, which for "trash in the doorway"
-        // or "bot already at the door" is still correctly a veto).
-        float const d2 = DungeonClearMath::DistSqToSegment2D(
-            go->GetPositionX(), go->GetPositionY(), bx, by, tx, ty);
-        if (d2 <= widthSq)
-            return true;
+        float const gx = go->GetPositionX();
+        float const gy = go->GetPositionY();
+        float const gz = go->GetPositionZ();
+
+        // Different floor — near in plan-view but not on the way.
+        if (gz < loZ || gz > hiZ)
+            continue;
+
+        // Within corridorWidth of the bot->target segment?
+        float const d2 =
+            DungeonClearMath::DistSqToSegment2D(gx, gy, bx, by, tx, ty);
+        if (d2 > widthSq)
+            continue;
+
+        // Require the door to project to the INTERIOR of the chord, not be
+        // clamped to an endpoint. A door beside the bot or beside the target
+        // (a parallel corridor the straight chord grazes near an end) is not
+        // "between" us and the target — only a door the chord passes THROUGH
+        // is. Without this the up-to-35yd trash chord, which cuts across walls
+        // on a winding route, vetoed valid near-side packs. A door genuinely in
+        // the doorway still lands interior. (Degenerate zero-length chord: any
+        // door within band counts, as before.)
+        if (segLenSq > 0.01f)
+        {
+            float const t =
+                ((gx - bx) * (tx - bx) + (gy - by) * (ty - by)) / segLenSq;
+            if (t <= 0.05f || t >= 0.95f)
+                continue;
+        }
+
+        return true;
     }
     return false;
 }
 
 float DungeonClearUtil::DistAlongPathToClosedDoor(
     Player* bot, ChunkedPathfinder::Result const& path,
-    float doorX, float doorY, float maxLookAhead)
+    float doorX, float doorY, float doorZ, float maxLookAhead)
 {
     if (!bot || !path.reachable || path.segments.empty())
         return std::numeric_limits<float>::max();
@@ -538,18 +594,27 @@ float DungeonClearUtil::DistAlongPathToClosedDoor(
     float const botX = bot->GetPositionX();
     float const botY = bot->GetPositionY();
 
-    float prevX = 0.0f, prevY = 0.0f;
+    float const zBand = DC_DOOR_Z_BAND;
+    float prevX = 0.0f, prevY = 0.0f, prevZ = 0.0f;
     bool havePrev = false;
     float accumulated = 0.0f;     // distance from path start to current point
     float cursorAccum = 0.0f;     // accumulated at the point closest to the bot
     float bestBotDistSq = std::numeric_limits<float>::max();
     float doorAccum = -1.0f;      // accumulated at the band entry
 
-    auto visit = [&](float px, float py) -> bool
+    auto visit = [&](float px, float py, float pz) -> bool
     {
         if (havePrev)
         {
-            if (DungeonClearMath::DistSqToSegment2D(doorX, doorY, prevX, prevY, px, py) <= bandSq)
+            // Only treat the door as on THIS leg if the leg shares its floor —
+            // otherwise the route passing over/under the door (a stacked deck or
+            // a ramp) registers a band entry far before the real doorway and
+            // parks the tank short.
+            bool const onFloor =
+                doorZ >= std::min(prevZ, pz) - zBand &&
+                doorZ <= std::max(prevZ, pz) + zBand;
+            if (onFloor &&
+                DungeonClearMath::DistSqToSegment2D(doorX, doorY, prevX, prevY, px, py) <= bandSq)
             {
                 doorAccum = accumulated;   // at the START (prev) of the hitting segment
                 return true;
@@ -568,6 +633,7 @@ float DungeonClearUtil::DistAlongPathToClosedDoor(
         }
         prevX = px;
         prevY = py;
+        prevZ = pz;
         havePrev = true;
         return false;
     };
@@ -576,10 +642,10 @@ float DungeonClearUtil::DistAlongPathToClosedDoor(
     for (PathSegment const& seg : path.segments)
     {
         if (seg.polyline.empty())
-            hit = visit(seg.ex, seg.ey);
+            hit = visit(seg.ex, seg.ey, seg.ez);
         else
             for (G3D::Vector3 const& pt : seg.polyline)
-                if ((hit = visit(pt.x, pt.y)))
+                if ((hit = visit(pt.x, pt.y, pt.z)))
                     break;
         if (hit || accumulated >= maxLookAhead)
             break;
@@ -670,12 +736,13 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
     // door-blocked (22) and walk the tank through to the pack. Computed fresh from
     // the live door state here (not the 500ms-cached blocking-door value), so it
     // holds even on the tick a scan first sees the pack.
-    std::vector<std::pair<float, float>> const doors =
+    auto const doors =
         CollectClosedDoors(bot->GetMap(), bot->GetPositionX(), bot->GetPositionY(),
                            maxLookAhead + DC_DOOR_BAND);
 
     float prevX = bot->GetPositionX();
     float prevY = bot->GetPositionY();
+    float prevZ = bot->GetPositionZ();
     float accumulated = 0.0f;
     bool stop = false;
     for (PathSegment const& seg : segments)
@@ -686,7 +753,7 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
         if (seg.polyline.empty())
         {
             Seg2D const s{prevX, prevY, seg.ex, seg.ey};
-            if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
+            if (!doors.empty() && SegmentHitsClosedDoor(s, prevZ, seg.ez, doors))
                 break;
             float const dx = seg.ex - prevX;
             float const dy = seg.ey - prevY;
@@ -694,6 +761,7 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
             accumulated += std::sqrt(dx * dx + dy * dy);
             prevX = seg.ex;
             prevY = seg.ey;
+            prevZ = seg.ez;
             if (accumulated >= maxLookAhead)
                 break;
             continue;
@@ -702,7 +770,7 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
         for (G3D::Vector3 const& pt : seg.polyline)
         {
             Seg2D const s{prevX, prevY, pt.x, pt.y};
-            if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
+            if (!doors.empty() && SegmentHitsClosedDoor(s, prevZ, pt.z, doors))
             {
                 stop = true;
                 break;
@@ -713,6 +781,7 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
             accumulated += std::sqrt(dx * dx + dy * dy);
             prevX = pt.x;
             prevY = pt.y;
+            prevZ = pt.z;
             if (accumulated >= maxLookAhead)
             {
                 stop = true;

@@ -1740,6 +1740,26 @@ namespace
         return u;
     }
 
+    // True when `target` sits at the end of a single complete PathGenerator
+    // route (PATHFIND_NORMAL). A long, winding route — the classic case being a
+    // pack at the foot of a ramp the tank is standing atop — overruns
+    // PathGenerator's hop cap and resolves only as PATHFIND_INCOMPLETE. The raw
+    // MoveTo that EngageDirect issues can then only build the truncated prefix
+    // of that route, which dead-ends against the geometry: the tank glides a
+    // few yards (or not at all) and then sits in "clearing trash" forever,
+    // never closing to aggro range. Such far targets must be approached via the
+    // no-hop-cap long-path that Advance drives, so engage-trash yields to it
+    // rather than bee-lining (see DungeonClearEngageTrashAction::Execute).
+    bool IsDirectlyReachable(Player* bot, Unit* target)
+    {
+        if (!bot || !target)
+            return false;
+        PathGenerator gen(bot);
+        gen.CalculatePath(target->GetPositionX(), target->GetPositionY(),
+                          target->GetPositionZ(), /*forceDest*/ false);
+        return gen.GetPathType() == PATHFIND_NORMAL;
+    }
+
     // Closest valid hostile from `candidates` within `range` of the bot,
     // LOS-checked. Drives the proximity preempt in DungeonClearEngageTrashAction
     // so the tank engages a mob already inside its aggro bubble before running
@@ -1873,6 +1893,24 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
     // Pin the chosen target so the next tick doesn't reconsider it.
     if (target->GetGUID() != stickyGuid)
         context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(target->GetGUID());
+
+    // Far, long-route trash: a pack the navmesh can only reach via a winding
+    // route that overruns PathGenerator's hop cap (the tank atop a ramp with
+    // the pack at its foot, the route running all the way down and back over).
+    // The raw MoveTo EngageDirect issues builds only the truncated
+    // PATHFIND_INCOMPLETE prefix of that route and dead-ends against the
+    // geometry — the tank freezes in "clearing trash" and never reaches aggro
+    // range. Hand the approach to Advance's long-path (LongRangePathfinder, no
+    // hop cap): it already routes toward the boss straight past this pack, so
+    // returning false here yields the tick to it. As the tank descends and the
+    // pack comes within a single-call NORMAL route, this action preempts again
+    // (proximity/sticky) and pulls it. Gated on distance so ordinary
+    // in-corridor pulls keep their direct bee-line; only genuinely far,
+    // out-of-aggro targets are deferred.
+    if (bot->GetDistance(target) > DC_ENGAGE_RANGE &&
+        !IsDirectlyReachable(bot, target))
+        return false;
+
     return EngageDirect(target);
 }
 
@@ -2116,7 +2154,8 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     // beyond aggroed the now-through tank.
     float const distAlongToDoor =
         DungeonClearUtil::DistAlongPathToClosedDoor(
-            bot, path, door->GetPositionX(), door->GetPositionY(), /*lookAhead*/ 100.0f);
+            bot, path, door->GetPositionX(), door->GetPositionY(),
+            door->GetPositionZ(), /*lookAhead*/ 100.0f);
     if (distAlongToDoor <= DC_DOOR_STOP_DISTANCE)
     {
         LOG_DEBUG("playerbots.dungeonclear",
