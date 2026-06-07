@@ -27,3 +27,49 @@ float DungeonClearMath::DistSqToSegment2D(float px, float py,
     float const dy = py - cy;
     return dx * dx + dy * dy;
 }
+
+bool DungeonClearMath::SegmentIntersectsAABB2D(float ax, float ay,
+                                               float bx, float by,
+                                               float minX, float minY,
+                                               float maxX, float maxY)
+{
+    // Parametric segment P(t) = A + t*(B-A), t in [0,1]. Clip the interval
+    // against each box slab; if anything survives, the segment touches the box.
+    float const dx = bx - ax;
+    float const dy = by - ay;
+    float t0 = 0.0f;
+    float t1 = 1.0f;
+
+    // p = -direction component, q = distance to the slab edge. The pair
+    // (-dx, ax-minX), (dx, maxX-ax), (-dy, ay-minY), (dy, maxY-ay) covers the
+    // four edges (left, right, bottom, top).
+    float const p[4] = {-dx, dx, -dy, dy};
+    float const q[4] = {ax - minX, maxX - ax, ay - minY, maxY - ay};
+
+    for (int i = 0; i < 4; ++i)
+    {
+        if (p[i] == 0.0f)
+        {
+            // Segment parallel to this slab: outside it -> no intersection.
+            if (q[i] < 0.0f)
+                return false;
+            continue;
+        }
+        float const r = q[i] / p[i];
+        if (p[i] < 0.0f)
+        {
+            if (r > t1)
+                return false;
+            if (r > t0)
+                t0 = r;
+        }
+        else
+        {
+            if (r < t0)
+                return false;
+            if (r < t1)
+                t1 = r;
+        }
+    }
+    return t0 <= t1;
+}

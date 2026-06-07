@@ -9,6 +9,8 @@
 #include <cmath>
 #include <limits>
 
+#include "DBCStores.h"
+#include "DBCStructure.h"
 #include "GameObject.h"
 #include "Log.h"
 #include "Map.h"
@@ -25,22 +27,67 @@ namespace
     // this distance we don't care — the chunked pathfinder will rebuild
     // by the time the bot gets there and the value will re-evaluate.
     constexpr float DOOR_LOOK_AHEAD = 80.0f;
-    // 2D radius from the walked centerline within which a door counts as
-    // "on the corridor". This is NOT the doorway width — it is the slack
-    // between the smoothed route and the door's GO origin. A door's origin
-    // sits at its hinge/jamb, which on a wide gateway (e.g. a grand stone
-    // temple door) can be several yards to the side of the line the bot
-    // actually walks through. At 5yd those wide gates slipped past detection
-    // and the tank strolled through the closed doorway "as if it weren't
-    // there"; 8yd catches the jamb without reaching across a dungeon wall
-    // into a parallel corridor (stone walls are thicker than that gap).
-    constexpr float DOOR_CORRIDOR_WIDTH = 8.0f;
-    // Vertical tolerance. A door more than this above/below the route leg sits
-    // on another floor (a stacked deck, a ramp over/under us) and is not
-    // blocking, even when its 2D origin lands on the centerline. The whole scan
-    // is otherwise 2D, so without this a door directly over/under the path
-    // falsely flagged it. Mirrors DC_DOOR_Z_BAND in DungeonClearUtil.
+    // Lateral slack added around the door's real model footprint before testing
+    // whether a path leg passes through it. Covers the bot's body radius plus
+    // the gap between the smoothed route centerline and the line the bot
+    // actually walks / navmesh snapping. Small on purpose: the footprint box
+    // already spans the true doorway (wide gate or narrow door alike), so this
+    // is only tolerance, not a "is the door roughly near the path" band.
+    constexpr float DOOR_PATH_PAD = 2.0f;
+    // Vertical tolerance on top of the door model's own Z extent. A door whose
+    // footprint doesn't overlap the leg's height (plus this) sits on another
+    // floor (a stacked deck, a ramp over/under us) and is not blocking, even
+    // when its 2D footprint lands under the path. Mirrors DC_DOOR_Z_BAND.
     constexpr float DOOR_Z_BAND = 6.0f;
+
+    // Transform a world point into the door's local (orientation-aligned) frame,
+    // matching GameObject::IsInRange2d. The door's model bounding box
+    // (GameObjectDisplayInfo min/max, scaled) is axis-aligned in THIS frame, so
+    // once both leg endpoints are transformed we can do a plain segment-vs-AABB
+    // test against the real, oriented doorway footprint.
+    inline void ToDoorLocal(GameObject const* go, float wx, float wy,
+                            float& lx, float& ly)
+    {
+        float const sinA = std::sin(go->GetOrientation());
+        float const cosA = std::cos(go->GetOrientation());
+        float const ddx = wx - go->GetPositionX();
+        float const ddy = wy - go->GetPositionY();
+        lx = sinA * ddx + cosA * ddy;
+        ly = cosA * ddx - sinA * ddy;
+    }
+
+    // True when a path leg actually passes THROUGH this door's footprint, rather
+    // than merely running near its origin. This is the whole point of the value:
+    // doors a route runs PAST (e.g. Shadowfang Keep's first courtyard gate, which
+    // you skirt to reach the prison event that unlocks it) must NOT be flagged —
+    // only doors the corridor transits.
+    bool PathLegCrossesDoor(GameObject const* go,
+                            GameObjectDisplayInfoEntry const* info,
+                            float ax, float ay, float az,
+                            float bx, float by, float bz)
+    {
+        float const scale = go->GetObjectScale();
+        float const gz = go->GetPositionZ();
+        // Floor / height gate first (cheap): the leg's Z span must overlap the
+        // door's vertical extent, padded.
+        float const doorLoZ = gz + info->minZ * scale - DOOR_Z_BAND;
+        float const doorHiZ = gz + info->maxZ * scale + DOOR_Z_BAND;
+        float const legLoZ = std::min(az, bz);
+        float const legHiZ = std::max(az, bz);
+        if (legHiZ < doorLoZ || legLoZ > doorHiZ)
+            return false;
+
+        float lax, lay, lbx, lby;
+        ToDoorLocal(go, ax, ay, lax, lay);
+        ToDoorLocal(go, bx, by, lbx, lby);
+
+        float const minX = info->minX * scale - DOOR_PATH_PAD;
+        float const maxX = info->maxX * scale + DOOR_PATH_PAD;
+        float const minY = info->minY * scale - DOOR_PATH_PAD;
+        float const maxY = info->maxY * scale + DOOR_PATH_PAD;
+        return DungeonClearMath::SegmentIntersectsAABB2D(lax, lay, lbx, lby,
+                                                         minX, minY, maxX, maxY);
+    }
 
 }
 
@@ -122,7 +169,10 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     if (segments.empty())
         return ObjectGuid::Empty;
 
-    float const widthSq = DOOR_CORRIDOR_WIDTH * DOOR_CORRIDOR_WIDTH;
+    // Generous cull radius: the door's footprint must be within the look-ahead
+    // plus room for a large gate's half-extent. Anything past this can't be on
+    // the first DOOR_LOOK_AHEAD yards of corridor.
+    constexpr float CULL = DOOR_LOOK_AHEAD + 20.0f;
     ObjectGuid best;
     float bestDistFromBotSq = std::numeric_limits<float>::max();
     float const botX = bot->GetPositionX();
@@ -136,48 +186,44 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         // checks; see DungeonClearUtil::IsDoorClosed.
         if (!DungeonClearUtil::IsDoorClosed(go))
             continue;
-        GameObjectTemplate const* info = go->GetGOInfo();
+        GameObjectTemplate const* tmpl = go->GetGOInfo();
 
         float const gx = go->GetPositionX();
         float const gy = go->GetPositionY();
-        float const gz = go->GetPositionZ();
         float const distFromBotSq = (gx - botX) * (gx - botX) + (gy - botY) * (gy - botY);
-        // Cull early — a door 200yd from the bot can't be in the first 80yd
-        // of corridor either.
-        if (distFromBotSq > (DOOR_LOOK_AHEAD + DOOR_CORRIDOR_WIDTH) *
-                            (DOOR_LOOK_AHEAD + DOOR_CORRIDOR_WIDTH))
+        if (distFromBotSq > CULL * CULL)
             continue;
 
-        // Nearest 2D approach of the route to the door, but only over legs that
-        // share the door's floor (Z). A door over/under a leg — near in
-        // plan-view but a deck away — is skipped, so it can't flag the corridor
-        // and park the tank short of a doorway it never actually reaches.
-        float minDistSq = std::numeric_limits<float>::max();
-        for (auto const& seg : segments)
+        // Resolve the door's real model footprint. Without it we can't tell
+        // "through" from "past"; fall back to nothing (don't flag) rather than
+        // re-introduce the origin-proximity false positives this replaced.
+        GameObjectDisplayInfoEntry const* disp =
+            sGameObjectDisplayInfoStore.LookupEntry(tmpl->displayId);
+        if (!disp)
         {
-            float const loZ = std::min(seg.az, seg.bz) - DOOR_Z_BAND;
-            float const hiZ = std::max(seg.az, seg.bz) + DOOR_Z_BAND;
-            if (gz < loZ || gz > hiZ)
-                continue;
-            float const d2 = DungeonClearMath::DistSqToSegment2D(gx, gy, seg.ax, seg.ay, seg.bx, seg.by);
-            if (d2 < minDistSq)
-                minDistSq = d2;
-        }
-        if (minDistSq > widthSq)
-        {
-            // Closed door near the bot but off the walked centerline. This is
-            // the prime suspect when the tank walks through a shut door "as if
-            // it weren't there": the route really does pass through it but the
-            // door's GO origin lands outside the corridor band. Log how far off
-            // it was so the band can be retuned from a live capture instead of
-            // guessing.
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] blocking-door: closed door {} (entry {}) {:.1f}yd off corridor "
-                      "(band {:.1f}yd), {:.1f}yd from bot -> NOT flagged",
-                      bot->GetName(), go->GetGUID().ToString(), info->entry,
-                      std::sqrt(minDistSq), DOOR_CORRIDOR_WIDTH, std::sqrt(distFromBotSq));
+                      "[DC:{}] blocking-door: closed door {} (entry {}) has no display "
+                      "footprint -> NOT flagged",
+                      bot->GetName(), go->GetGUID().ToString(), tmpl->entry);
             continue;
         }
+
+        // Flag ONLY when a route leg actually transits the doorway footprint.
+        // A door the corridor merely runs past (its model off to the side of
+        // every leg) is left alone, so the tank keeps moving toward the boss /
+        // event that opens it instead of parking beside a door it never enters.
+        bool crosses = false;
+        for (auto const& seg : segments)
+        {
+            if (PathLegCrossesDoor(go, disp, seg.ax, seg.ay, seg.az,
+                                   seg.bx, seg.by, seg.bz))
+            {
+                crosses = true;
+                break;
+            }
+        }
+        if (!crosses)
+            continue;
 
         if (distFromBotSq < bestDistFromBotSq)
         {

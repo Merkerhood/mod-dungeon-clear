@@ -12,6 +12,14 @@ namespace DungeonClearMath
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,
                             float bx, float by);
+
+    // True if the 2D segment (A,B) intersects the axis-aligned box
+    // [minX,maxX] x [minY,maxY]. Liang-Barsky slab clip: returns true even
+    // when BOTH endpoints lie outside the box but the segment passes through
+    // it (the case that matters for a thin door panel a path step straddles).
+    bool SegmentIntersectsAABB2D(float ax, float ay, float bx, float by,
+                                 float minX, float minY,
+                                 float maxX, float maxY);
 }
 
 #endif
