@@ -1179,9 +1179,22 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
     // the approach. That removes the first-sight blind spot in the only direction
     // that matters (toward caution) while still giving each pack ONE stable, non-
     // flapping decision: the party is never churned Leeroy<->Advanced tick to tick.
-    // Re-checks are throttled (the neighbour scan does LOS + closed-door tests) so
-    // they cost a few evaluations a second at most, and stop entirely once Advanced.
-    constexpr uint32 kRecheckMs = 400;
+    //
+    // The re-check cadence is DISTANCE-AWARE. The neighbour scan does LOS + closed-
+    // door tests per mob, so while the pack is still far we throttle it to a few
+    // evaluations a second. But the verdict is time-critical near the commit range
+    // (DC_PULL_START_RANGE, 20yd): a neighbour's LOS typically only clears as the
+    // tank closes, and a flat throttle can let the Leeroy->Advanced upgrade land a
+    // tick or two AFTER the pull already committed Leeroy — the tank charges in with
+    // no camp staged and the party strung out behind it ("everyone out of place").
+    // So once the pack is inside the approach window we reclassify EVERY tick: the
+    // upgrade then fires the instant a neighbour resolves and is final BEFORE commit,
+    // leaving the parallel party-advance time to pre-stage the camp. Re-checks still
+    // stop entirely once Advanced (locked) — the every-tick cost is bounded to the
+    // brief, decisive approach window. kApproachWindow sits above DC_PULL_START_RANGE
+    // so the verdict is settled with margin to spare before the pull would commit.
+    constexpr uint32 kRecheckFarMs = 400;
+    constexpr float kApproachWindow = 30.0f;
     ObjectGuid const latched =
         context->GetValue<ObjectGuid>("dungeon clear pull decision target")->Get();
     bool const sameTarget = (latched == target->GetGUID());
@@ -1191,11 +1204,16 @@ void DungeonClearUtil::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext
         // Already Advanced for this pack: locked, never reconsidered.
         if (curBool)
             return;
-        // Standing Leeroy: re-check on a throttle, upgrade-only.
+        // Standing Leeroy: re-check upgrade-only. Throttle only while far; inside
+        // the approach window reclassify every tick so the verdict can't lag commit.
         uint32 const now = getMSTime();
-        uint32 const since = context->GetValue<uint32>("dungeon clear pull decision since")->Get();
-        if (since != 0 && (now - since) < kRecheckMs)
-            return;
+        if (bot->GetExactDist2d(target) > kApproachWindow)
+        {
+            uint32 const since =
+                context->GetValue<uint32>("dungeon clear pull decision since")->Get();
+            if (since != 0 && (now - since) < kRecheckFarMs)
+                return;
+        }
         context->GetValue<uint32>("dungeon clear pull decision since")->Set(now);
         if (ClassifyPullAdvanced(botAI, target))
         {
