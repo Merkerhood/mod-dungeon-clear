@@ -1086,11 +1086,54 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     if (std::find(hostiles.begin(), hostiles.end(), target) == hostiles.end())
         hostiles.push_back(target);
 
-    // Resolve game state (positions + the per-mob LOS/door gate) here, then hand
-    // the pure clustering/threshold decision to DungeonClearMath::ClassifyDynamic-
+    // Whether a NEIGHBOUR mob can chain into the pull is decided by navmesh
+    // CONNECTIVITY, not line of sight. LOS is the wrong tool: a pack just around a
+    // corner is fully a chaining threat (the tank walks into it as it closes, links
+    // and patrols drag it in) yet a wall transiently blocks LOS during the approach
+    // — and that blind spot is exactly what made Dynamic resolve to Advanced too
+    // late, only once the tank had rounded the corner near commit range. Instead we
+    // ask, with no sight required: is this neighbour in the SAME walkable space as
+    // the pack — a short navmesh path away, perhaps bending around a corner — or
+    // separated by geometry (a solid wall / sealed room: near in plan view but a
+    // long way round on foot)? A complete PATHFIND_NORMAL route no longer than a
+    // corner-slack budget answers it. The closed-door gate still stands on top: the
+    // static navmesh pathes straight THROUGH a shut door, so geometry alone misses
+    // it.
+    //
+    // Cost is bounded: the path query runs only for a neighbour already within
+    // chainRadius in plan view (the same threshold the math re-applies, so anything
+    // beyond it can't count regardless of path) and not door-blocked — in practice a
+    // handful of mobs, often none.
+    float const chainPathBudget = chainRadius * 2.0f;
+    // Broad-phase is measured to `target`, but the math counts a neighbour within
+    // chainRadius of ANY pack member (packmates sit within kPackRadius of target),
+    // so pad the prune by kPackRadius — otherwise an edge-packmate's true threat
+    // could be pruned here before the math ever sees it.
+    float const chainBroadPhase = chainRadius + kPackRadius;
+    auto chainConnected = [&](Unit* u) -> bool
+    {
+        if (target->GetExactDist2d(u) > chainBroadPhase)
+            return false;
+        if (ClosedDoorBetween(bot, u->GetPositionX(), u->GetPositionY(),
+                              u->GetPositionZ()))
+            return false;
+        PathGenerator gen(target);
+        gen.CalculatePath(u->GetPositionX(), u->GetPositionY(), u->GetPositionZ());
+        if (gen.GetPathType() != PATHFIND_NORMAL)
+            return false;
+        Movement::PointsArray const& pts = gen.GetPath();
+        float len = 0.0f;
+        for (std::size_t k = 1; k < pts.size(); ++k)
+            len += (pts[k] - pts[k - 1]).length();
+        return len <= chainPathBudget;
+    };
+
+    // Resolve game state (positions + the per-mob connectivity/door gate) here, then
+    // hand the pure clustering/threshold decision to DungeonClearMath::ClassifyDynamic-
     // Pull (unit-tested). The gate uses the target itself as the pack's stand-in:
-    // packmates sit within a pack radius of it, so LOS to the target ~= LOS to the
-    // pack, and it keeps the eligibility precomputable before clustering.
+    // packmates sit within a pack radius of it, so connectivity to the target ~=
+    // connectivity to the pack, and it keeps eligibility precomputable before
+    // clustering.
     std::vector<DungeonClearMath::DynPullMob> mobs;
     mobs.reserve(hostiles.size());
     std::size_t targetIdx = 0;
@@ -1099,10 +1142,7 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         Unit* u = hostiles[i];
         if (u == target)
             targetIdx = i;
-        bool const chainEligible =
-            u != target && target->IsWithinLOSInMap(u) &&
-            !ClosedDoorBetween(bot, u->GetPositionX(), u->GetPositionY(),
-                               u->GetPositionZ());
+        bool const chainEligible = u != target && chainConnected(u);
         mobs.push_back({u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(),
                         chainEligible});
     }
