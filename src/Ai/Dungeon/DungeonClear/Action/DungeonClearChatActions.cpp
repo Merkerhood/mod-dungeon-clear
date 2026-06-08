@@ -25,6 +25,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 
 namespace
@@ -281,6 +282,10 @@ bool DcOnAction::Execute(Event event)
     // The breadcrumb trail is part of the pull context already cleared by
     // ResetPullTransient above.
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+    // Drop any active submerged swim leg so a stale 3D route can't resume on the
+    // next run (the drive path also self-invalidates, but this is the clean
+    // teardown alongside the rest of the run state).
+    context->GetValue<DungeonClearSwimState&>("dungeon clear swim state")->Get().Reset();
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";

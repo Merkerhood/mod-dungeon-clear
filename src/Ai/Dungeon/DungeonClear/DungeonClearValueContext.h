@@ -55,6 +55,7 @@ public:
         creators["dungeon clear engage trash target"] = &DungeonClearValueContext::dungeon_clear_engage_trash_target;
         creators["dungeon clear stride rebuild attempts"] = &DungeonClearValueContext::dungeon_clear_stride_rebuild_attempts;
         creators["dungeon clear follower state"] = &DungeonClearValueContext::dungeon_clear_follower_state;
+        creators["dungeon clear swim state"] = &DungeonClearValueContext::dungeon_clear_swim_state;
         creators["dungeon clear loot yield start"] = &DungeonClearValueContext::dungeon_clear_loot_yield_start;
         creators["dungeon clear loot skip"] = &DungeonClearValueContext::dungeon_clear_loot_skip;
         creators["dungeon clear loot camp guid"] = &DungeonClearValueContext::dungeon_clear_loot_camp_guid;
@@ -101,6 +102,7 @@ private:
     static UntypedValue* dungeon_clear_engage_trash_target(PlayerbotAI* ai) { return new DungeonClearEngageTrashTargetValue(ai); }
     static UntypedValue* dungeon_clear_stride_rebuild_attempts(PlayerbotAI* ai) { return new DungeonClearStrideRebuildAttemptsValue(ai); }
     static UntypedValue* dungeon_clear_follower_state(PlayerbotAI* ai) { return new DungeonClearFollowerStateValue(ai); }
+    static UntypedValue* dungeon_clear_swim_state(PlayerbotAI* ai) { return new DungeonClearSwimStateValue(ai); }
     static UntypedValue* dungeon_clear_loot_yield_start(PlayerbotAI* ai) { return new DungeonClearLootYieldStartValue(ai); }
     static UntypedValue* dungeon_clear_loot_skip(PlayerbotAI* ai) { return new DungeonClearLootSkipValue(ai); }
     static UntypedValue* dungeon_clear_loot_camp_guid(PlayerbotAI* ai) { return new DungeonClearLootCampGuidValue(ai); }

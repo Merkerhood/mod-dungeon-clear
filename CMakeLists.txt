@@ -26,4 +26,7 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (per-run settings registry + override accessor)
 # Value/DungeonClearPullModeCurrentValue.{h,cpp}
 #   (order-independent live pull-mode / Dynamic-verdict accessor)
+# Util/SwimPathfinder.{h,cpp}
+#   (Tier A greedy 3D swim navigator for submerged tunnels; driven via a raw
+#    3D escort spline off the new DungeonClearSwimState value)
 # (this comment bumps mtime to force CMake re-glob on next build)

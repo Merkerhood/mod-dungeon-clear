@@ -11,6 +11,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "G3D/Vector3.h"
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Value.h"
@@ -559,6 +560,56 @@ public:
 
 private:
     DcPullContext data;
+};
+
+// --- Submerged swim legs (Tier A) ---------------------------------------
+// One active "swim leg": a 3D polyline through a water volume the navmesh can't
+// route through (the floor under liquid is discarded at mmap-build time, leaving
+// only a surface sheet, so a submerged tunnel — e.g. Blackfathom Deeps -> Lady
+// Sarevess — is a disconnected mesh island). When the normal route planner
+// dead-ends AND water lies between the bot and the target, SwimPathfinder builds
+// this polyline (greedy 3D navigator, VMAP-collision based) and Advance drives
+// it with a raw 3D escort spline, bypassing the navmesh Z-clamp entirely.
+//
+// `points` carry SUBMERGED Z verbatim; `cursor` is how far along they've been
+// walked; `target` is the boss GUID the leg was built toward (a target change
+// invalidates it); `buildStart` + the watchdog fields catch a stale leg and a
+// non-progressing swim. Auto-invalidated on target change / arrival and reset
+// alongside the rest of the run state (dc on/off, skip, death, cleared).
+struct DungeonClearSwimState
+{
+    bool active{false};
+    std::vector<G3D::Vector3> points;
+    uint32 cursor{0};
+    uint32 targetEntry{0};        // boss entry the leg was built toward (0 = none)
+    G3D::Vector3 buildStart;
+    uint32 lastProgressMs{0};
+    float lastDistToPoint{0.0f};
+
+    void Reset()
+    {
+        active = false;
+        points.clear();
+        cursor = 0;
+        targetEntry = 0;
+        buildStart = G3D::Vector3();
+        lastProgressMs = 0;
+        lastDistToPoint = 0.0f;
+    }
+};
+
+class DungeonClearSwimStateValue : public ManualSetValue<DungeonClearSwimState&>
+{
+public:
+    DungeonClearSwimStateValue(PlayerbotAI* botAI)
+        : ManualSetValue<DungeonClearSwimState&>(botAI, data, "dungeon clear swim state")
+    {
+    }
+
+    void Reset() override { data.Reset(); }
+
+private:
+    DungeonClearSwimState data;
 };
 
 // Cursor into the cached long-path's flattened polyline plus the

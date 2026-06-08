@@ -40,6 +40,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/StridedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/SwimPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
 #include "Playerbots.h"
 
 namespace
@@ -834,6 +836,185 @@ namespace
         }
     }
 
+    // --- Submerged swim legs (Tier A) ------------------------------------
+    // 3D proximity at which the swim cursor treats a point as reached.
+    constexpr float DC_SWIM_POINT_REACHED = 3.0f;
+    // If the bot is farther than this from the current swim point, the leg is
+    // stale (teleport / knockback / leftover from a prior run) — drop it.
+    constexpr float DC_SWIM_OFFLEG_MAX = 50.0f;
+    // Abandon a swim leg that makes no closing progress for this long.
+    constexpr uint32 DC_SWIM_STUCK_MS = 6000;
+
+    // Begin a swim leg from the bot's current position to (bx,by,bz). Gated on
+    // SwimEnable, SwimMaxRange, and water actually lying between. Stores the leg
+    // in "dungeon clear swim state"; DriveActiveSwim issues the spline next tick.
+    // Returns true iff a leg was started.
+    bool TryBeginSwim(Player* bot, AiObjectContext* context,
+                      uint32 targetEntry, float bx, float by, float bz)
+    {
+        if (!bot || !DcSettings::GetBool(bot, "SwimEnable"))
+            return false;
+
+        G3D::Vector3 const start(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        G3D::Vector3 const goal(bx, by, bz);
+        if ((goal - start).length() > DcSettings::GetFloat(bot, "SwimMaxRange"))
+            return false;
+        if (!SwimPathfinder::WaterBetween(bot, start, goal))
+            return false;
+
+        SwimPathfinder::Result res = SwimPathfinder::Build(bot, start, goal);
+        if (!res.ok || res.points.empty())
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] swim build failed: {}", bot->GetName(), res.failureReason);
+            return false;
+        }
+
+        DungeonClearSwimState& swim =
+            context->GetValue<DungeonClearSwimState&>("dungeon clear swim state")->Get();
+        swim.Reset();
+        swim.active = true;
+        swim.points = std::move(res.points);
+        swim.cursor = 0;
+        swim.targetEntry = targetEntry;
+        swim.buildStart = start;
+        swim.lastProgressMs = getMSTime();
+        swim.lastDistToPoint = (swim.points.front() - start).length();
+
+        StopActiveSplineGlide(bot);  // drop any stale navmesh glide before swimming
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] swim leg started: {} pts toward ({:.1f},{:.1f},{:.1f})",
+                 bot->GetName(), swim.points.size(), bx, by, bz);
+        return true;
+    }
+
+    // Drive an in-progress swim leg. Returns true if a leg is active and owned
+    // the tick (caller must return true); false if no leg is active or the leg
+    // just completed (caller falls through to normal navmesh navigation).
+    bool DriveActiveSwim(Player* bot, PlayerbotAI* botAI, AiObjectContext* context,
+                         uint32 targetEntry, float bx, float by, float bz,
+                         float engageDist, float engageRange)
+    {
+        DungeonClearSwimState& swim =
+            context->GetValue<DungeonClearSwimState&>("dungeon clear swim state")->Get();
+        if (!swim.active)
+            return false;
+
+        // Target changed since the leg was built — invalidate.
+        if (swim.targetEntry != targetEntry)
+        {
+            swim.Reset();
+            return false;
+        }
+
+        // Arrived at the boss area — hand back to the engage/ladder logic.
+        if (engageDist <= engageRange)
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] swim leg complete (within engage range)", bot->GetName());
+            swim.Reset();
+            StopActiveSplineGlide(bot);
+            return false;
+        }
+
+        G3D::Vector3 const botPos(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+
+        // Advance the cursor past points already reached (3D proximity).
+        while (swim.cursor < swim.points.size() &&
+               (botPos - swim.points[swim.cursor]).length() <= DC_SWIM_POINT_REACHED)
+            ++swim.cursor;
+
+        // Consumed the whole leg but still short of engage range — hand back to
+        // the navmesh planner from here (the far mesh island may now reach the
+        // boss; if not, the dead-end logic re-evaluates and may re-swim).
+        if (swim.cursor >= swim.points.size())
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] swim leg consumed -> handing back to navmesh", bot->GetName());
+            swim.Reset();
+            StopActiveSplineGlide(bot);
+            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            return false;
+        }
+
+        float const distToPoint = (botPos - swim.points[swim.cursor]).length();
+
+        // Off-leg: bot is implausibly far from the current point (teleport,
+        // knockback, stale leg) — drop it and let navigation rebuild.
+        if (distToPoint > DC_SWIM_OFFLEG_MAX)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] swim leg abandoned: {:.0f}yd off the leg", bot->GetName(), distToPoint);
+            swim.Reset();
+            StopActiveSplineGlide(bot);
+            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            return false;
+        }
+
+        // Progress watchdog. posStuck can't see a non-moving bot, so track the
+        // closing distance to the current point ourselves.
+        uint32 const now = getMSTime();
+        if (distToPoint < swim.lastDistToPoint - 0.5f)
+        {
+            swim.lastDistToPoint = distToPoint;
+            swim.lastProgressMs = now;
+        }
+        else if (getMSTimeDiff(swim.lastProgressMs, now) > DC_SWIM_STUCK_MS)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] swim leg wedged (no progress {}ms) -> abandoning",
+                     bot->GetName(), getMSTimeDiff(swim.lastProgressMs, now));
+            swim.Reset();
+            StopActiveSplineGlide(bot);
+            StallDungeonClear(botAI,
+                "Tried to swim across but got stuck underwater. Use 'dc skip' to move on.");
+            return true;
+        }
+
+        // Leave a healthy in-flight escort glide alone (same re-issue discipline
+        // as the long-path drive — keying on splineRunning, not the LastMovement
+        // wait, so the next window chains seamlessly when the spline finalizes).
+        MotionMaster* mm = bot->GetMotionMaster();
+        bool const splineRunning =
+            mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
+        if (splineRunning)
+        {
+            SetPhase(context, "swimming");
+            ClearStall(context);
+            return true;
+        }
+
+        if (!mm)
+            return false;
+        if (bot->IsSitState())
+            bot->SetStandState(UNIT_STAND_STATE_STAND);
+        if (bot->IsNonMeleeSpellCast(true))
+        {
+            bot->CastStop();
+            botAI->InterruptSpell();
+        }
+
+        // Build the spline window from the cursor: [live pos, remaining swim
+        // points...] with SUBMERGED Z used verbatim (no UpdateAllowedPositionZ).
+        Movement::PointsArray points;
+        points.push_back(botPos);
+        for (size_t i = swim.cursor;
+             i < swim.points.size() && points.size() < DungeonPathFollower::MAX_SPLINE_WINDOW_POINTS;
+             ++i)
+            points.push_back(swim.points[i]);
+
+        if (points.size() < 2)
+        {
+            swim.Reset();
+            return false;
+        }
+
+        mm->MoveSplinePath(&points, FORCED_MOVEMENT_NONE);
+        SetPhase(context, "swimming");
+        ClearStall(context);
+        return true;
+    }
+
     // Drop a breadcrumb of the tank's current position onto the trail the advanced
     // pull walks back to place its camp (see DungeonClearBreadcrumbsValue). Called
     // each forward-advance tick; samples only every kSpacing yards of real
@@ -1310,6 +1491,18 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     st.engageRange = engageRange;
     st.atBoss = atBoss;
 
+    // An active submerged swim leg owns the tick outright: it drives a raw 3D
+    // escort spline through a tunnel the navmesh can't model (the floor under
+    // liquid is discarded at mmap-build time), so NONE of the navmesh-bound
+    // logic below must run while it is active. Crucially this runs BEFORE the
+    // phase ladder: mid-tunnel the boss is often unloaded, which would trip
+    // TryBossNotPresentStall and abort the swim. It self-clears on arrival
+    // (engage range), on consuming the leg, or on going stale, then falls
+    // through to normal navigation.
+    if (DriveActiveSwim(bot, botAI, context, next->entry, bossX, bossY, bossZ,
+                        engageDist, engageRange))
+        return true;
+
     // Phase ladder. Each step either handles the tick (and Execute returns the
     // carried bool) or falls through to the next. The counter-coupled tail
     // (stuck recovery / direct pursuit / long-path drive) stays inline below.
@@ -1558,6 +1751,18 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             }
         }
 
+        // No navmesh route at all. Before stalling, try a swim: the target may
+        // sit behind a submerged tunnel the navmesh can't span (only a surface
+        // sheet exists over deep water). Gated on water lying between, so a
+        // genuinely land-locked failure still falls through to the stall.
+        if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] no navmesh route to {} -> swimming", bot->GetName(), next->name);
+            SetPhase(context, "swimming");
+            return true;
+        }
+
         // The chunked builder couldn't produce any segment. Failure
         // reason is carried through from PathGenerator's path type
         // (NOPATH, FARFROMPOLY_START, etc.). The stalled-fallback action
@@ -1668,6 +1873,20 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         }
 
         doneNotEngagedTicks = 0;
+
+        // Last resort before stalling: if the dead-end is a water gate (a
+        // submerged tunnel the surface-sheet navmesh can't descend into), swim
+        // the rest of the way in 3D. Gated on water lying between, so a real
+        // ledge / gap dead-end still stalls as before.
+        if (TryBeginSwim(bot, context, next->entry, bossX, bossY, bossZ))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] route dead-ends short of {} -> swimming the rest",
+                     bot->GetName(), next->name);
+            SetPhase(context, "swimming");
+            return true;
+        }
+
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] {} unreachable: route dead-ends {:.0f}yd short after {} approach "
                  "attempts -> stalling",

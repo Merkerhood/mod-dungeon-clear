@@ -137,6 +137,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "WaterPathCost",         DcType::Float,  3,   1,  50,  false },
     { "MagmaPathCost",         DcType::Float, 20,   1, 1000, false },
 
+    // Submerged swim legs (Tier A). When the navmesh route to a target dead-ends
+    // AND water lies between, the bot greedily 3D-swims to it instead of stalling
+    // (the navmesh has no mesh under liquid — only a surface sheet — so a
+    // submerged tunnel is otherwise unreachable). SwimMaxRange bounds how far a
+    // dead-end target may be before a swim is attempted (caps the greedy search
+    // and avoids trying to swim to something genuinely out of reach).
+    { "SwimEnable",            DcType::Bool,   1,   0,    1,  false },
+    { "SwimMaxRange",          DcType::Float, 250, 30, 1000,  false },
+
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },

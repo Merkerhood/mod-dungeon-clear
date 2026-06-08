@@ -327,6 +327,33 @@ DungeonClear.WaterPathCost = 3.0
 DungeonClear.MagmaPathCost = 20.0
 
 #
+#    DungeonClear.SwimEnable
+#        Enable submerged swim legs. The navmesh keeps only a flat water-surface
+#        sheet over deep water (the floor under liquid is discarded at mmap-build
+#        time), so a submerged tunnel — e.g. the Blackfathom Deeps passage to Lady
+#        Sarevess — is unreachable by normal pathing and the run would stall.
+#        With this on, when the route dead-ends and water lies between the bot and
+#        the target, the bot greedily 3D-swims to it (VMAP-collision navigation,
+#        no map-specific data). 0 disables and restores the old "stall" behavior.
+#
+#        Default: 1 (enabled)
+#
+
+DungeonClear.SwimEnable = 1
+
+#
+#    DungeonClear.SwimMaxRange
+#        Max distance (yards) from the dead-end to the target for a swim to be
+#        attempted. Bounds the greedy search and avoids trying to swim to a
+#        target that is genuinely out of reach. Sized to comfortably cover known
+#        underwater tunnels.
+#
+#        Default: 250.0
+#
+
+DungeonClear.SwimMaxRange = 250.0
+
+#
 #    DungeonClear.PullSafetyHpPct
 #        Camp-safety valve for advanced pull mode (`dc pull`). While a pull is in
 #        progress the DPS and healer wait passive at the camp, so they can't
