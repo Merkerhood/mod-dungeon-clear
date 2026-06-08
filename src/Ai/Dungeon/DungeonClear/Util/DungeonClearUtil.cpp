@@ -39,6 +39,7 @@
 #include "InstanceScript.h"
 #include "LootObjectStack.h"
 #include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Pet.h"
@@ -1192,35 +1193,46 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     if (std::find(hostiles.begin(), hostiles.end(), target) == hostiles.end())
         hostiles.push_back(target);
 
-    // Whether a NEIGHBOUR mob can chain into the pull is decided by navmesh
-    // CONNECTIVITY, not line of sight. LOS is the wrong tool: a pack just around a
-    // corner is fully a chaining threat (the tank walks into it as it closes, links
-    // and patrols drag it in) yet a wall transiently blocks LOS during the approach
-    // — and that blind spot is exactly what made Dynamic resolve to Advanced too
-    // late, only once the tank had rounded the corner near commit range. Instead we
-    // ask, with no sight required: is this neighbour in the SAME walkable space as
-    // the pack — a short navmesh path away, perhaps bending around a corner — or
-    // separated by geometry (a solid wall / sealed room: near in plan view but a
-    // long way round on foot)? A complete PATHFIND_NORMAL route no longer than a
-    // corner-slack budget answers it. The closed-door gate still stands on top: the
-    // static navmesh pathes straight THROUGH a shut door, so geometry alone misses
-    // it.
+    // Whether a NEIGHBOUR mob counts toward the aggro estimate is gated three
+    // ways, all measured PACK->neighbour (target as origin) so the verdict is a
+    // stable property of the room, independent of where the tank is standing:
+    //
+    //   1. Line of sight (static VMAP). A Leeroy fight is STATIONARY at the camp,
+    //      so a mob proximity-aggros only if it can actually SEE the party there —
+    //      a pillar or wall between the camp and the mob means it never pulls.
+    //      Scarlet Cathedral is the textbook case: its nave is full of pillars, so
+    //      pairs 12-17yd apart (well inside aggro reach) do NOT chain because the
+    //      pillars block sight; gating on LOS keeps those a 2-mob Leeroy instead of
+    //      counting six through the stone. (This is the opposite choice from the old
+    //      pack-adjacency model, which deliberately ignored LOS because it asked a
+    //      different question — "will this pack drag in as the MOVING tank rounds the
+    //      corner". The estimate asks "who aggros a fight that stays put", and for
+    //      that, sight is exactly the right test.)
+    //   2. No closed door between (VMAP LOS treats an open door's frame as clear and
+    //      a shut door is a game object, not static geometry, so doors need their
+    //      own test).
+    //   3. Navmesh connectivity: a complete PATHFIND_NORMAL route within a
+    //      corner-slack budget, so a mob that is visible across an unwalkable gap
+    //      (a chasm, a ledge) and could never join the melee does not count.
+    //
+    // Formation/linked packmates bypass this gate entirely — they pull atomically
+    // by packId (seed + closure), so a formation member behind a pillar still
+    // counts. The gate only decides whether an UNRELATED neighbour aggros.
     //
     // Cost is bounded: every candidate was already gathered within searchRadius of
-    // the target, and the path query runs only for those not door-blocked — in
-    // practice a handful of mobs, often none. The path budget allows corner slack
-    // over the straight-line gather radius so a mob reachable around a bend still
-    // reads as same-space.
+    // the target; the LOS ray and (only if it passes) the path query run for a
+    // handful of mobs, often none.
     float const chainPathBudget = searchRadius * 1.5f;
     auto chainConnected = [&](Unit* u) -> bool
     {
         if (target->GetExactDist2d(u) > searchRadius)
             return false;
-        // Door test runs PACK->neighbour (target as origin), not bot->neighbour, so a
-        // door is "between" the two PACKS regardless of where the tank is standing.
-        // Using the bot here was the other half of the bot-position dependence: the
-        // bot->neighbour chord clips a different set of doors as the tank rounds a
-        // corner, which flipped the verdict mid-approach.
+        // Static-geometry sight: pillars/walls block proximity aggro. VMAP-only
+        // (LINEOFSIGHT_CHECK_VMAP) so an open door doesn't read as blocking and so
+        // doors are left to the dedicated test below.
+        if (!target->IsWithinLOSInMap(u, VMAP::ModelIgnoreFlags::Nothing,
+                                      LINEOFSIGHT_CHECK_VMAP))
+            return false;
         if (ClosedDoorBetween(target, u->GetPositionX(), u->GetPositionY(),
                               u->GetPositionZ()))
             return false;
