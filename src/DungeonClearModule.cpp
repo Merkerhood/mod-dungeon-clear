@@ -211,7 +211,7 @@ public:
         // Internally throttled; a cheap no-op when no tank is clearing. Runs on
         // the global tick (not a per-bot one) so it keeps firing through boss
         // fights, when the bot's non-combat strategy engine is dormant.
-        DungeonClearUtil::TickStatusPushes(diff);
+        DcStatusPublisher::TickStatusPushes(diff);
     }
 };
 

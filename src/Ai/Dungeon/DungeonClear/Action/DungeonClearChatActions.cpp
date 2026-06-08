@@ -250,7 +250,7 @@ bool DcOnAction::Execute(Event event)
     // begins emitting STATUS packets on state transitions (replacing the
     // addon's old 2s poll). The matching UnmarkActiveTank lives in every
     // disable path: dc off, skip-to-empty, and DisableDungeonClear.
-    DungeonClearUtil::MarkActiveTank(bot->GetGUID());
+    DcStatusPublisher::MarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
@@ -289,7 +289,7 @@ bool DcOnAction::Execute(Event event)
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
-    DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tDungeon clear enabled. Heading to " + target + ".");
+    DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tDungeon clear enabled. Heading to " + target + ".");
 
     // Trigger instant status addon message update
     botAI->DoSpecificAction("dc status", event, true);
@@ -314,7 +314,7 @@ bool DcOffAction::Execute(Event event)
         return true;
 
     context->GetValue<bool>("dungeon clear enabled")->Set(false);
-    DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
+    DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
@@ -347,7 +347,7 @@ bool DcOffAction::Execute(Event event)
     // auto-disable paths (death / all-cleared), which only flip the flag too.
     // It stays resident on every bot via the login script regardless.
 
-    DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tDungeon clear disabled.");
+    DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tDungeon clear disabled.");
 
     // Trigger instant status addon message update
     botAI->DoSpecificAction("dc status", event, true);
@@ -406,13 +406,13 @@ bool DcSkipAction::Execute(Event event)
 
     if (after.has_value())
     {
-        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tSkipped " + current->name + ". Heading to " + after->name + ".");
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tSkipped " + current->name + ". Heading to " + after->name + ".");
     }
     else
     {
-        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tSkipped " + current->name + ". No bosses left \xe2\x80\x94 disabling.");
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tSkipped " + current->name + ". No bosses left \xe2\x80\x94 disabling.");
         context->GetValue<bool>("dungeon clear enabled")->Set(false);
-        DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
+        DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
     }
 
     // Trigger instant status addon message update
@@ -445,7 +445,7 @@ bool DcStatusAction::Execute(Event event)
             << ". Skipped: " << skipped.size() << ".";
         if (!stall.empty())
             msg << " Stalled: " << stall;
-        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + msg.str());
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + msg.str());
     }
 
     // The STATUS payload itself is built by the shared helper so the on-demand
@@ -453,7 +453,7 @@ bool DcStatusAction::Execute(Event event)
     // byte-identical strings and can never drift. PushStatus also refreshes the
     // detector's "last pushed" snapshot for this tank, so an explicit `dc
     // status` won't trigger a redundant push on the following tick.
-    DungeonClearUtil::PushStatus(botAI);
+    DcStatusPublisher::PushStatus(botAI);
     return true;
 }
 
@@ -470,13 +470,13 @@ bool DcBossesAction::Execute(Event event)
     std::string const param = event.getParam();
     bool const silent = (param == "addon" || param == "silent");
 
-    DungeonClearUtil::SendAddonMessage(botAI, "BOSS_START");
+    DcStatusPublisher::SendAddonMessage(botAI, "BOSS_START");
 
     if (bosses.empty())
     {
         if (!silent)
-            DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tNo bosses found for this map.");
-        DungeonClearUtil::SendAddonMessage(botAI, "BOSS_END");
+            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tNo bosses found for this map.");
+        DcStatusPublisher::SendAddonMessage(botAI, "BOSS_END");
         return true;
     }
 
@@ -546,7 +546,7 @@ bool DcBossesAction::Execute(Event event)
                  << static_cast<int>(info.z) << "\t"
                  << wing;
 
-        DungeonClearUtil::SendAddonMessage(botAI, addonMsg.str());
+        DcStatusPublisher::SendAddonMessage(botAI, addonMsg.str());
 
         if (!silent)
         {
@@ -558,11 +558,11 @@ bool DcBossesAction::Execute(Event event)
                  << static_cast<int>(info.y) << ", "
                  << static_cast<int>(info.z) << ") [" << statusStr << "]";
 
-            DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + line.str());
+            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + line.str());
         }
     }
 
-    DungeonClearUtil::SendAddonMessage(botAI, "BOSS_END");
+    DcStatusPublisher::SendAddonMessage(botAI, "BOSS_END");
     return true;
 }
 
@@ -690,7 +690,7 @@ bool DcGoAction::Execute(Event event)
     // (see HaltAllMovement) so the tank doesn't coast down the old path first.
     HaltAllMovement(bot);
 
-    DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tTargeting boss: " + matched->name + ". Navigating...");
+    DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tTargeting boss: " + matched->name + ". Navigating...");
 
     botAI->DoSpecificAction("dc status", event, true);
     return true;
@@ -742,7 +742,7 @@ bool DcPauseAction::Execute(Event event)
         if (bot && !bot->IsInCombat())
             HaltAllMovement(bot);
 
-        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tDungeon clear paused.");
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tDungeon clear paused.");
         botAI->DoSpecificAction("dc status", event, true);
         return true;
     }
@@ -761,7 +761,7 @@ bool DcPauseAction::Execute(Event event)
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
-    DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tResumed. Heading to " + target + ".");
+    DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tResumed. Heading to " + target + ".");
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }
@@ -785,7 +785,7 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
     std::string const target = next.has_value() ? next->name : "the next boss";
-    DungeonClearUtil::SendAddonMessage(
+    DcStatusPublisher::SendAddonMessage(
         botAI, "CHAT\tDoor opened \xe2\x80\x94 resuming. Heading to " + target + ".");
     botAI->DoSpecificAction("dc status", event, true);
     return true;
@@ -853,7 +853,7 @@ bool DcPullAction::Execute(Event event)
         chat += std::string("set to dynamic (auto-deciding Leeroy vs pull per pack)") + when + ".";
     else
         chat += std::string("disabled") + when + ".";
-    DungeonClearUtil::SendAddonMessage(botAI, chat);
+    DcStatusPublisher::SendAddonMessage(botAI, chat);
     botAI->DoSpecificAction("dc status", event, true);
     return true;
 }

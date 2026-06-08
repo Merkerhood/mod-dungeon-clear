@@ -340,7 +340,7 @@ namespace
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         ctx->GetValue<bool>("dungeon clear enabled")->Set(false);
         if (Player* bot = botAI->GetBot())
-            DungeonClearUtil::UnmarkActiveTank(bot->GetGUID());
+            DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
         ctx->GetValue<bool>("dungeon clear paused")->Set(false);
         ctx->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
         ctx->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
@@ -368,7 +368,7 @@ namespace
         // One reset clears the whole advanced-pull FSM (phase / dwell timer / camp /
         // breadcrumb trail / abort + tag latches / Dynamic verdict) in lockstep.
         ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().Reset();
-        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
         botAI->DoSpecificAction("dc status", Event(), true);
     }
 
@@ -385,7 +385,7 @@ namespace
         if (lastSaid != reason)
         {
             lastSaid = reason;
-            DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + reason);
+            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
             botAI->DoSpecificAction("dc status", Event(), true);
         }
     }
@@ -1600,7 +1600,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             rebuildAttempts = 0;
             if (DC_ALLOW_RECOVERY_MOVES && TryFarFromPolyRecovery(bot))
             {
-                DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tRepathing around " + next->name + " \xe2\x80\x94 nudging onto the navmesh.");
+                DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tRepathing around " + next->name + " \xe2\x80\x94 nudging onto the navmesh.");
                 return true;
             }
             StallDungeonClear(botAI,
@@ -2351,7 +2351,7 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     if (lastAnnounced != target->GetGUID())
     {
         context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(target->GetGUID());
-        DungeonClearUtil::SendAddonMessage(botAI, "CHAT\tClearing path \xe2\x80\x94 pulling " + std::string(target->GetName()) + ".");
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tClearing path \xe2\x80\x94 pulling " + std::string(target->GetName()) + ".");
     }
 
     // Don't clear the stall reason here — only a successful Advance does that.
@@ -2469,7 +2469,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] door-blocked: can't open {} -> auto-pausing",
                      bot->GetName(), door ? door->GetGUID().ToString() : "(none)");
-            DungeonClearUtil::SendAddonMessage(botAI, "CHAT\t" + pauseReason);
+            DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + pauseReason);
             botAI->DoSpecificAction("dc status", event, true);
         }
         return true;
