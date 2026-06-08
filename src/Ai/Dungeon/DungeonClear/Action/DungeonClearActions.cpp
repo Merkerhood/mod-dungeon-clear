@@ -2966,25 +2966,59 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             Creature* const trashCreature = trash->ToCreature();
             float const toTag = bot->GetExactDist(trash);
 
-            // Distance at which the pack pulls on its own: the core's notice range
-            // plus both reaches. Stop ~2yd inside it so we reliably cross the aggro
-            // threshold but go no deeper. Floored at melee reach for the high-level
-            // case where a low mob barely notices and we must close to body contact.
+            // Distance at which the tank must stop to reliably tag. The core only
+            // re-checks a pack's aggro on MOVEMENT (Creature::MoveInLineOfSight,
+            // driven by relocation notifiers), and its notice test is the plain
+            // CENTER-TO-CENTER distance vs Creature::GetAggroRange (CanStartAttack ->
+            // IsWithinDistInMap with BOTH bounding radii excluded). So the tank has
+            // to GLIDE to a point strictly INSIDE GetAggroRange — the moving approach
+            // is what crosses the threshold and trips the notice. Stop ~2yd inside.
+            //
+            // The OLD formula ADDED both combat reaches to GetAggroRange, parking the
+            // tank ~2yd OUTSIDE the real aggro bubble. Stationary there, no relocation
+            // re-fired MoveInLineOfSight, the pack never noticed it, and the leg
+            // watchdog timed out — the reported "advanced pull tag timed out" hang.
+            float meleeReach = 0.0f;
             float tagStop = 0.0f;
+            bool forceTag = false;   // close to body contact and actively swing
             if (trashCreature)
             {
-                float const meleeReach =
-                    bot->GetCombatReach() + trash->GetCombatReach() + 1.0f;
-                tagStop = trashCreature->GetAggroRange(bot)
-                        + trashCreature->GetCombatReach()
-                        + bot->GetCombatReach() - 2.0f;
-                if (tagStop < meleeReach)
+                meleeReach = bot->GetCombatReach() + trash->GetCombatReach() + 1.0f;
+                tagStop = trashCreature->GetAggroRange(bot) - 2.0f;
+                // Creep the stop point inward the longer we go without aggro. A tank
+                // parked exactly at the edge is never re-evaluated (no relocation ->
+                // no MoveInLineOfSight), so stepping a little closer each tick is what
+                // ultimately trips the notice. Ramps to body contact within ~2s, well
+                // inside the leg watchdog, so a borderline stop can't hang the pull.
+                uint32 const advancingMs = now - since;
+                if (advancingMs > 1500)
+                    tagStop -= ((advancingMs - 1500) / 1000.0f) * 3.0f;
+                // Floor at body contact. If the pack's aggro is at/below melee (a
+                // much-higher-level tank vs the core's 5yd minimum aggro), closing to
+                // the edge can't cross it — go to contact and actively tag instead.
+                if (tagStop <= meleeReach)
+                {
                     tagStop = meleeReach;
+                    forceTag = true;
+                }
             }
 
             if (trashCreature && toTag <= tagStop)
             {
-                // At the aggro edge — hold and let the pack notice us / flip the
+                if (forceTag && !bot->IsInCombat())
+                {
+                    // Pack too high-level to ever notice us on its own: force the tag
+                    // with a melee swing so combat starts and the maneuver drag-back
+                    // (combat engine) takes over.
+                    bot->SetSelection(trash->GetGUID());
+                    if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, trash))
+                        ServerFacade::instance().SetFacingTo(bot, trash);
+                    bot->Attack(trash, true);
+                    DC_PULL_TRACE("[DC:{}] pull advancing: force body-tag ({:.1f}yd)",
+                                  bot->GetName(), toTag);
+                    return true;
+                }
+                // Inside the aggro bubble — hold and let the pack close / flip the
                 // engine to the maneuver drag-back. The leg timeout above is the
                 // backstop if nothing aggros (resisted / non-hostile).
                 if (bot->isMoving())
