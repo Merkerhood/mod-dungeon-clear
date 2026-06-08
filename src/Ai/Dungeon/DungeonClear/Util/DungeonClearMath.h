@@ -20,19 +20,31 @@ namespace DungeonClearMath
     // the mob's world height so clustering and chaining can reject mobs on another
     // floor (a ledge/ramp directly above or below) instead of merging them in by
     // plan-view distance alone — see `zTolerance` on ClassifyDynamicPull.
+    //
+    // `packId` is an OPTIONAL engine-pack identity (0 = none) the caller resolves
+    // from what actually pulls together: a creature formation group, or a
+    // creature_linked_respawn link (see DungeonClearUtil::ClassifyPullAdvanced).
+    // Mobs sharing a non-zero `packId` are members of the SAME pack regardless of
+    // spacing or height, so a strung-out formation clusters as one unit instead of
+    // reading as several lone mobs. Geometry (`packRadius` + same-level) remains
+    // the fallback for the common trash that carries no engine pack data (packId
+    // 0), so behaviour there is unchanged.
     struct DynPullMob
     {
-        float x;
-        float y;
-        float z;
-        bool  chainEligible;
+        float         x;
+        float         y;
+        float         z;
+        bool          chainEligible;
+        std::uint32_t packId = 0;
     };
 
     // Pure Dynamic-pull decision: should the pull on `mobs[targetIdx]` use the
     // careful Advanced pull-to-camp (return true) or a Leeroy (return false)?
     //   - Groups mobs into packs via connected components at `packRadius` (2D
     //     distance AND within `zTolerance` height — mobs on another floor never
-    //     merge into the same pack).
+    //     merge into the same pack) OR a shared non-zero `packId` (an engine
+    //     formation/link unions regardless of distance and height, so a spread
+    //     formation is one pack).
     //   - A single ISOLATED pack larger than `largePackThreshold` => Advanced.
     //   - Otherwise Advanced iff some OTHER pack has a `chainEligible` mob within
     //     `chainRadius` (2D) and `zTolerance` (height) of a target-pack mob; else

@@ -536,7 +536,7 @@ namespace
         // waits for the party to REST (HP/mana) before scouting on, and the pull
         // itself is gated separately (pull trigger + Forming party-set gate).
         if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
-            if (botAI->GetAiObjectContext()->GetValue<bool>("dungeon clear pull mode")->Get())
+            if (botAI->GetAiObjectContext()->GetValue<bool>("dungeon clear pull mode current")->Get())
                 maxSpread = 100000.0f;
         return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
                                               DungeonClearUtil::RestMinMpPct(bot), maxSpread);
@@ -1192,7 +1192,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // tank scouts ahead alone. Make sure a camp always exists for them to hold at:
     // seed it at our current spot whenever it's unset (pull mode just toggled on,
     // or a reset cleared it). Real pulls overwrite it with the computed safe camp.
-    if (AI_VALUE(bool, "dungeon clear pull mode"))
+    if (AI_VALUE(bool, "dungeon clear pull mode current"))
     {
         Position& camp = context->GetValue<Position&>("dungeon clear camp position")->Get();
         bool const campUnset =

@@ -32,7 +32,11 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         return std::fabs(mobs[a].z - mobs[b].z) <= zTolerance;
     };
 
-    // Union-Find connected components at packRadius (2D) AND on the same level.
+    // Union-Find connected components. Two mobs join the same pack when either:
+    //   - they are within packRadius (2D) AND on the same level (geometry), or
+    //   - they share a non-zero packId (an engine formation/link unites them as
+    //     one unit regardless of spacing or height — a strung-out formation reads
+    //     as one pack, not several lone mobs).
     // n is tiny, so O(n^2) is fine.
     std::vector<std::size_t> parent(n);
     for (std::size_t i = 0; i < n; ++i)
@@ -46,9 +50,13 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         }
         return a;
     };
+    auto samePack = [&](std::size_t a, std::size_t b)
+    {
+        return mobs[a].packId != 0 && mobs[a].packId == mobs[b].packId;
+    };
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = i + 1; j < n; ++j)
-            if (dist2d(i, j) <= packRadius && sameLevel(i, j))
+            if ((dist2d(i, j) <= packRadius && sameLevel(i, j)) || samePack(i, j))
                 parent[find(i)] = find(j);
 
     std::size_t const targetRoot = find(targetIdx);

@@ -222,3 +222,60 @@ TEST(DungeonClearDynamicPullTest, OverheadMobDoesNotInflatePack)
     };
     EXPECT_FALSE(Classify(mobs, 0));
 }
+
+// Engine pack: a strung-out FORMATION (shared packId, each member > packRadius
+// from the next so pure geometry would read them as 6 lone mobs) unions into one
+// pack. Six members > threshold -> Advanced via the size override. The same six
+// with packId 0 would each be a lone pack and the target a single mob -> Leeroy,
+// so this proves the formation id is what clusters them.
+TEST(DungeonClearDynamicPullTest, SpreadFormationClustersAdvanced)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f,  0.0f, 0.0f, false, 7u}, {20.0f, 0.0f, 0.0f, false, 7u},
+        {40.0f, 0.0f, 0.0f, false, 7u}, {60.0f, 0.0f, 0.0f, false, 7u},
+        {80.0f, 0.0f, 0.0f, false, 7u}, {100.0f, 0.0f, 0.0f, false, 7u}
+    };
+    EXPECT_TRUE(Classify(mobs, 0));
+}
+
+// Engine pack: a SMALL strung-out formation (3 members, shared packId) with no
+// neighbour clusters to size 3 — below the threshold — so it stays Leeroy. The
+// formation id clusters them but does not spuriously force the careful pull.
+TEST(DungeonClearDynamicPullTest, SmallSpreadFormationLeeroy)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 7u}, {20.0f, 0.0f, 0.0f, false, 7u},
+        {40.0f, 0.0f, 0.0f, false, 7u}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}
+
+// Engine pack: a shared packId unions members regardless of HEIGHT — a formation
+// is one unit even if a member sits on a ledge. Five on the floor (at threshold)
+// + one overhead but SHARING the formation id -> pack of 6 > threshold ->
+// Advanced. Contrast with OverheadMobDoesNotInflatePack, where the overhead mob
+// has packId 0 and the z-gate correctly keeps it out.
+TEST(DungeonClearDynamicPullTest, FormationIdUnionsAcrossFloors)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f, 0.0f, 0.0f, false, 3u}, {2.0f, 0.0f, 0.0f, false, 3u},
+        {4.0f, 0.0f, 0.0f, false, 3u}, {0.0f, 2.0f, 0.0f, false, 3u},
+        {2.0f, 2.0f, 0.0f, false, 3u},
+        {2.0f, 1.0f, 20.0f, false, 3u}  // overhead but same formation -> still in pack
+    };
+    EXPECT_TRUE(Classify(mobs, 0));
+}
+
+// Engine pack: DISTINCT packIds do NOT union. Two separate 3-mob formations
+// (ids 1 and 2) standing apart, neither chain-eligible -> each its own pack of 3,
+// below threshold -> Leeroy. A non-zero id only unions mobs that SHARE it.
+TEST(DungeonClearDynamicPullTest, DistinctFormationIdsDoNotUnion)
+{
+    std::vector<DynPullMob> mobs = {
+        {0.0f,  0.0f, 0.0f, false, 1u}, {20.0f, 0.0f, 0.0f, false, 1u},
+        {40.0f, 0.0f, 0.0f, false, 1u},
+        {0.0f, 50.0f, 0.0f, false, 2u}, {20.0f, 50.0f, 0.0f, false, 2u},
+        {40.0f, 50.0f, 0.0f, false, 2u}
+    };
+    EXPECT_FALSE(Classify(mobs, 0));
+}

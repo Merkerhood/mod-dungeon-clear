@@ -18,6 +18,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -26,6 +27,7 @@
 #include "CellImpl.h"
 #include "Config.h"
 #include "Creature.h"
+#include "CreatureGroups.h"
 #include "GameObject.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
@@ -1217,12 +1219,69 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         return len <= chainPathBudget;
     };
 
-    // Resolve game state (positions + the per-mob connectivity/door gate) here, then
-    // hand the pure clustering/threshold decision to DungeonClearMath::ClassifyDynamic-
-    // Pull (unit-tested). The gate uses the target itself as the pack's stand-in:
-    // packmates sit within a pack radius of it, so connectivity to the target ~=
-    // connectivity to the pack, and it keeps eligibility precomputable before
-    // clustering.
+    // Engine-pack identity: tag each hostile with a small `packId` (0 = none)
+    // derived from what the engine says actually pulls together, so the pure
+    // classifier can cluster a strung-out formation as one pack and size it up
+    // correctly instead of seeing several lone mobs. Pure geometry both over- and
+    // under-clusters; the engine knows the truth.
+    //   - Creature formations (GetFormation()->GetId()): mobs that move and aggro
+    //     as a unit. The formation group id is already unique and stable, so
+    //     formation-mates share it directly with no extra bookkeeping.
+    //   - creature_linked_respawn links: a spawn/respawn dependency that in
+    //     practice also marks "spawned and pulled together". Used only as a
+    //     SECONDARY signal — it unions two ends ONLY when neither already belongs
+    //     to a formation pack, so a respawn link can never merge or split a real
+    //     formation. Most trash has neither and stays packId 0 (geometry-only).
+    std::vector<uint32> packIds(hostiles.size(), 0u);
+    std::unordered_map<uint32, uint32> formationToPack;  // formation group id -> packId
+    uint32 nextPackId = 1;
+    std::unordered_map<ObjectGuid, std::size_t> idxByGuid;
+    for (std::size_t i = 0; i < hostiles.size(); ++i)
+        idxByGuid[hostiles[i]->GetGUID()] = i;
+    // Stage 1: formations (authoritative).
+    for (std::size_t i = 0; i < hostiles.size(); ++i)
+    {
+        Creature* c = hostiles[i]->ToCreature();
+        if (!c)
+            continue;
+        CreatureGroup const* grp = c->GetFormation();
+        if (!grp)
+            continue;
+        uint32 const gid = grp->GetId();
+        auto const it = formationToPack.find(gid);
+        packIds[i] = (it != formationToPack.end()) ? it->second
+                                                   : (formationToPack[gid] = nextPackId++);
+    }
+    // Stage 2: linked respawn (secondary). Only bridges two candidates when at
+    // least one carries no formation pack yet, and never overwrites an existing
+    // formation pack — formations stay authoritative.
+    for (std::size_t i = 0; i < hostiles.size(); ++i)
+    {
+        Creature* c = hostiles[i]->ToCreature();
+        if (!c)
+            continue;
+        ObjectGuid const linked = sObjectMgr->GetLinkedRespawnGuid(c->GetGUID());
+        if (!linked)
+            continue;
+        auto const jt = idxByGuid.find(linked);
+        if (jt == idxByGuid.end())
+            continue;
+        std::size_t const j = jt->second;
+        if (packIds[i] && packIds[j])
+            continue;  // both already (formation-)packed — leave them be
+        uint32 const pid = packIds[i] ? packIds[i]
+                         : packIds[j] ? packIds[j]
+                                      : nextPackId++;
+        packIds[i] = pid;
+        packIds[j] = pid;
+    }
+
+    // Resolve game state (positions, the per-mob connectivity/door gate, and the
+    // engine pack id) here, then hand the pure clustering/threshold decision to
+    // DungeonClearMath::ClassifyDynamicPull (unit-tested). The gate uses the target
+    // itself as the pack's stand-in: packmates sit within a pack radius of it, so
+    // connectivity to the target ~= connectivity to the pack, and it keeps
+    // eligibility precomputable before clustering.
     std::vector<DungeonClearMath::DynPullMob> mobs;
     mobs.reserve(hostiles.size());
     std::size_t targetIdx = 0;
@@ -1233,7 +1292,7 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
             targetIdx = i;
         bool const chainEligible = u != target && chainConnected(u);
         mobs.push_back({u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(),
-                        chainEligible});
+                        chainEligible, packIds[i]});
     }
 
     // DC_Z_LEVEL_TOLERANCE: a mob more than this far above/below is on another
@@ -1624,7 +1683,16 @@ bool DungeonClearUtil::IsPartySetAtCamp(Player* leader, Position const& camp, fl
             continue;  // real player — never gate the pull on them
         if (member->GetExactDist2d(&camp) > setRadius)
             return false;
-        if (!memberAI->HasStrategy("passive", BOT_STATE_COMBAT))
+        // Healers are deliberately never held passive (ApplyFollowerPassive
+        // exempts them so they can heal the tank through the drag-back), so
+        // requiring the passive strategy from them here would wait out the full
+        // Forming timeout on EVERY pull with a healer in the group — the gate
+        // would block on a flag the camp-hold code is designed never to set.
+        // Mirror that exemption: a healer counts as "set" on position alone;
+        // every other member must also carry the passive strategy (parked AND
+        // holding fire) before the party is ready to tag.
+        if (!PlayerbotAI::IsHeal(member) &&
+            !memberAI->HasStrategy("passive", BOT_STATE_COMBAT))
             return false;
     }
     return true;

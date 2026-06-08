@@ -24,4 +24,6 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Util/DungeonClearGeometry.{h,cpp} (shared LOS/distance primitives),
 # Settings/DcSettingsRegistry.h + Settings/DcSettings.{h,cpp}
 #   (per-run settings registry + override accessor)
+# Value/DungeonClearPullModeCurrentValue.{h,cpp}
+#   (order-independent live pull-mode / Dynamic-verdict accessor)
 # (this comment bumps mtime to force CMake re-glob on next build)

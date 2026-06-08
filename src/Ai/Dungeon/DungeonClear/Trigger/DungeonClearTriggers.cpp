@@ -92,7 +92,7 @@ namespace
         // party-set gate ensures the party is actually at the (new) camp before the
         // tag, and the rest (HP/mana) check below still holds the pull until the
         // party has recovered at camp.
-        if (AI_VALUE(bool, "dungeon clear pull mode"))
+        if (AI_VALUE(bool, "dungeon clear pull mode current"))
             maxSpread = 100000.0f;
         return DungeonClearUtil::IsPartyReady(bot, DungeonClearUtil::RestMinHpPct(bot),
                                               DungeonClearUtil::RestMinMpPct(bot), maxSpread);
@@ -278,7 +278,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
     // pull for any pack in the 20-35yd band the pull is deliberately waiting to
     // close). The one exception is a pack a prior pull gave up on (abort target):
     // fall through to the normal walk-in so the run never livelocks on it.
-    if (AI_VALUE(bool, "dungeon clear pull mode") &&
+    if (AI_VALUE(bool, "dungeon clear pull mode current") &&
         trash->GetGUID() != AI_VALUE(ObjectGuid, "dungeon clear pull abort target"))
     {
         DC_PULL_DEBUG("[DC:{}] blocking-trash: pull mode owns pack {} ({:.1f}yd) -> "
@@ -484,15 +484,14 @@ bool DungeonClearPullTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
-    // Dynamic mode (pull setting == 2): size up the next pack and drive the
-    // `dungeon clear pull mode` bool to Leeroy or Advanced for THIS tick. Run here
-    // because the engine evaluates every trigger's IsActive() up front in
-    // registration order, and this pull trigger is registered before the engage
-    // triggers — so the bool is current when they (and the multiplier) read it.
+    // `dungeon clear pull mode current` refreshes the Dynamic (pull setting == 2)
+    // Leeroy/Advanced verdict for THIS tick and returns the behavioural pull-mode
+    // bool. Reading it here (instead of mutating the bool as a side effect of this
+    // IsActive() and hoping later readers run after us) keeps the verdict
+    // order-independent: every reader — the engage/blocking-trash triggers and the
+    // camp gates — consults the same value, so whichever runs first updates it.
     // No-op for Off/On, where DcPullAction owns the bool.
-    DungeonClearUtil::UpdateDynamicPullMode(botAI, context);
-
-    if (!AI_VALUE(bool, "dungeon clear pull mode"))
+    if (!AI_VALUE(bool, "dungeon clear pull mode current"))
         return false;
 
     uint32 const phase = AI_VALUE(uint32, "dungeon clear pull phase");
