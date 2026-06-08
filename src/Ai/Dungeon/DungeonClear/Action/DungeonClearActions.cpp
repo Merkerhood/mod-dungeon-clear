@@ -33,6 +33,7 @@
 #include "SharedDefines.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -398,6 +399,26 @@ namespace
     void SetPhase(AiObjectContext* ctx, std::string const& phase)
     {
         ctx->GetValue<std::string&>("dungeon clear phase")->Get() = phase;
+    }
+
+    // A DungeonClearApproach::Observation pre-loaded with this TU's DC_* thresholds
+    // and an all-inactive state (the struct's defaults: posStuck 0, !canPursue,
+    // pathReachable, !hopDone, ... -> DecideApproach returns the terminal
+    // MoveToFallback). The tail phases that own a regression-prone THRESHOLD
+    // decision (the posStuck tick limit, the pursuit-fail latch, the dead-end
+    // escalation budget) fill in just their own state fields and consult
+    // DecideApproach, so those thresholds live in one engine-free, gtested place
+    // instead of inline `>=`/`<` comparisons that could drift from the spec. The
+    // plain-boolean rungs (jump / glide / off-line / window / unreachable /
+    // off-path) keep their flags inline — there is no threshold for the pure
+    // function to own there.
+    DungeonClearApproach::Observation MakeApproachObs()
+    {
+        DungeonClearApproach::Observation o;
+        o.stuckTickLimit      = DC_STUCK_TICK_LIMIT;
+        o.pursuitFailLimit    = DC_PURSUIT_FAIL_LIMIT;
+        o.doneNotEngagedLimit = DC_DONE_NOT_ENGAGED_LIMIT;
+        return o;
     }
 
     // Per-approach counter resets now live as named subset methods on the owning
@@ -1358,7 +1379,13 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryPosStuckRecovery(A
 
     lastPos = cur;
 
-    if (posStuck >= DC_STUCK_TICK_LIMIT)
+    // Threshold decision (posStuck >= DC_STUCK_TICK_LIMIT) sourced from the pure,
+    // gtested DecideApproach: the only active field is posStuckTicks, so the
+    // verdict is StuckRecover exactly when the bot has gone the tick limit without
+    // displacement, else the neutral terminal.
+    DungeonClearApproach::Observation stuckObs = MakeApproachObs();
+    stuckObs.posStuckTicks = posStuck;
+    if (DungeonClearApproach::DecideApproach(stuckObs) == DungeonClearApproach::Verdict::StuckRecover)
     {
         posStuck = 0;
         // Wedged and replanning — surface "recovering" to the status poll.
@@ -1446,8 +1473,18 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryDirectPursuit(Adva
         // Boss not pursuable this tick (out of LOS / range / not loaded): clear
         // the grace counter so a later pursuit starts with a fresh budget.
         pursuitFailTicks = 0;
+        return Step::Continue;
     }
-    else if (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
+
+    // The pursuit-fail latch boundary (pursuitFailTicks < DC_PURSUIT_FAIL_LIMIT)
+    // is the regression-prone threshold here; source it from the gtested
+    // DecideApproach. canPursue is true in this branch, so the verdict is Pursue
+    // exactly while the latch is still open, and the long-path takes over once it
+    // trips.
+    DungeonClearApproach::Observation pursueObs = MakeApproachObs();
+    pursueObs.canPursue = true;
+    pursueObs.pursuitFailTicks = pursuitFailTicks;
+    if (DungeonClearApproach::DecideApproach(pursueObs) == DungeonClearApproach::Verdict::Pursue)
     {
         // Drop any stale long-path escort glide so it doesn't keep driving the
         // bot toward the spawn anchor while we steer toward the live boss.
@@ -1498,7 +1535,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryDirectPursuit(Adva
         // fall through to the long-path machinery below; the latch keeps us out
         // of this branch on subsequent ticks so the long-path can travel.
     }
-    // else: latched — skip direct pursuit and let the long-path below drive.
+    // Verdict not Pursue: the latch has tripped — skip the pursuit shortcut and
+    // let the long-path below drive.
     return Step::Continue;
 }
 
@@ -1670,7 +1708,16 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryHopDoneEscalation(
     // on, or the boss may have wandered into reach. Past the retry budget,
     // declare it unreachable and stall for `dc skip`.
     ++doneNotEngagedTicks;
-    if (doneNotEngagedTicks < DC_DONE_NOT_ENGAGED_LIMIT)
+    // Dead-end escalation budget (doneNotEngagedTicks < DC_DONE_NOT_ENGAGED_LIMIT)
+    // sourced from the gtested DecideApproach. We are past the engageDist <
+    // engageRange case above, so with hopDone the verdict is FinalApproach exactly
+    // while the retry budget holds, then escalates (swim-then-stall) once spent.
+    DungeonClearApproach::Observation hopObs = MakeApproachObs();
+    hopObs.hopDone = true;
+    hopObs.engageDist = engageDist;
+    hopObs.engageRange = engageRange;
+    hopObs.doneNotEngagedTicks = doneNotEngagedTicks;
+    if (DungeonClearApproach::DecideApproach(hopObs) == DungeonClearApproach::Verdict::FinalApproach)
     {
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] path ends {:.0f}yd short of {} (>{:.0f}, attempt {}/{}) "
