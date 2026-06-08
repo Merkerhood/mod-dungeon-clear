@@ -532,8 +532,10 @@ public:
 //               behaves as Off (the bool stays false) but the preference is
 //               stored and reported so the UI can offer it ahead of the feature.
 // DcPullAction is the single writer and keeps the bool in lock-step (true only
-// for On). Reset to 0 alongside the run state (dc on / dc off). Leader-owned and
-// surfaced in the STATUS payload for the addon's segmented control / tiny cycle.
+// for On). It is settable BEFORE a run: a preference set while DC is disabled
+// survives the off window and is applied by `dc on` when the run starts (so the
+// run begins already in the requested mode). Reset to 0 by `dc off`; leader-
+// owned and surfaced in the STATUS payload for the addon's segmented control.
 class DungeonClearPullSettingValue : public ManualSetValue<uint32>
 {
 public:

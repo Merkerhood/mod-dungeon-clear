@@ -133,6 +133,28 @@ namespace
         context->GetValue<uint32>("dungeon clear pull decision since")->Set(0u);
     }
 
+    // Applies an advanced-pull preference (0 Off / 1 On / 2 Dynamic) to the live
+    // run state: stores the tri-state setting, keeps the behavioral bool in
+    // lock-step (true only for On — Dynamic, like Off, starts disarmed and hands
+    // the bool to the per-tick governor), arms/revokes the leader's pull-session
+    // daze immunity, and seeds the party camp at the tank's feet when arming On
+    // so the party has a hold point before the first real pull marks a camp.
+    // Leaving the armed On state (Off / Dynamic) tears down any in-flight
+    // maneuver. Shared by `dc on` (which applies whatever preference was pre-set
+    // while disabled) and DcPullAction (live toggles during a run).
+    void ApplyPullSetting(Player* bot, AiObjectContext* context, uint32 setting)
+    {
+        bool const active = (setting == 1u);
+        context->GetValue<uint32>("dungeon clear pull setting")->Set(setting);
+        context->GetValue<bool>("dungeon clear pull mode")->Set(active);
+        DungeonClearUtil::SetLeaderDazeImmunity(bot, active);
+        if (active)
+            context->GetValue<Position&>("dungeon clear camp position")->Get() =
+                Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        else
+            ResetPullTransient(context);
+    }
+
     // Shared resume path. Rebuilds the transient navigation cache so Advance
     // restarts fresh from the bot's current position, then clears the pause
     // flags (paused / reason / the auto-paused door). Boss progress (selected
@@ -231,11 +253,13 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
-    // Advanced pull resets each run (the toggle is a per-run preference).
-    context->GetValue<uint32>("dungeon clear pull setting")->Set(0u);
-    context->GetValue<bool>("dungeon clear pull mode")->Set(false);
-    DungeonClearUtil::SetLeaderDazeImmunity(bot, false);
     ResetPullTransient(context);
+    // Start the run already in whatever advanced-pull mode was requested. The
+    // preference lives in `dungeon clear pull setting` and survives the disabled
+    // window, so `dc pull off/on/dynamic` issued BEFORE `dc on` takes effect the
+    // moment the run begins (default Off for a bot that never set it). Applied
+    // after ResetPullTransient so the On-mode camp seed isn't wiped.
+    ApplyPullSetting(bot, context, AI_VALUE(uint32, "dungeon clear pull setting"));
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
@@ -774,11 +798,10 @@ bool DcPullAction::Execute(Event event)
     if (!DungeonClearUtil::IsDungeonClearLeader(bot))
         return true;
 
-    if (!AI_VALUE(bool, "dungeon clear enabled"))
-    {
-        botAI->TellError("Dungeon clear is not enabled.");
-        return false;
-    }
+    // Pull mode is settable BEFORE the run starts: when DC is off we just store
+    // the preference (no live arming — there's no run to arm) and `dc on` applies
+    // it the moment the run begins. When DC is on we apply it live.
+    bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
 
     // Tri-state preference: 0 Off, 1 On, 2 Dynamic (see DungeonClearPullSetting-
     // Value). The addon sends an explicit "off"/"on"/"dynamic"; a bare toggle
@@ -795,43 +818,35 @@ bool DcPullAction::Execute(Event event)
     else
         setting = (current + 1u) % 3u;  // bare toggle cycles the three states
 
-    // "On" (1) arms the pull-to-camp maneuver unconditionally; the behavioral bool
-    // is true. "Dynamic" (2) leaves the bool false HERE and hands control to the
-    // per-tick governor (DungeonClearUtil::UpdateDynamicPullMode in the pull
-    // trigger), which sets the bool to Leeroy/Advanced per pack — so at toggle time
-    // Dynamic, like Off, starts with the maneuver disarmed. Off (0) is bool false.
-    bool const active = (setting == 1u);
-
-    context->GetValue<uint32>("dungeon clear pull setting")->Set(setting);
-    context->GetValue<bool>("dungeon clear pull mode")->Set(active);
-    // Make the driving tank daze-proof for the pull session so the pull-to-camp
-    // drag-back (run AWAY from the pack -> every hit lands from behind) can't be
-    // crippled by a Daze slow. Revoked when pull mode goes off.
-    DungeonClearUtil::SetLeaderDazeImmunity(bot, active);
-    // Seed the party camp at the tank's current spot so the party has somewhere to
-    // hold the instant pull mode comes on — before the first pull marks a real
-    // camp. In pull mode the party holds/leapfrogs camp-to-camp instead of
-    // following (see DungeonClearUtil::GetLeaderCampHold).
-    if (active)
-        context->GetValue<Position&>("dungeon clear camp position")->Get() =
-            Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
     char const* const label =
         setting == 1u ? "ON" : (setting == 2u ? "DYNAMIC" : "OFF");
-    DC_PULL_INFO("[DC:{}] advanced-pull mode {} by {}", bot->GetName(),
-                 label, param.empty() ? "toggle" : param);
-    // Leaving the active On state (to Off, to Dynamic, or by toggle) mid-maneuver
-    // aborts it: reset the phase so the combat maneuver stands down and the reaper
-    // releases the party.
-    if (!active)
-        ResetPullTransient(context);
+
+    if (enabled)
+    {
+        // ApplyPullSetting keeps the behavioral bool in lock-step (On arms the
+        // pull-to-camp maneuver and seeds a camp; Off/Dynamic disarm and tear
+        // down any in-flight maneuver), and arms/revokes the tank's pull-session
+        // daze immunity so the drag-back can't be Daze-slowed.
+        ApplyPullSetting(bot, context, setting);
+        DC_PULL_INFO("[DC:{}] advanced-pull mode {} by {}", bot->GetName(),
+                     label, param.empty() ? "toggle" : param);
+    }
+    else
+    {
+        // Run not started — remember the preference only; `dc on` applies it.
+        context->GetValue<uint32>("dungeon clear pull setting")->Set(setting);
+        DC_PULL_INFO("[DC:{}] advanced-pull mode pre-set to {} by {} (applies on dc on)",
+                     bot->GetName(), label, param.empty() ? "toggle" : param);
+    }
 
     std::string chat = "CHAT\tAdvanced pull ";
+    char const* const when = enabled ? "" : " (applies when dungeon clear starts)";
     if (setting == 1u)
-        chat += "enabled.";
+        chat += std::string("enabled") + when + ".";
     else if (setting == 2u)
-        chat += "set to dynamic (auto-deciding Leeroy vs pull per pack).";
+        chat += std::string("set to dynamic (auto-deciding Leeroy vs pull per pack)") + when + ".";
     else
-        chat += "disabled.";
+        chat += std::string("disabled") + when + ".";
     DungeonClearUtil::SendAddonMessage(botAI, chat);
     botAI->DoSpecificAction("dc status", event, true);
     return true;
