@@ -195,13 +195,13 @@ public:
 
     void OnPlayerbotUpdate(uint32 diff) override
     {
-        DungeonClearUtil::ReapOrphanedFollows();
+        DcFollowerLifecycle::ReapOrphanedFollows();
         // Authoritative advanced-pull passive teardown: release any follower DC
         // put passive once its leader is no longer mid-pull (released / dc off /
         // paused / death / gone), and trip the camp-safety valve for a held,
         // passive follower taking damage. Runs on the global tick so it fires even
         // for a follower whose own engines are passive-locked in combat.
-        DungeonClearUtil::ReapStrandedPassives();
+        DcFollowerLifecycle::ReapStrandedPassives();
         // Drop async path results that were never collected (the bot logged out
         // or toggled dc off before polling). Bounds the mailbox; cheap no-op
         // when empty.

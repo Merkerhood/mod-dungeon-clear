@@ -165,7 +165,7 @@ public:
 };
 
 // Shared body for the two follower-only "hold the party at camp" actions. Puts
-// the bot passive (DungeonClearUtil::ApplyFollowerPassive), cancels any stale
+// the bot passive (DcFollowerLifecycle::ApplyFollowerPassive), cancels any stale
 // follow generator, walks it to the leader's camp, and OWNS the tick (always
 // returns true while the leader is in a holding pull phase) so neither
 // follow-tank nor stock follow can drag the follower off camp. The two concrete

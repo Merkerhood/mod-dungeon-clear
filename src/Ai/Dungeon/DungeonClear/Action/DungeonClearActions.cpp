@@ -2702,7 +2702,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             followedTank = ObjectGuid::Empty;
             // Cleanly torn down by us -> drop the orphan-reaper mark; there is no
             // longer a follow generator for it to chase down.
-            DungeonClearUtil::UnmarkFollowing(bot->GetGUID());
+            DcFollowerLifecycle::UnmarkFollowing(bot->GetGUID());
         }
         return false;
     }
@@ -2802,7 +2802,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         // so a follow generator we (or a prior tick) installed is still cancelled
         // when the DC tank goes away.
         followedTank = tank->GetGUID();
-        DungeonClearUtil::MarkFollowing(bot->GetGUID());
+        DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
         if (toTank <= lag)
         {
             // Inside the lag bubble: hold position. Tear down any leftover
@@ -2866,7 +2866,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // Record that this player now carries a follow generator so the world-tick
     // orphan reaper can cancel it if the AI is deleted out from under us — a
     // self-bot leaving bot mode never runs the teardown branch above.
-    DungeonClearUtil::MarkFollowing(bot->GetGUID());
+    DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
     return Follow(tank, dist);
 }
 
@@ -3308,7 +3308,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // A druid tank must take the run-home hits in bear form, not caster form.
     // Shapeshift is instant and not interrupted by the drag-back run, so refresh
     // it every tick of the maneuver (no-op once shifted / for non-druids).
-    DungeonClearUtil::EnsureTankBearForm(bot);
+    DcFollowerLifecycle::EnsureTankBearForm(bot);
 
     // First combat tick of the pull: aggro confirmed, turn around for camp.
     // Forming counts too — combat can be taken while the tank holds at the commit
@@ -3433,7 +3433,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // phase. Idempotent; the matching release is centralized in
     // ReapStrandedPassives so it fires on every exit.
     if (passive)
-        DungeonClearUtil::ApplyFollowerPassive(bot);
+        DcFollowerLifecycle::ApplyFollowerPassive(bot);
 
     // Loot yield (scout phase only). The pack dies AT camp, so its corpses sit
     // right where the party holds. Without this the camp hold and the stock loot
@@ -3495,7 +3495,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
             bot->StopMoving();
         bot->GetMotionMaster()->Clear();
         context->GetValue<ObjectGuid>("dungeon clear followed tank")->Set(ObjectGuid::Empty);
-        DungeonClearUtil::UnmarkFollowing(bot->GetGUID());
+        DcFollowerLifecycle::UnmarkFollowing(bot->GetGUID());
     }
 
     // Park at the leader's camp. Each follower aims for its own fuzzed slot — a
