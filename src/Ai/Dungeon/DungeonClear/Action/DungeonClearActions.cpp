@@ -2878,12 +2878,61 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 }
             }
 
-            // No ranged option (or out of range/LOS / cast failed): close in to
-            // body-tag. COMBAT priority so the approach isn't interrupted.
-            DC_PULL_TRACE("[DC:{}] pull advancing: closing to tag ({:.1f}yd)",
-                          bot->GetName(), bot->GetExactDist(trash));
-            bool const moved = MoveTo(trash->GetMapId(), trash->GetPositionX(),
-                                      trash->GetPositionY(), trash->GetPositionZ(),
+            // No ranged option (or out of range/LOS / cast failed): body-tag by
+            // proximity. CRUCIAL: walk only to the EDGE of the pack's aggro bubble
+            // and HOLD — let the mob notice and close the last few yards itself —
+            // rather than sprinting (COMBAT priority is uninterruptible by combat
+            // reflexes) all the way to the pack's centre. The old "MoveTo the mob's
+            // exact position" arrived at the spawn before combat even registered, so
+            // the drag-back (combat-engine only) took over far too late and an
+            // un-trained tank face-pulled the whole pack and ate its opener. This
+            // mirrors the ranged "tagged, hold for aggro" path above: stop just
+            // inside aggro, let the pack come, then the maneuver drags it to camp.
+            Creature* const trashCreature = trash->ToCreature();
+            float const toTag = bot->GetExactDist(trash);
+
+            // Distance at which the pack pulls on its own: the core's notice range
+            // plus both reaches. Stop ~2yd inside it so we reliably cross the aggro
+            // threshold but go no deeper. Floored at melee reach for the high-level
+            // case where a low mob barely notices and we must close to body contact.
+            float tagStop = 0.0f;
+            if (trashCreature)
+            {
+                float const meleeReach =
+                    bot->GetCombatReach() + trash->GetCombatReach() + 1.0f;
+                tagStop = trashCreature->GetAggroRange(bot)
+                        + trashCreature->GetCombatReach()
+                        + bot->GetCombatReach() - 2.0f;
+                if (tagStop < meleeReach)
+                    tagStop = meleeReach;
+            }
+
+            if (trashCreature && toTag <= tagStop)
+            {
+                // At the aggro edge — hold and let the pack notice us / flip the
+                // engine to the maneuver drag-back. The leg timeout above is the
+                // backstop if nothing aggros (resisted / non-hostile).
+                if (bot->isMoving())
+                    bot->StopMoving();
+                DC_PULL_TRACE("[DC:{}] pull advancing: at aggro edge ({:.1f}yd, "
+                              "hold for aggro)", bot->GetName(), toTag);
+                return true;
+            }
+
+            // Aim for a point tagStop yards out from the pack on the tank's side,
+            // not the pack's centre, so the run stops at the aggro edge.
+            float tagX = trash->GetPositionX();
+            float tagY = trash->GetPositionY();
+            float const tagZ = trash->GetPositionZ();
+            if (trashCreature && toTag > 0.1f)
+            {
+                float const f = tagStop / toTag;
+                tagX = trash->GetPositionX() + (bot->GetPositionX() - trash->GetPositionX()) * f;
+                tagY = trash->GetPositionY() + (bot->GetPositionY() - trash->GetPositionY()) * f;
+            }
+            DC_PULL_TRACE("[DC:{}] pull advancing: closing to aggro edge ({:.1f}yd, "
+                          "stop {:.1f})", bot->GetName(), toTag, tagStop);
+            bool const moved = MoveTo(trash->GetMapId(), tagX, tagY, tagZ,
                                       /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                       /*exact_waypoint*/ false, MovementPriority::MOVEMENT_COMBAT);
             if (moved || bot->isMoving() || IsWaitingForLastMove(MovementPriority::MOVEMENT_COMBAT))
