@@ -31,6 +31,7 @@
 #include "Position.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
@@ -345,26 +346,19 @@ namespace
         ctx->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
         ctx->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
         ctx->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
-        ctx->GetValue<Position&>("dungeon clear last position")->Get() = Position();
         ctx->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
         ctx->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
         ctx->GetValue<std::string&>("dungeon clear phase")->Get().clear();
-        ctx->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-        ctx->GetValue<Position&>("dungeon clear long path target pos")->Get() = Position();
-        ctx->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
-        ctx->GetValue<uint64>("dungeon clear pending path job")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear pending path since")->Set(0u);
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
         ctx->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
         ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
         ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
+        // One reset clears the whole approach FSM (the stuck/recovery counters,
+        // the pursuit/dead-end latches, the loot-yield anchor, the position
+        // sentinel + committed-boss entry, and the long-path cache state) in
+        // lockstep — see DcApproachState.
+        ctx->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
         // One reset clears the whole advanced-pull FSM (phase / dwell timer / camp /
         // breadcrumb trail / abort + tag latches / Dynamic verdict) in lockstep.
         ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().Reset();
@@ -406,43 +400,12 @@ namespace
         ctx->GetValue<std::string&>("dungeon clear phase")->Get() = phase;
     }
 
-    // ---- Per-approach counter resets ------------------------------------
-    // Advance tracks several independent "this approach is failing" signals —
-    // stuck count (MoveTo no-ops), no-displacement ticks, consecutive rebuilds,
-    // path-ends-short ticks, and the direct-pursuit give-up latch — plus the
-    // position sentinel and the sticky trash pick. Their reset rules used to be
-    // inlined at each trigger site in Execute, which is exactly where several
-    // past freeze/livelock bugs lived. Centralise the two multi-counter reset
-    // clusters here so the reset logic is in one auditable place. Both write the
-    // shared context values directly, so any local RefGet() reference Execute
-    // holds reflects the reset immediately (same backing storage).
-
-    // Reached engage range: clear the dead-end escalation counter and the
-    // direct-pursuit give-up latch, so a boss that wanders back out can be
-    // re-pursued cleanly instead of staying latched off the pursuit shortcut.
-    void ResetApproachOnEnteredEngageRange(AiObjectContext* ctx)
-    {
-        ctx->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-    }
-
-    // Committed boss changed: wipe every per-approach counter/latch, the
-    // position sentinel, and the sticky trash target so nothing from the
-    // previous pull bleeds into the new approach.
-    void ResetApproachOnBossChange(AiObjectContext* ctx, uint32 newEntry)
-    {
-        ctx->GetValue<uint32>("dungeon clear last target entry")->Set(newEntry);
-        ctx->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
-        ctx->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-        ctx->GetValue<Position&>("dungeon clear last position")->Get() = Position();
-        // Sticky trash target was picked for the previous boss's corridor; it
-        // doesn't necessarily lie in the new boss's corridor and can be far
-        // behind us. Re-pick from scratch on next engage-trash tick.
-        ctx->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    }
+    // Per-approach counter resets now live as named subset methods on the owning
+    // struct — DcApproachState::OnEnteredEngageRange (clear the dead-end
+    // escalation counter + direct-pursuit give-up latch) and ::OnBossChange (wipe
+    // every per-approach counter/latch + the position sentinel). The sticky
+    // engage-trash target is a separate value, reset alongside OnBossChange at the
+    // call site in Execute.
 
     // True only when the bot is genuinely ENTITLED to open this door: it is
     // lock-gated and the bot satisfies the lock (holds the key item, or has the
@@ -537,16 +500,16 @@ namespace
     // Commit a freshly-built path into the cache and reset the follower so we
     // don't index off the end of a shorter polyline. Shared by the sync and
     // async install sites.
-    void InstallLongPath(Player* bot, AiObjectContext* ctx, DungeonBossInfo const& target,
+    void InstallLongPath(Player* bot, AiObjectContext* ctx, DcApproachState& appr,
+                         DungeonBossInfo const& target,
                          ChunkedPathfinder::Result&& built, uint32 now, char const* how)
     {
         ChunkedPathfinder::Result& path =
             ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
         path = std::move(built);
-        ctx->GetValue<uint32>("dungeon clear long path target")->Set(target.entry);
-        ctx->GetValue<Position&>("dungeon clear long path target pos")->Get() =
-            Position(target.x, target.y, target.z);
-        ctx->GetValue<uint32>("dungeon clear long path expires")->Set(now + DC_LONG_PATH_TTL_MS);
+        appr.longPathTargetEntry = target.entry;
+        appr.longPathTargetPos = Position(target.x, target.y, target.z);
+        appr.longPathExpiresMs = now + DC_LONG_PATH_TTL_MS;
 
         size_t const firstSegPts = path.segments.empty() ? 0 : path.segments.front().polyline.size();
         LOG_INFO("playerbots.dungeonclear",
@@ -573,12 +536,13 @@ namespace
     // precedence over the LongRange corridor, so when one is registered for the
     // boss we build synchronously and skip the worker entirely. The worker only
     // ever runs LongRangePathfinder::BuildCoreFromMesh.
-    void EnsureLongPath(Player* bot, AiObjectContext* ctx, DungeonBossInfo const& target)
+    void EnsureLongPath(Player* bot, AiObjectContext* ctx, DcApproachState& appr,
+                        DungeonBossInfo const& target)
     {
-        uint32& cachedEntry = ctx->GetValue<uint32>("dungeon clear long path target")->RefGet();
-        uint32& expiresAt = ctx->GetValue<uint32>("dungeon clear long path expires")->RefGet();
-        uint64& pendingJob = ctx->GetValue<uint64>("dungeon clear pending path job")->RefGet();
-        uint32& pendingSince = ctx->GetValue<uint32>("dungeon clear pending path since")->RefGet();
+        uint32& cachedEntry = appr.longPathTargetEntry;
+        uint32& expiresAt = appr.longPathExpiresMs;
+        uint64& pendingJob = appr.pendingPathJob;
+        uint32& pendingSince = appr.pendingPathSinceMs;
         uint32 const now = getMSTime();
 
         bool const asyncEnabled = DcSettings::GetBool(bot, "AsyncPathfinding");
@@ -613,7 +577,7 @@ namespace
                 pendingSince = 0;
                 ChunkedPathfinder::Result built =
                     ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
-                InstallLongPath(bot, ctx, target, std::move(built), now, "sync (async timeout)");
+                InstallLongPath(bot, ctx, appr, target, std::move(built), now, "sync (async timeout)");
                 return;
             }
 
@@ -634,7 +598,7 @@ namespace
                     built = StridedPathfinder::Build(bot, target.mapId, target.entry,
                                                      target.x, target.y, target.z, 16, /*skipLongRange*/ true);
                 }
-                InstallLongPath(bot, ctx, target, std::move(built), now, "async");
+                InstallLongPath(bot, ctx, appr, target, std::move(built), now, "async");
                 return;
             }
             LOG_DEBUG("playerbots.dungeonclear",
@@ -650,8 +614,7 @@ namespace
         // just streamed in far from the static anchor the current path was
         // built toward — retarget early instead of walking a stale route the
         // full TTL. Only meaningful once a path actually exists (expiresAt!=0).
-        Position const& builtToward =
-            ctx->GetValue<Position&>("dungeon clear long path target pos")->Get();
+        Position const& builtToward = appr.longPathTargetPos;
         bool const moved = expiresAt != 0 &&
             builtToward.GetExactDist(Position(target.x, target.y, target.z)) >
                 DC_LONG_PATH_RETARGET_DIST;
@@ -672,7 +635,7 @@ namespace
         {
             ChunkedPathfinder::Result built =
                 ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
-            InstallLongPath(bot, ctx, target, std::move(built), now,
+            InstallLongPath(bot, ctx, appr, target, std::move(built), now,
                             !asyncEnabled ? "sync" : "sync (anchor route)");
             return;
         }
@@ -702,7 +665,7 @@ namespace
         {
             ChunkedPathfinder::Result built =
                 ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
-            InstallLongPath(bot, ctx, target, std::move(built), now, "sync (no navmesh)");
+            InstallLongPath(bot, ctx, appr, target, std::move(built), now, "sync (no navmesh)");
             return;
         }
 
@@ -778,7 +741,7 @@ namespace
     //
     // Returns true when Resnap kept us on the existing path; false when
     // a full rebuild is needed (in which case the cache/state are reset).
-    bool TriggerStrideRebuild(Player* bot, AiObjectContext* ctx)
+    bool TriggerStrideRebuild(Player* bot, AiObjectContext* ctx, DcApproachState& appr)
     {
         ChunkedPathfinder::Result const& path =
             ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
@@ -788,7 +751,7 @@ namespace
             DungeonPathFollower::Resnap(bot, path, follower))
             return true;
 
-        ctx->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+        appr.longPathExpiresMs = 0;
         ctx->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         follower = DungeonFollowerState{};
         return false;
@@ -880,6 +843,7 @@ namespace
     // the tick (caller must return true); false if no leg is active or the leg
     // just completed (caller falls through to normal navmesh navigation).
     bool DriveActiveSwim(Player* bot, PlayerbotAI* botAI, AiObjectContext* context,
+                         DcApproachState& appr,
                          uint32 targetEntry, float bx, float by, float bz,
                          float engageDist, float engageRange)
     {
@@ -921,7 +885,7 @@ namespace
                      "[DC:{}] swim leg consumed -> handing back to navmesh", bot->GetName());
             swim.Reset();
             StopActiveSplineGlide(bot);
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             return false;
         }
 
@@ -935,7 +899,7 @@ namespace
                      "[DC:{}] swim leg abandoned: {:.0f}yd off the leg", bot->GetName(), distToPoint);
             swim.Reset();
             StopActiveSplineGlide(bot);
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             return false;
         }
 
@@ -1248,7 +1212,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
     // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
     DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
-        context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
+        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().lootYieldStartMs;
     bool const lootYield =
         AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot") ||
         DcPartyState::IsAnyPartyMemberLooting(bot);
@@ -1430,6 +1394,12 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         return false;
     }
 
+    // All per-approach counters/latches + the long-path cache state live in one
+    // owned struct (see DcApproachState); the local references below alias its
+    // fields so the phase logic reads/writes one place and resets in lockstep.
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
+
     // Effective boss position: a wandering/patrolling boss is rarely at its
     // static DB spawn coords, so prefer its LIVE creature position whenever it
     // is loaded on the map. Engage-range gating, the at-boss handoff, and the
@@ -1463,10 +1433,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // Dead-end escalation counter (see DC_DONE_NOT_ENGAGED_LIMIT). Cleared the
     // moment we're back inside engage range so it only ever counts a continuous
     // run of "path done but boss still out of reach" ticks for one approach.
-    uint32& doneNotEngagedTicks =
-        context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->RefGet();
+    uint32& doneNotEngagedTicks = appr.doneNotEngagedTicks;
     if (engageDist < engageRange)
-        ResetApproachOnEnteredEngageRange(context);
+        appr.OnEnteredEngageRange();
 
     // Bundle the per-tick approach state for the extracted phase steps below.
     AdvanceState st;
@@ -1487,7 +1456,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // TryBossNotPresentStall and abort the swim. It self-clears on arrival
     // (engage range), on consuming the leg, or on going stale, then falls
     // through to normal navigation.
-    if (DriveActiveSwim(bot, botAI, context, next->entry, bossX, bossY, bossZ,
+    if (DriveActiveSwim(bot, botAI, context, appr, next->entry, bossX, bossY, bossZ,
                         engageDist, engageRange))
         return true;
 
@@ -1506,14 +1475,19 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // Bookkeeping: reset position-based stuck counters when the boss
     // changes, so an in-flight stuck count from the previous pull doesn't
     // bleed into the new approach.
-    uint32 const lastEntry = AI_VALUE(uint32, "dungeon clear last target entry");
-    uint32& stuck = context->GetValue<uint32>("dungeon clear stuck count")->RefGet();
-    Position& lastPos = context->GetValue<Position&>("dungeon clear last position")->Get();
-    uint32& posStuck = context->GetValue<uint32>("dungeon clear stuck ticks")->RefGet();
-    uint32& rebuildAttempts =
-        context->GetValue<uint32>("dungeon clear stride rebuild attempts")->RefGet();
+    uint32 const lastEntry = appr.lastTargetEntry;
+    uint32& stuck = appr.stuckCount;
+    Position& lastPos = appr.lastPos;
+    uint32& posStuck = appr.posStuckTicks;
+    uint32& rebuildAttempts = appr.rebuildAttempts;
     if (lastEntry != next->entry)
-        ResetApproachOnBossChange(context, next->entry);
+    {
+        appr.OnBossChange(next->entry);
+        // The sticky engage-trash target was picked for the previous boss's
+        // corridor and can sit far behind us; it isn't part of the approach
+        // struct, so re-pick it from scratch alongside the counter reset.
+        context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
+    }
 
     // Position-based stuck check. Sample current world position; if the
     // bot is supposedly moving but barely shifted since the previous tick,
@@ -1575,7 +1549,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // position. Strides are short enough that a rebuild from here
         // usually picks a different sequence of stride endpoints and
         // routes around whatever was wedging us.
-        bool const resnapped = TriggerStrideRebuild(bot, context);
+        bool const resnapped = TriggerStrideRebuild(bot, context, appr);
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] posStuck ({} ticks <{}yd) -> {} (rebuildAttempts={})",
                  bot->GetName(), DC_STUCK_TICK_LIMIT, DC_STUCK_DISPLACEMENT,
@@ -1626,8 +1600,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // StopActiveSplineGlide every tick and kill the long-path's escort glide
     // before it travels — a step/freeze thrash). The latch clears on boss change
     // and once we make it inside engage range (see the resets above).
-    uint32& pursuitFailTicks =
-        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->RefGet();
+    uint32& pursuitFailTicks = appr.pursuitFailTicks;
     bool const canPursue =
         liveBoss && engageDist <= DC_DIRECT_PURSUIT_RANGE && bot->IsWithinLOSInMap(liveBoss);
     if (!canPursue)
@@ -1699,7 +1672,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     effectiveTarget.x = bossX;
     effectiveTarget.y = bossY;
     effectiveTarget.z = bossZ;
-    EnsureLongPath(bot, context, effectiveTarget);
+    EnsureLongPath(bot, context, appr, effectiveTarget);
 
     ChunkedPathfinder::Result const& path =
         AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
@@ -1714,7 +1687,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // "no navigable route" to the party. Mirrors the between-pulls rest
         // yield: no stall reason set, so the stalled-fallback never fires; the
         // multiplier suppresses wander while we wait.
-        if (context->GetValue<uint64>("dungeon clear pending path job")->Get() != 0)
+        if (appr.pendingPathJob != 0)
         {
             SetPhase(context, "planning route");
             if (bot->isMoving())
@@ -1734,7 +1707,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
                 // invisible recovery. Force a rebuild so the next tick
                 // picks up the new (hopefully on-mesh) position.
                 SetPhase(context, "recovering");
-                context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+                appr.longPathExpiresMs = 0;
                 return true;
             }
         }
@@ -1785,7 +1758,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
                      bot->GetName(), offTicks, DungeonPathFollower::RESNAP_RADIUS);
             SetPhase(context, "recovering");
             StopActiveSplineGlide(bot);
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             follower = DungeonFollowerState{};
             return false;
         }
@@ -1832,7 +1805,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] reached end of path polyline (seg {}) -> forcing rebuild next tick",
                      bot->GetName(), follower.segmentIdx);
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             return false;
         }
 
@@ -1856,7 +1829,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
                                         /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                                         /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
             SetPhase(context, "pursuing");
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             return pushing;
         }
 
@@ -2072,7 +2045,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         {
             // Force a fresh chunked rebuild — the cached path's first
             // segment may be unreachable from our actual current poly.
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             follower = DungeonFollowerState{};
             StallDungeonClear(botAI,
                 "Stuck near " + next->name + " — I have a path but movement isn't progressing. "
@@ -2504,6 +2477,8 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     // the door through any wall on a winding corridor, so the tank stopped at
     // the last reachable spot far short of it. Reuse the same escort-spline
     // follower Advance drives (shared follower state, same long-path value).
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get();
     if (next.has_value())
     {
         // Match Advance: route toward the boss's EFFECTIVE position (live
@@ -2519,7 +2494,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
             effectiveTarget.y = liveBoss->GetPositionY();
             effectiveTarget.z = liveBoss->GetPositionZ();
         }
-        EnsureLongPath(bot, context, effectiveTarget);
+        EnsureLongPath(bot, context, appr, effectiveTarget);
     }
 
     ChunkedPathfinder::Result const& path =
@@ -2565,7 +2540,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         if (!DungeonPathFollower::Resnap(bot, path, follower))
         {
             StopActiveSplineGlide(bot);
-            context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+            appr.longPathExpiresMs = 0;
             follower = DungeonFollowerState{};
             return parkAndStall();
         }
@@ -2748,7 +2723,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // IsAnyPartyMemberLooting true, stalling the whole party on it.
     DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
-        context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
+        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().lootYieldStartMs;
     bool const lootYield =
         AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot");
     if (lootYield)
@@ -3452,7 +3427,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
         DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS,
                                                 DC_LOOT_GIVEUP_TTL_MS);
         uint32& lootYieldStart =
-            context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
+            context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().lootYieldStartMs;
         bool const lootYield =
             AI_VALUE(bool, "has available loot") || AI_VALUE(bool, "can loot");
         if (lootYield)

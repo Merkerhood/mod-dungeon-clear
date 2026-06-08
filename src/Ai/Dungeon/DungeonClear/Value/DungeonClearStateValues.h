@@ -15,6 +15,7 @@
 #include "ObjectGuid.h"
 #include "Position.h"
 #include "Value.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
@@ -114,21 +115,6 @@ private:
     std::unordered_set<uint32> data;
 };
 
-class DungeonClearStuckCountValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearStuckCountValue(PlayerbotAI* botAI) : ManualSetValue<uint32>(botAI, 0u, "dungeon clear stuck count") {}
-};
-
-class DungeonClearLastTargetEntryValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearLastTargetEntryValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear last target entry")
-    {
-    }
-};
-
 class DungeonClearStallReasonValue : public ManualSetValue<std::string&>
 {
 public:
@@ -180,32 +166,6 @@ class DungeonClearFallbackTargetValue : public ManualSetValue<ObjectGuid>
 public:
     DungeonClearFallbackTargetValue(PlayerbotAI* botAI)
         : ManualSetValue<ObjectGuid>(botAI, ObjectGuid::Empty, "dungeon clear fallback target")
-    {
-    }
-};
-
-// Sampled position from the previous DungeonClearAdvanceAction tick. Used
-// alongside `dungeon clear stuck ticks` to detect geometric stuck-ness —
-// the bot's MoveTo keeps returning true but its actual world position
-// isn't changing. Default (0,0,0) is the "not yet sampled" sentinel since
-// no real dungeon map has a (0,0,0) walkable point.
-class DungeonClearLastPositionValue : public ManualSetValue<Position&>
-{
-public:
-    DungeonClearLastPositionValue(PlayerbotAI* botAI)
-        : ManualSetValue<Position&>(botAI, data, "dungeon clear last position")
-    {
-    }
-
-private:
-    Position data;
-};
-
-class DungeonClearStuckTicksValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearStuckTicksValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear stuck ticks")
     {
     }
 };
@@ -277,81 +237,12 @@ public:
 };
 
 
-// Boss entry that the cached `dungeon clear long path` was built for.
-// 0 means "no cached path" — Advance/triggers rebuild on next tick.
-// Boss-change, dc-skip, and dc-on all clear this to force a fresh build.
-class DungeonClearLongPathTargetValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearLongPathTargetValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear long path target")
-    {
-    }
-};
-
-// World position the cached `dungeon clear long path` was actually built
-// toward. For a pool-spawn / wandering boss (e.g. the Wailing Caverns
-// Disciples) the live creature is rarely at its static DB spawn anchor, so
-// Advance feeds EnsureLongPath the boss's LIVE position; this records where
-// that path aims so a later tick can detect the boss has relocated (or that
-// the live position has just streamed in, far from the static anchor the
-// first build used) and force an early rebuild instead of walking a stale
-// route the full TTL. Default (0,0,0) → "no path built yet".
-class DungeonClearLongPathTargetPosValue : public ManualSetValue<Position&>
-{
-public:
-    DungeonClearLongPathTargetPosValue(PlayerbotAI* botAI)
-        : ManualSetValue<Position&>(botAI, data, "dungeon clear long path target pos")
-    {
-    }
-
-private:
-    Position data;
-};
-
-// Millisecond timestamp at which the cached LongPath expires. The cache
-// stays bounded so a stale path doesn't survive past edge cases like map
-// reloads; it is also rebuilt early when the live boss relocates far from
-// the position the path was built toward (see long path target pos).
-// Default 0 → "not cached yet".
-class DungeonClearLongPathExpiresValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearLongPathExpiresValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear long path expires")
-    {
-    }
-};
-
-// Async-pathfinding bookkeeping (DungeonClear.AsyncPathfinding). When the
-// long-path build is offloaded to DcPathWorker, this holds the in-flight
-// jobId (0 = none). EnsureLongPath polls DcPathWorker::TryTake(jobId) each
-// tick and gates resubmission on this being non-zero, guaranteeing exactly
-// one outstanding build per bot. The boss entry + map id the job was built
-// for ride along in the worker's result (checked for staleness on take), so
-// no separate per-bot copy of them is needed here. Cleared on install, on
-// dc-off/skip/boss reset, and on a stale completion.
-class DungeonClearPendingPathJobValue : public ManualSetValue<uint64>
-{
-public:
-    DungeonClearPendingPathJobValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint64>(botAI, 0u, "dungeon clear pending path job")
-    {
-    }
-};
-
-// Millisecond timestamp of when the in-flight async job was submitted. Used as
-// a watchdog: if no result arrives within DC_ASYNC_PATH_PENDING_TIMEOUT_MS the
-// job is abandoned and rebuilt synchronously, so a lost result (swept after an
-// afk dc-off) or a wedged worker can't leave the bot stuck plotting forever.
-class DungeonClearPendingPathSinceValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearPendingPathSinceValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pending path since")
-    {
-    }
-};
+// The long-path cache bookkeeping that used to live in five loose values —
+// the boss entry + world position the cache was built for, the TTL deadline,
+// and the async-job id/timestamp — now lives in DcApproachState (the "dungeon
+// clear approach state" value), so it resets in lockstep with the rest of the
+// approach FSM. The cached path itself (the ChunkedPathfinder::Result) still
+// has its own value, DungeonClearLongPathValue.
 
 // Index of the segment in the cached LongPath the bot is currently
 // walking toward. Reset to 0 whenever the path target changes.
@@ -366,74 +257,12 @@ public:
     }
 };
 
-// Consecutive forward-recovery rebuild attempts. Incremented when Advance
-// invalidates the long-path cache because the bot stopped making forward
-// progress; reset to 0 the moment movement resumes. After several
-// consecutive attempts without progress Advance escalates to a navmesh
-// nudge — same FARFROMPOLY recovery the off-mesh case uses.
-class DungeonClearStrideRebuildAttemptsValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearStrideRebuildAttemptsValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear stride rebuild attempts")
-    {
-    }
-};
-
-// Millisecond timestamp at which Advance first began yielding for an
-// in-progress loot pickup (0 = not currently loot-yielding). Drives the
-// commit-timeout: Advance yields to let the loot system pick up a corpse,
-// but only for DC_LOOT_YIELD_TIMEOUT_MS; past that it force-advances past
-// a corpse it can't finish looting (group-loot rolls pending, bags full)
-// so the tank never parks on it forever. Reset to 0 the moment the loot
-// flags clear (corpse looted, or walked out of lootDistance).
-class DungeonClearLootYieldStartValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearLootYieldStartValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear loot yield start")
-    {
-    }
-};
-
-// Consecutive Advance ticks on which the long-path completed (cursor reached
-// the polyline end) while the bot was still outside engage range of the boss.
-// This is the "route dead-ends short of the boss" wedge: the navmesh can't get
-// within DC_ENGAGE_RANGE (boss on a ledge / across a gap, or a wall-screened
-// route that can't close the last yards), so NextHop reports done every tick
-// and Advance rebuilds an identical 0-point path forever. The bot isn't moving
-// in that loop, so the position-based stuck counter never catches it. Advance
-// counts these ticks, makes a few straight-line final-approach attempts, then
-// escalates to a stall. Reset on boss change and once back inside engage range.
-class DungeonClearDoneNotEngagedTicksValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearDoneNotEngagedTicksValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear done-not-engaged ticks")
-    {
-    }
-};
-
-// Consecutive Advance ticks on which the LIVE-boss direct-pursuit branch issued
-// a MoveTo that produced no movement at all (MoveTo returned false and the bot
-// is not moving / not waiting on an in-flight move). This is the silent freeze
-// just outside pull range: the boss is close and in line of sight, so direct
-// pursuit is selected, but PathGenerator can't reach its live poly (Z resolves
-// to INVALID_HEIGHT, or the route winds past PathGenerator's 74-hop cap). The
-// bot never moves, so the position-based stuck counter can't see it and direct
-// pursuit would retry forever. Advance counts these ticks and, past a short
-// grace, abandons direct pursuit and falls through to the wall-screened
-// long-path (LongRangePathfinder, no hop cap, with its own dead-end -> stall
-// escalation). Reset on boss change and whenever the pursuit move makes
-// progress / is in flight.
-class DungeonClearPursuitFailTicksValue : public ManualSetValue<uint32>
-{
-public:
-    DungeonClearPursuitFailTicksValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pursuit fail ticks")
-    {
-    }
-};
+// The per-approach stuck/recovery counters and give-up latches that used to
+// live in five loose values — the consecutive-rebuild count, the loot-yield
+// commit anchor, the path-ends-short escalation counter, and the direct-pursuit
+// give-up latch — now live as fields on DcApproachState (the "dungeon clear
+// approach state" value), so they reset in lockstep with the rest of the
+// approach FSM. See DcApproachState for the per-field rationale.
 
 // Per-corpse loot give-up list: maps a loot GUID whose pickup the bot
 // abandoned to the ms timestamp at which the skip expires — or to
@@ -628,6 +457,26 @@ public:
 
 private:
     DungeonFollowerState data;
+};
+
+// All transient per-approach state for the boss-approach FSM, owned as a single
+// value so it resets in lockstep through exactly one Reset() — see DcApproachState
+// for the full rationale (it replaced nine loose counter/latch globals whose
+// scattered resets were the "stale latch survives pause/skip/resume" bug class).
+// Reset alongside the run state (dc on/off, death, cleared) and on every pull
+// interrupt, the same lifetime as DungeonClearPullContextValue.
+class DungeonClearApproachStateValue : public ManualSetValue<DcApproachState&>
+{
+public:
+    DungeonClearApproachStateValue(PlayerbotAI* botAI)
+        : ManualSetValue<DcApproachState&>(botAI, data, "dungeon clear approach state")
+    {
+    }
+
+    void Reset() override { data.Reset(); }
+
+private:
+    DcApproachState data;
 };
 
 #endif

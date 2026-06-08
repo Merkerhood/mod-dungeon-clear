@@ -165,19 +165,15 @@ namespace
     // afterward (the two phrase it differently).
     void ResetForResume(AiObjectContext* context)
     {
-        context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-        context->GetValue<uint32>("dungeon clear stuck ticks")->Set(0u);
-        context->GetValue<uint32>("dungeon clear stride rebuild attempts")->Set(0u);
-        context->GetValue<uint32>("dungeon clear done-not-engaged ticks")->Set(0u);
-        context->GetValue<uint32>("dungeon clear pursuit fail ticks")->Set(0u);
-        context->GetValue<uint32>("dungeon clear loot yield start")->Set(0u);
+        // One reset clears the whole approach FSM in lockstep — the stuck/
+        // recovery counters, the pursuit/dead-end latches, the loot-yield anchor,
+        // the position sentinel + committed boss, and the long-path cache state
+        // (so the first Advance tick rebuilds fresh from here). See DcApproachState.
+        context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
         context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
         context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
         context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
         context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-        context->GetValue<Position&>("dungeon clear last position")->Get() = Position();
-        context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-        context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
         context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
         context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
         context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
@@ -265,18 +261,17 @@ bool DcOnAction::Execute(Event event)
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
     context->GetValue<std::map<ObjectGuid, uint32>&>("dungeon clear loot skip")->Get().clear();
-    context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-    context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
+    // Fresh approach FSM: clears every stuck/recovery counter, the pursuit/dead-
+    // end latches, the loot-yield anchor, the position sentinel + committed boss,
+    // and the long-path cache state in lockstep. The cache reset (expires/target)
+    // forces a fresh long-path build on the first Advance tick so a stale path
+    // from a previous `dc on`/`dc off` cycle can't be reused. See DcApproachState.
+    context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
     context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
     context->GetValue<std::string&>("dungeon clear phase")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
     context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    // Force a fresh long-path build on the first Advance tick. Without
-    // this, a stale path from a previous `dc on`/`dc off` cycle would
-    // be reused.
-    context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-    context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
     // The breadcrumb trail is part of the pull context already cleared by
@@ -323,13 +318,13 @@ bool DcOffAction::Execute(Event event)
     DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
     ResetPullTransient(context);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-    context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
+    // Tear down the whole approach FSM (counters, latches, loot-yield anchor,
+    // position sentinel + committed boss, long-path cache) in one reset.
+    context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
     context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
     context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-    context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
@@ -386,16 +381,14 @@ bool DcSkipAction::Execute(Event event)
     // New target gets a clean slate (abort any in-flight pull on the old target).
     ResetPullTransient(context);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-    context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-    context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
+    // New target gets a clean approach FSM: counters, latches, loot-yield anchor,
+    // position sentinel + committed boss, and the long-path cache (so the next
+    // Advance tick rebuilds the route for the new target) all reset in lockstep.
+    context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
     context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);
     context->GetValue<ObjectGuid>("dungeon clear engage trash target")->Set(ObjectGuid::Empty);
-    // Invalidate the long-path cache so the next Advance tick rebuilds
-    // for the new target boss.
-    context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-    context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
@@ -671,14 +664,14 @@ bool DcGoAction::Execute(Event event)
     // Abort any in-flight pull on the old target before routing to the new one.
     ResetPullTransient(context);
 
-    context->GetValue<uint32>("dungeon clear long path target")->Set(0u);
-    context->GetValue<uint32>("dungeon clear long path expires")->Set(0u);
+    // Route to the new target with a clean approach FSM: counters, latches,
+    // loot-yield anchor, position sentinel + committed boss, and the long-path
+    // cache (forcing a rebuild for the new target) all reset in lockstep.
+    context->GetValue<DcApproachState&>("dungeon clear approach state")->Get().Reset();
     context->GetValue<uint32>("dungeon clear current hop")->Set(0u);
     context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Reset();
     context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get() = DungeonFollowerState{};
 
-    context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
-    context->GetValue<uint32>("dungeon clear last target entry")->Set(0u);
     context->GetValue<std::string&>("dungeon clear stall reason")->Get().clear();
     context->GetValue<std::string&>("dungeon clear last said reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear fallback target")->Set(ObjectGuid::Empty);

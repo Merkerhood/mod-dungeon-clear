@@ -15,6 +15,7 @@
 #include "Value.h"
 #include "World.h"
 #include "WorldMock.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "ScriptMgr.h"
 #include "ScriptDefines/MiscScript.h"
@@ -470,7 +471,9 @@ protected:
         context->SetValue<bool>("has available loot", false);
         context->SetValue<bool>("can loot", false);
         context->SetValue<std::string>("dungeon clear phase", "idle");
-        context->SetValue<uint32>("dungeon clear long path target", 0);
+        // Approach FSM state read by BuildStatusPayload (the long-path cache's
+        // target entry drives the routeReady display); one owned struct now.
+        context->SetRefValue<DcApproachState>("dungeon clear approach state", DcApproachState{});
         // Advanced-pull state read by BuildStatusPayload (the trailing tri-state
         // preference + the live Dynamic verdict).
         context->SetValue<bool>("dungeon clear pull mode", false);

@@ -53,6 +53,7 @@
 #include "ServerFacade.h"
 #include "Timer.h"
 #include "World.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -244,7 +245,8 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
             // No blocking condition — report what the advance action is up to,
             // using its per-tick phase token plus the route cache state.
             std::string const& phase = AI_VALUE(std::string&, "dungeon clear phase");
-            uint32 const pathTarget = AI_VALUE(uint32, "dungeon clear long path target");
+            uint32 const pathTarget =
+                AI_VALUE(DcApproachState&, "dungeon clear approach state").longPathTargetEntry;
             bool const routeReady = next.has_value() && pathTarget == next->entry;
 
             if (phase == "recovering")
