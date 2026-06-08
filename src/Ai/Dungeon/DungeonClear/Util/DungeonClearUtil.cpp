@@ -1333,8 +1333,9 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     // floor (a ledge/ramp) — it must not seed the pack or count as a proximity /
     // assist aggro just because it is near in plan view. Same constant the
     // corridor/boss-arrival floor guards use elsewhere in this file.
+    std::vector<std::size_t> counted;
     uint32 const count = DungeonClearMath::EstimateAggroCount(
-        mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE);
+        mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE, &counted);
     bool const advanced = count > maxLeeroy;
     DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
                   "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, "
@@ -1342,6 +1343,27 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
                   bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
                   searchRadius, uint32(lowMember->GetLevel()), combatSpread,
                   assistRadius, maxLeeroy, advanced ? "ADVANCED" : "LEEROY");
+    // On the surprising verdict (Advanced), dump every hostile the estimate saw —
+    // distance to the camp, its computed aggro reach, the eligibility gate, and
+    // whether it was COUNTED — so a wrong count can be traced to the exact mobs and
+    // the reason (proximity reach too far / assist hop / LOS gate / pack id).
+    if (advanced)
+    {
+        std::unordered_set<std::size_t> countedSet(counted.begin(), counted.end());
+        for (std::size_t i = 0; i < mobs.size(); ++i)
+        {
+            Unit* u = hostiles[i];
+            Creature* cr = u->ToCreature();
+            DC_PULL_DEBUG("[DC:{}]   mob[{}] entry {} lvl {} at {:.1f}yd "
+                          "reach {:.1f}+{:.0f}={:.1f} elig {} pack {} -> {}",
+                          bot->GetName(), i, u->GetEntry(),
+                          cr ? uint32(cr->GetLevel()) : 0u, target->GetExactDist2d(u),
+                          mobs[i].aggroReach, combatSpread,
+                          mobs[i].aggroReach + combatSpread,
+                          mobs[i].chainEligible ? "Y" : "N", mobs[i].packId,
+                          countedSet.count(i) ? "COUNTED" : "-");
+        }
+    }
     return advanced;
 }
 

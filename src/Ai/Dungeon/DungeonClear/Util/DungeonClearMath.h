@@ -60,9 +60,12 @@ namespace DungeonClearMath
     // floor gaps exceed it, so a mob a ramp above/below never counts. Separated
     // from the game-state resolution in DungeonClearUtil::ClassifyPullAdvanced so
     // the logic is unit-testable.
+    // `countedOut` (optional) receives the indices of every mob the estimate
+    // counted, for diagnostic logging at the call site.
     std::uint32_t EstimateAggroCount(std::vector<DynPullMob> const& mobs,
                                      std::size_t targetIdx, float combatSpread,
-                                     float assistRadius, float zTolerance);
+                                     float assistRadius, float zTolerance,
+                                     std::vector<std::size_t>* countedOut = nullptr);
 
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,

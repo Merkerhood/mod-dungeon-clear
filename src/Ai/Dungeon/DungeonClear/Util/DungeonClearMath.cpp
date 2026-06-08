@@ -12,7 +12,8 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
                                                    std::size_t targetIdx,
                                                    float combatSpread,
                                                    float assistRadius,
-                                                   float zTolerance)
+                                                   float zTolerance,
+                                                   std::vector<std::size_t>* countedOut)
 {
     std::size_t const n = mobs.size();
     if (n == 0 || targetIdx >= n)
@@ -107,10 +108,16 @@ std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const
                 inSet[k] = 1;
     }
 
+    if (countedOut)
+        countedOut->clear();
     std::uint32_t count = 0;
     for (std::size_t i = 0; i < n; ++i)
         if (inSet[i])
+        {
             ++count;
+            if (countedOut)
+                countedOut->push_back(i);
+        }
     return count;
 }
 
