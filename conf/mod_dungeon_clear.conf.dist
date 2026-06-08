@@ -296,10 +296,10 @@ DungeonClear.PullSafetyHpPct = 50.0
 #        of another pack (see PullCampSafeRadius) the tank keeps walking back until
 #        it is, up to PullMaxDrag.
 #
-#        Default: 40.0
+#        Default: 25.0
 #
 
-DungeonClear.PullSetback = 40.0
+DungeonClear.PullSetback = 25.0
 
 #
 #    DungeonClear.PullCampSafeRadius
@@ -321,10 +321,10 @@ DungeonClear.PullCampSafeRadius = 25.0
 #        pull can't drag a pack across the entire instance; with no leash to worry
 #        about it can be large.
 #
-#        Default: 100.0
+#        Default: 40.0
 #
 
-DungeonClear.PullMaxDrag = 100.0
+DungeonClear.PullMaxDrag = 40.0
 
 #
 #    DungeonClear.PullCommitRangeFloor / DungeonClear.PullCommitRangeCap
@@ -361,10 +361,10 @@ DungeonClear.PullCommitRangeCap = 34.0
 #        Setting this below PullCampSafeRadius therefore has no effect; raise it
 #        above to make Dynamic more cautious still.
 #
-#        Default: 15.0
+#        Default: 28.0
 #
 
-DungeonClear.PullDynamicChainRadius = 15.0
+DungeonClear.PullDynamicChainRadius = 28.0
 
 #
 #    DungeonClear.PullDynamicLargePackThreshold

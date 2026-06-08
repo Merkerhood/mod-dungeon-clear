@@ -62,9 +62,9 @@ inline constexpr DcSettingDef kDcSettings[] =
     // gets". SafeRadius is the clearance the camp keeps from any OTHER pack so the
     // fight can't aggro a neighbour; if the setback point isn't clear the placer
     // walks further back (up to MaxDrag) until it is. See ComputeSafeCamp.
-    { "PullSetback",           DcType::Float, 40,  10, 100,  true  },
+    { "PullSetback",           DcType::Float, 25,  10, 100,  true  },
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
-    { "PullMaxDrag",           DcType::Float,100,  20, 200,  true  },
+    { "PullMaxDrag",           DcType::Float, 40,  20, 200,  true  },
 
     // PullCommitRange{Floor,Cap}: how close the pack must be before the tank stops,
     // holds, and waits for the party at camp BEFORE stepping in to tag. Sized to the
@@ -88,7 +88,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     // height-aware (a pack a floor above/below never counts). LargePackThreshold
     // forces Advanced for a single big pack even with no neighbour. See
     // DungeonClearUtil::ClassifyPullAdvanced.
-    { "PullDynamicChainRadius",     DcType::Float, 15,  5,  40,  true  },
+    { "PullDynamicChainRadius",     DcType::Float, 28,  5,  40,  true  },
     { "PullDynamicLargePackThreshold", DcType::UInt, 5,  1,  20,  true  },
 
     // Server-only (not overridable from the addon).

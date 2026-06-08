@@ -133,7 +133,7 @@ balanced point; nudge them per realm to taste:
 
 | Setting | Default | More aggressive (Leeroy more) | More passive (Advanced more) |
 |---|---|---|---|
-| `DungeonClear.PullDynamicChainRadius` | `15.0` | **Lower** it — only packs almost on top of each other count as a cluster, so more rooms are Leeroy'd. | **Raise** it — packs farther apart still count as one room, so more rooms get the careful camp-pull. |
+| `DungeonClear.PullDynamicChainRadius` | `28.0` | **Lower** it — only packs almost on top of each other count as a cluster, so more rooms are Leeroy'd. | **Raise** it — packs farther apart still count as one room, so more rooms get the careful camp-pull. |
 | `DungeonClear.PullDynamicLargePackThreshold` | `5` | **Raise** it — bigger lone packs are still Leeroy'd (set very high to always Leeroy a lone pack regardless of size). | **Lower** it — even modest lone packs get Advanced-pulled. |
 
 - **Chain radius** is measured nearest-mob to nearest-mob, on the same floor and
