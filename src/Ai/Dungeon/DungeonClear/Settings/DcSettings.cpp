@@ -73,7 +73,7 @@ namespace
         if (!d.playerFacing || !bot)
             return ObjectGuid::Empty;
 
-        Player* leader = DungeonClearUtil::FindLeaderTank(bot);
+        Player* leader = DcLeaderSignal::FindLeaderTank(bot);
         return leader ? leader->GetGUID() : ObjectGuid::Empty;
     }
 }

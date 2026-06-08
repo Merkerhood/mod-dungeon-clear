@@ -109,7 +109,7 @@ public:
 };
 
 // Fires on EVERY member of a DC run that is PAUSED — the leader AND its
-// followers (see DungeonClearUtil::IsInPausedDungeonClearRun). While paused the
+// followers (see DcLeaderSignal::IsInPausedDungeonClearRun). While paused the
 // driving ladder goes inert and "dungeon clear party tank" goes null, so the
 // loot-floor filter that normally runs inline in the advance (leader) and
 // follow-tank (follower) actions never gets a tick: the party reverts to the
@@ -192,7 +192,7 @@ public:
 // combat engine where its own rotation/heal logic (un-suppressed there) runs.
 // Outranks hold-at-camp so it preempts the camp yield. Goes inert the instant the
 // bot is in combat (the combat-engine twin below takes any out-of-LOS handoff).
-// See DungeonClearUtil::IsLeaderCampFightActive.
+// See DcLeaderSignal::IsLeaderCampFightActive.
 class DungeonClearAssistCampTrigger : public Trigger
 {
 public:

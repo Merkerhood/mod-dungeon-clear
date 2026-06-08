@@ -89,7 +89,7 @@ namespace
         // without one (it just reports the server defaults so the addon panel
         // can render anywhere); set/reset need an owner to attach the override
         // to and report an error when there's no tank in the group.
-        Player* leader = DungeonClearUtil::FindLeaderTank(player);
+        Player* leader = DcLeaderSignal::FindLeaderTank(player);
         ObjectGuid const owner = leader ? leader->GetGUID() : ObjectGuid::Empty;
 
         if (subCmd == "sync")

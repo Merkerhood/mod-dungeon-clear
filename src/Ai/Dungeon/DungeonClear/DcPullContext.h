@@ -15,7 +15,7 @@
 // AND the cross-context signal followers read to decide when to hold + go passive
 // at camp. Forming/Advancing/Returning are the "holding" phases that keep the
 // party passive at camp; Idle and Engage release them. See
-// DungeonClearUtil::IsPullPhaseHolding.
+// DcLeaderSignal::IsPullPhaseHolding.
 enum class DcPullPhase : uint32
 {
     Idle      = 0,
@@ -33,7 +33,7 @@ enum class DcPullPhase : uint32
 // field HERE (never as a separate value) so it can never be forgotten by a reset.
 //
 // Leader-owned. Followers read `phase`/`camp` cross-context through the leader's
-// copy of this value (DungeonClearUtil::GetLeaderPullInfo / GetLeaderCampHold).
+// copy of this value (DcLeaderSignal::GetLeaderPullInfo / GetLeaderCampHold).
 struct DcPullContext
 {
     // --- FSM sequencing ---------------------------------------------------

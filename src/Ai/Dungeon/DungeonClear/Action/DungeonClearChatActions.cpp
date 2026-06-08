@@ -148,7 +148,7 @@ namespace
         bool const active = (setting == 1u);
         context->GetValue<uint32>("dungeon clear pull setting")->Set(setting);
         context->GetValue<bool>("dungeon clear pull mode")->Set(active);
-        DungeonClearUtil::SetLeaderDazeImmunity(bot, active);
+        DcLeaderSignal::SetLeaderDazeImmunity(bot, active);
         if (active)
             context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().camp =
                 Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
@@ -206,7 +206,7 @@ bool DcOnAction::Execute(Event event)
     // leader's enabled flag via DungeonClearPartyTankValue, so nothing else is
     // needed for them. Leadership is the lowest-GUID tank bot in the group, so
     // exactly one bot takes the path below even with several tanks present.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
     {
         if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
             botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
@@ -310,7 +310,7 @@ bool DcOffAction::Execute(Event event)
     // following the player automatically. Leave the inert strategy installed
     // and stay quiet — they must NOT strip it, or they'd stop following the
     // leader on a subsequent `dc on`.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
     context->GetValue<bool>("dungeon clear enabled")->Set(false);
@@ -320,7 +320,7 @@ bool DcOffAction::Execute(Event event)
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
     context->GetValue<uint32>("dungeon clear pull setting")->Set(0u);
     context->GetValue<bool>("dungeon clear pull mode")->Set(false);
-    DungeonClearUtil::SetLeaderDazeImmunity(bot, false);
+    DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
     ResetPullTransient(context);
     context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     context->GetValue<uint32>("dungeon clear stuck count")->Set(0u);
@@ -364,7 +364,7 @@ bool DcSkipAction::Execute(Event event)
     // Only the leader owns the run state. Non-leaders reached via the party-chat
     // keyword fan-out stay quiet (the command/addon path already targets only
     // the leader). Without this they'd each error "not enabled".
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
     if (!AI_VALUE(bool, "dungeon clear enabled"))
     {
@@ -426,7 +426,7 @@ bool DcStatusAction::Execute(Event event)
     // refresh calls (from dc on/off/skip/go/pause) run on the leader, while the
     // party-chat keyword fans out to every bot. Without this gate a raid's
     // non-leader tanks would each emit a duplicate STATUS line to the addon.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
     bool const enabled = AI_VALUE(bool, "dungeon clear enabled");
@@ -462,7 +462,7 @@ bool DcBossesAction::Execute(Event event)
     // Only the leader answers the boss-list request — the addon tracks the
     // leader, and the chat-keyword fan-out would otherwise have every raid tank
     // reply with a duplicate list.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
     auto const& bosses = AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
@@ -575,7 +575,7 @@ bool DcGoAction::Execute(Event event)
     }
     // Leader owns the run; non-leaders reached via the chat-keyword fan-out
     // stay quiet (the command/addon path already targets only the leader).
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
     if (!AI_VALUE(bool, "dungeon clear enabled"))
     {
@@ -706,7 +706,7 @@ bool DcPauseAction::Execute(Event event)
 
     // Followers have nothing to toggle: their follow-tank trigger reacts to the
     // leader's paused flag via DungeonClearPartyTankValue. Stay quiet.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
     if (!AI_VALUE(bool, "dungeon clear enabled"))
@@ -770,7 +770,7 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
 {
     // Leader-only: a follower has no paused flag of its own to clear — it mirrors
     // the leader via the multiplier / party-tank value.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
     if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear paused"))
         return false;
@@ -800,8 +800,8 @@ bool DcPullAction::Execute(Event event)
     }
 
     // Followers have nothing to toggle: pull behavior is driven entirely off the
-    // leader's flag (DungeonClearUtil::GetLeaderPullInfo). Stay quiet.
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    // leader's flag (DcLeaderSignal::GetLeaderPullInfo). Stay quiet.
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
     // Pull mode is settable BEFORE the run starts: when DC is off we just store

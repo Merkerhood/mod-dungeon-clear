@@ -6,7 +6,7 @@
  *     per-run override  ->  mod_dungeon_clear.conf  ->  registry default
  *
  * The per-run override layer is keyed by the run's leader-tank GUID
- * (DungeonClearUtil::FindLeaderTank), so each dungeon run can carry its own
+ * (DcLeaderSignal::FindLeaderTank), so each dungeon run can carry its own
  * settings pushed from the companion addon while the conf file stays the
  * server-wide default. Reads are lazy (no caching), so an override applied
  * mid-run takes effect on the next tick with no reload.

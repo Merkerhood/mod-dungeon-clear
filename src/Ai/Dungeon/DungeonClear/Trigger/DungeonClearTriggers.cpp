@@ -40,12 +40,12 @@ namespace
     // tanks can have the flag set, but exactly one drives — the others follow it
     // like any other member (see DungeonClearFollowTankTrigger). Only the leader
     // ever reaches the leadership scan: followers don't set `enabled`, so they
-    // short-circuit on the first check. See DungeonClearUtil::FindLeaderTank.
+    // short-circuit on the first check. See DcLeaderSignal::FindLeaderTank.
     bool IsEnabled(AiObjectContext* context, Player* bot)
     {
         if (!AI_VALUE(bool, "dungeon clear enabled") || AI_VALUE(bool, "dungeon clear paused"))
             return false;
-        return DungeonClearUtil::IsDungeonClearLeader(bot);
+        return DcLeaderSignal::IsDungeonClearLeader(bot);
     }
 
     bool IsBetweenPullsReady(Player* bot, AiObjectContext* context)
@@ -377,7 +377,7 @@ bool DungeonClearFollowTankTrigger::IsActive()
     {
         Position camp;
         bool passive = false;
-        if (DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+        if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
             return false;
     }
 
@@ -518,7 +518,7 @@ bool DungeonClearPullManeuverTrigger::IsActive()
         return false;
     if (!AI_VALUE(bool, "dungeon clear enabled") || !AI_VALUE(bool, "dungeon clear pull mode"))
         return false;
-    if (!DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
 
     uint32 const phase = static_cast<uint32>(AI_VALUE(DcPullContext&, "dungeon clear pull context").phase);
@@ -548,7 +548,7 @@ bool DungeonClearHoldAtCampTrigger::IsActive()
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
     // The leader drives the pull; it never holds at its own camp.
-    if (DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
 
     // Hold at camp throughout pull mode (NOT just mid-maneuver): in pull mode the
@@ -557,7 +557,7 @@ bool DungeonClearHoldAtCampTrigger::IsActive()
     // action only during the holding phases (see GetLeaderCampHold's passiveOut).
     Position camp;
     bool passive = false;
-    return DungeonClearUtil::GetLeaderCampHold(bot, camp, passive);
+    return DcLeaderSignal::GetLeaderCampHold(bot, camp, passive);
 }
 
 bool DungeonClearHoldAtCampCombatTrigger::IsActive()
@@ -570,12 +570,12 @@ bool DungeonClearHoldAtCampCombatTrigger::IsActive()
     if (!bot || bot->isDead() || !bot->IsInCombat())
         return false;
     // The leader drives the pull; it never holds at its own camp.
-    if (DungeonClearUtil::IsDungeonClearLeader(bot))
+    if (DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
 
     Position camp;
     bool passive = false;
-    if (!DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+    if (!DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
         return false;
     return passive;
 }
@@ -593,7 +593,7 @@ namespace
     // (see DungeonClearAssistCampTrigger).
     bool ShouldAssistCampFight(PlayerbotAI* botAI, Player* bot)
     {
-        if (!DungeonClearUtil::IsLeaderCampFightActive(bot))
+        if (!DcLeaderSignal::IsLeaderCampFightActive(bot))
             return false;
         return botAI->GetAiObjectContext()
                    ->GetValue<GuidVector>("attackers")->Get().empty();
@@ -613,7 +613,7 @@ bool DungeonClearAssistCampTrigger::IsActive()
     // over. Hence we gate on the camp fight alone, not on an empty attacker list.
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
-    return DungeonClearUtil::IsLeaderCampFightActive(bot);
+    return DcLeaderSignal::IsLeaderCampFightActive(bot);
 }
 
 bool DungeonClearAssistCampCombatTrigger::IsActive()
@@ -649,7 +649,7 @@ bool DungeonClearRegroupCombatTrigger::IsActive()
     // healer-LOS case the camp-fight assist (which only engages the pack) misses.
     Position camp;
     bool passive = false;
-    if (DungeonClearUtil::GetLeaderCampHold(bot, camp, passive) && passive)
+    if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive) && passive)
         return false;
 
     float const dist = bot->GetExactDist2d(tank);
@@ -682,5 +682,5 @@ bool DungeonClearFilterLootTrigger::IsActive()
     // IsAnyPartyMemberLooting true and stalls the tank. Covers ONLY the paused
     // gap: during an active run the inline filters in advance/follow-tank already
     // run. `dc off` clears `enabled`, handing loot fully back to stock.
-    return DungeonClearUtil::IsInPausedDungeonClearRun(bot);
+    return DcLeaderSignal::IsInPausedDungeonClearRun(bot);
 }

@@ -11,7 +11,7 @@
 class PlayerbotAI;
 class Player;
 
-// Returns the elected leader tank (DungeonClearUtil::FindLeaderTank) while its
+// Returns the elected leader tank (DcLeaderSignal::FindLeaderTank) while its
 // dungeon-clear mode is enabled and unpaused, or nullptr otherwise. Used by all
 // non-leader bots — non-tanks and non-leader (off-)tanks in a raid alike — to
 // redirect their follow target to the leader for the duration of the clear

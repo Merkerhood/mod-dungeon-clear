@@ -81,7 +81,7 @@ float DungeonClearMultiplier::GetValue(Action* action)
     {
         Position camp;
         bool passive = false;
-        if (DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+        if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
             return 0.0f;
     }
 

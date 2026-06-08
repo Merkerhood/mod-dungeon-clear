@@ -2794,7 +2794,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // The instant the tank commits — enters combat (Leeroy) or marks a camp
     // (Advanced hands the party to hold-at-camp, so follow-tank stands down) — this
     // gate flips false and the party reverts to the tight follow / camp hold below.
-    if (DungeonClearUtil::IsLeaderDynamicScouting(bot))
+    if (DcLeaderSignal::IsLeaderDynamicScouting(bot))
     {
         float const lag = DcSettings::GetFloat(bot, "PullDynamicPartyLag");
         float const toTank = bot->GetExactDist2d(tank);
@@ -2836,7 +2836,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         // points are reachability-gated centered crumbs, so the move stays on the
         // safe route the tank already cleared.
         Position trailPoint;
-        if (DungeonClearUtil::GetLeaderScoutTrailPoint(bot, lag, trailPoint))
+        if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint))
         {
             // normal_only: reject (don't straight-line to) a point that isn't
             // reachable over a real navmesh path. Crumbs are already gated for
@@ -3418,7 +3418,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
 {
     Position camp;
     bool passive = false;
-    if (!DungeonClearUtil::GetLeaderCampHold(bot, camp, passive))
+    if (!DcLeaderSignal::GetLeaderCampHold(bot, camp, passive))
         return false;
 
     // Healers hold at camp like everyone else but are never made passive
@@ -3556,7 +3556,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
 
 bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
 {
-    Player* leader = DungeonClearUtil::FindLeaderTank(bot);
+    Player* leader = DcLeaderSignal::FindLeaderTank(bot);
     if (!leader || leader == bot)
         return false;
 

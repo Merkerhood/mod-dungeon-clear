@@ -78,7 +78,7 @@ namespace
 
         // Resolve the run owner (leader tank) so we can surface per-run overrides.
         // Empty when the issuer isn't in a DC run — then only conf/defaults show.
-        Player* leader = DungeonClearUtil::FindLeaderTank(issuer);
+        Player* leader = DcLeaderSignal::FindLeaderTank(issuer);
         ObjectGuid const runOwner = leader ? leader->GetGUID() : ObjectGuid::Empty;
 
         handler->SendSysMessage("DungeonClear config (effective values; * = addon override):");

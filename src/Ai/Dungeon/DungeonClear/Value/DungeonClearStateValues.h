@@ -545,7 +545,7 @@ public:
 // scattered across 8 call sites and provably incomplete (last-pull-target and
 // breadcrumbs survived pause/skip/resume), the root of the "stale latch" bug class.
 // Leader-owned; followers read `phase`/`camp` cross-context via the leader's copy
-// (DungeonClearUtil::GetLeaderPullInfo / GetLeaderCampHold). Reset alongside the run
+// (DcLeaderSignal::GetLeaderPullInfo / GetLeaderCampHold). Reset alongside the run
 // state (dc on/off / death / cleared) and on every pull interrupt (pause / skip /
 // resume / go) through DungeonClearChatActions::ResetPullTransient.
 class DungeonClearPullContextValue : public ManualSetValue<DcPullContext&>

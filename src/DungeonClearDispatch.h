@@ -21,7 +21,7 @@ namespace DungeonClearDispatch
 {
     // Dispatch "dc <sub>" to the issuer's group's elected leader tank — the
     // single bot that owns the run for the whole party or raid (see
-    // DungeonClearUtil::FindLeaderTank). All DC state lives on the leader, so
+    // DcLeaderSignal::FindLeaderTank). All DC state lives on the leader, so
     // every subcommand (on/off/skip/pause/status/bosses/go) goes there alone;
     // followers react to the leader's flags on their own. Returns the number of
     // bots that handled it (0 or 1); 0 means "no tank bot found in the group".
@@ -30,7 +30,7 @@ namespace DungeonClearDispatch
         if (!issuer)
             return 0;
 
-        Player* leader = DungeonClearUtil::FindLeaderTank(issuer);
+        Player* leader = DcLeaderSignal::FindLeaderTank(issuer);
         if (!leader)
             return 0;
 

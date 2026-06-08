@@ -17,7 +17,7 @@ Player* DungeonClearPartyTankValue::Calculate()
     // The single elected leader for the whole group (party or raid). For the
     // leader bot itself this resolves to `bot`; for every follower — non-tanks
     // and non-leader (off-)tanks alike — it is the tank they should trail.
-    Player* leader = DungeonClearUtil::FindLeaderTank(bot);
+    Player* leader = DcLeaderSignal::FindLeaderTank(bot);
     if (!leader)
         return nullptr;
 
