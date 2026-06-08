@@ -35,4 +35,6 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (DungeonClearUtil decomposition: ranges/doors/reachability/corridor unit)
 # Util/DcPartyState.{h,cpp}
 #   (DungeonClearUtil decomposition: readiness/rest gate/status text unit)
+# Util/DcLootPolicy.{h,cpp}
+#   (DungeonClearUtil decomposition: loot quality floor/skip/give-up unit)
 # (this comment bumps mtime to force CMake re-glob on next build)

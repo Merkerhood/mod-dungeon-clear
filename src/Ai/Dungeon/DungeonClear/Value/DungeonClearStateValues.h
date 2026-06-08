@@ -439,7 +439,7 @@ public:
 // abandoned to the ms timestamp at which the skip expires — or to
 // DungeonClearUtil::LOOT_SKIP_STICKY (0) for a permanent skip. Each DC tick the
 // still-live entries are stripped from the stock "available loot" stack and
-// cleared from "loot target" (see DungeonClearUtil::StripSkippedLoot), so
+// cleared from "loot target" (see DcLootPolicy::StripSkippedLoot), so
 // neither the loot flags nor stock's nearest-target pick can re-commit to it.
 // This is what breaks the corpse<->tank / chest<->path ping-pong that arose
 // when un-finishable loot kept re-arming the loot yield every time the bot
@@ -470,7 +470,7 @@ private:
 
 // The loot GUID the bot is currently "camped" on — within interaction range
 // (can-loot true) of one specific corpse — together with the ms timestamp at
-// which it arrived. DungeonClearUtil::MaybeGiveUpCampedLoot uses the pair to
+// which it arrived. DcLootPolicy::MaybeGiveUpCampedLoot uses the pair to
 // time how long the bot has stood on the SAME corpse: a normal loot
 // transaction clears in a tick or two, so camping a plain (non-gathering)
 // corpse much longer means its loot is un-finishable (group-roll items pending

@@ -225,7 +225,7 @@ namespace
 
     // Camp cutoff: how long the bot may stand within interaction range of ONE
     // plain corpse (can-loot true) before we treat its loot as un-finishable and
-    // skip it (see DungeonClearUtil::MaybeGiveUpCampedLoot). Unlike the yield
+    // skip it (see DcLootPolicy::MaybeGiveUpCampedLoot). Unlike the yield
     // timeout above — which budgets for walking in from lootDistance — this
     // clock starts only once the bot has arrived, where a real pickup resolves
     // in a tick or two. Bots park on corpses whose loot they can never take
@@ -1237,16 +1237,16 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
     // relevance, above the loot pipeline — means stock can't re-pick a skipped
     // corpse this tick, so the flags below and the timeout's give-up stay in
     // sync and the yield doesn't re-arm on something we just abandoned.
-    DungeonClearUtil::StripSkippedLoot(botAI);
+    DcLootPolicy::StripSkippedLoot(botAI);
     // Proactively skip a corpse with nothing takeable for us (un-finishable
     // group-roll/reserved loot, or below DungeonClear.LootMinQuality) BEFORE we
     // walk to it, so it never arms the yield at all — the event-driven analogue
     // of the camp/timeout cutoffs below, which only fire after a wasted walk.
-    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
+    DcLootPolicy::MaybeSkipUnworthyLoot(botAI);
     // Fast-skip a corpse we've been camped on too long (un-lootable) before it
     // can burn the full yield timeout below; followers do the same in their
     // follow-tank yield, which is what actually shortens IsAnyPartyMemberLooting.
-    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
+    DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =
@@ -1265,7 +1265,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
             // GiveUpCurrentLoot blacklists our committed loot; StripSkippedLoot
             // next tick removes it so the flags clear. Don't reset lootYieldStart
             // here: keep it expired so we keep advancing until the flags drop.
-            DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+            DcLootPolicy::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] loot-yield timed out after {}ms -> giving up on corpse, advancing",
                      bot->GetName(), now - lootYieldStart);
@@ -2735,18 +2735,18 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // so a corpse this follower abandoned can't keep the flags below true and
     // re-arm the yield each time it drifts back within lootDistance of the
     // tank — the corpse<->tank ping-pong.
-    DungeonClearUtil::StripSkippedLoot(botAI);
+    DcLootPolicy::StripSkippedLoot(botAI);
     // Proactively skip a corpse with nothing takeable for this follower (un-
     // finishable group-roll/reserved loot, or below DungeonClear.LootMinQuality)
     // BEFORE it walks over — so it never steps off follow for it and never adds
     // to the tank's IsAnyPartyMemberLooting wait. Event-driven counterpart to
     // the camp/timeout cutoffs, which only fire after the walk is wasted.
-    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
+    DcLootPolicy::MaybeSkipUnworthyLoot(botAI);
     // Fast-skip a corpse this follower has been camped on too long instead of
     // waiting out the full yield timeout: an un-finishable corpse (group-roll
     // items pending, bags full) otherwise wastes 15s here AND keeps the tank's
     // IsAnyPartyMemberLooting true, stalling the whole party on it.
-    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
+    DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
         context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
     bool const lootYield =
@@ -2770,7 +2770,7 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         // flags drop next tick and we stop being yanked back to it), then resume
         // following to rejoin the tank. Leave lootYieldStart expired so we keep
         // following until the flags clear (which resets the timer).
-        DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+        DcLootPolicy::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] follow-tank loot-yield timed out after {}ms -> giving up on corpse, following",
                  bot->GetName(), now - lootYieldStart);
@@ -2879,9 +2879,9 @@ bool DungeonClearFilterLootAction::Execute(Event /*event*/)
     // (or an un-finishable group-roll, or any chest while IgnoreChests is set),
     // and time out a corpse we've been camped on. All three only prune the stock
     // loot stack/target — no movement here.
-    DungeonClearUtil::StripSkippedLoot(botAI);
-    DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
-    DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
+    DcLootPolicy::StripSkippedLoot(botAI);
+    DcLootPolicy::MaybeSkipUnworthyLoot(botAI);
+    DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     // Return false: we only removed loot the bot must NOT take. Returning false
     // lets the engine fall through to the stock loot pipeline (open loot 8, move
     // to loot 7, ...) this same tick so whatever survived the filter is still
@@ -3447,9 +3447,9 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // entirely while the tank is tagging (passive) — the party must stay pinned.
     if (!passive)
     {
-        DungeonClearUtil::StripSkippedLoot(botAI);
-        DungeonClearUtil::MaybeSkipUnworthyLoot(botAI);
-        DungeonClearUtil::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS,
+        DcLootPolicy::StripSkippedLoot(botAI);
+        DcLootPolicy::MaybeSkipUnworthyLoot(botAI);
+        DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS,
                                                 DC_LOOT_GIVEUP_TTL_MS);
         uint32& lootYieldStart =
             context->GetValue<uint32>("dungeon clear loot yield start")->RefGet();
@@ -3470,7 +3470,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
             }
             // Waited long enough — blacklist THIS corpse so the flags drop and we
             // stop being drawn back to it, then resume holding at camp.
-            DungeonClearUtil::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
+            DcLootPolicy::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
             DC_PULL_TRACE("[DC:{}] hold-at-camp loot-yield timed out -> giving up corpse",
                           bot->GetName());
         }
