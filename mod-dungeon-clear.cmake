@@ -6,6 +6,7 @@ if (BUILD_TESTING)
         add_executable(dungeon_clear_tests
             "${MOD_PATH}/t/TestDungeonClearMath.cpp"
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
+            "${MOD_PATH}/t/TestDungeonClearApproach.cpp"
             "${CMAKE_SOURCE_DIR}/src/test/mocks/TestMap.cpp"
         )
 
