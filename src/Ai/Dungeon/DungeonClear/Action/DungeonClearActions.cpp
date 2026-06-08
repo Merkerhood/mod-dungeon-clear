@@ -6,6 +6,7 @@
 #include "DungeonClearActions.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <memory>
@@ -2572,19 +2573,75 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         lootYieldStart = 0;  // not looting -> reset the commit timer
     }
 
+    // In DYNAMIC pull mode, trail the tank at a lag distance while it scouts toward
+    // the next pack and decides Leeroy vs Advanced (leader out of combat, phase
+    // Idle). The tight follow bubble otherwise dragged the party onto the tank's
+    // heels and into the pack's aggro arc before the tank committed, accidentally
+    // pulling — the reported bug. This can NOT be done through Follow()'s distance
+    // arg: Follow() early-outs whenever the bot is already inside the global
+    // followDistance and refuses to re-issue an existing follow on the same target,
+    // so it can only ever CLOSE a gap, never widen one (the previous attempt was a
+    // silent no-op). Manage the spacing directly instead: hold inside the lag
+    // bubble (let the tank pull ahead), and when the tank has pulled beyond it step
+    // up to the lag ring and stop rather than charging back into the tight bubble.
+    // The instant the tank commits — enters combat (Leeroy) or marks a camp
+    // (Advanced hands the party to hold-at-camp, so follow-tank stands down) — this
+    // gate flips false and the party reverts to the tight follow / camp hold below.
+    if (DungeonClearUtil::IsLeaderDynamicScouting(bot))
+    {
+        float const lag = DcSettings::GetFloat(bot, "PullDynamicPartyLag");
+        float const toTank = bot->GetExactDist2d(tank);
+        // Keep the teardown/orphan-reaper bookkeeping live across the whole window
+        // so a follow generator we (or a prior tick) installed is still cancelled
+        // when the DC tank goes away.
+        followedTank = tank->GetGUID();
+        DungeonClearUtil::MarkFollowing(bot->GetGUID());
+        if (toTank <= lag)
+        {
+            // Inside the lag bubble: hold position. Tear down any leftover
+            // continuous MoveFollow so the bot actually stops instead of creeping
+            // back to the tight followDistance.
+            if (bot->GetMotionMaster() &&
+                bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            {
+                if (bot->isMoving())
+                    bot->StopMoving();
+                bot->GetMotionMaster()->Clear();
+            }
+            DC_PULL_TRACE("[DC:{}] scout-lag: holding {:.1f}yd behind tank (lag {:.1f})",
+                          bot->GetName(), toTank, lag);
+            return true;
+        }
+        // Tank pulled beyond the lag: step up to a point `lag` yards from the tank
+        // on our current bearing (i.e. behind the moving tank) and stop. normal_only
+        // so a point that isn't reachable over a real navmesh path is rejected
+        // rather than walked to via a straight spline that clips terrain.
+        float const tx = tank->GetPositionX();
+        float const ty = tank->GetPositionY();
+        float const dx = bot->GetPositionX() - tx;
+        float const dy = bot->GetPositionY() - ty;
+        float const len = std::sqrt(dx * dx + dy * dy);
+        if (len > 0.01f)
+        {
+            float const px = tx + dx / len * lag;
+            float const py = ty + dy / len * lag;
+            if (MoveTo(bot->GetMapId(), px, py, bot->GetPositionZ(),
+                       false, false, /*normal_only=*/true))
+            {
+                DC_PULL_DEBUG("[DC:{}] scout-lag: stepping to lag ring "
+                              "(was {:.1f}yd behind tank, lag {:.1f})",
+                              bot->GetName(), toTank, lag);
+                return true;
+            }
+        }
+        // Degenerate (on top of the tank) or unreachable trail point: fall through
+        // to a normal follow so the party never gets permanently stranded.
+    }
+
     // Tighter cluster than default. Keeps followers in healer LOS and out
     // of mob aggro-radius arcs during the advance. Default followDistance
     // (~10yd) had them strung out by the time the tank engaged.
-    float dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
-    // In DYNAMIC pull mode, trail the tank further back while it scouts toward the
-    // next pack and decides Leeroy vs Advanced (leader out of combat, phase Idle).
-    // The tight 6yd bubble otherwise dragged the party onto the tank's heels and
-    // into the pack's aggro arc before the tank committed, accidentally pulling.
-    // The lag drops back to the tight follow the instant the tank engages (this
-    // gate flips false) so DPS aren't left trailing once the fight is on; an
-    // Advanced verdict marks a camp and hands the party to hold-at-camp instead.
-    if (DungeonClearUtil::IsLeaderDynamicScouting(bot))
-        dist = std::max(dist, DcSettings::GetFloat(bot, "PullDynamicPartyLag"));
+    float const dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
     // Remember who we're chasing so the teardown branch above can cancel this
     // continuous MoveFollow once the DC tank goes away.
     followedTank = tank->GetGUID();
@@ -3311,6 +3368,42 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
 
     MoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
            moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
+           /*normal_only*/ false, /*exact_waypoint*/ false,
+           MovementPriority::MOVEMENT_COMBAT);
+    return true;
+}
+
+bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
+{
+    // The leader tank, non-null only on an active run (gated again by the trigger).
+    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    if (!tank || tank == bot)
+        return false;
+
+    // Close on the tank, but stop a few yards short rather than stacking on its
+    // cell — enough to restore line of sight and heal/cast range without crowding
+    // it (or piling a ranged class into melee/AoE). Pathing rounds corners, which
+    // is exactly what regains a stranded healer's sight of its heal target. Once
+    // the bot is back inside the leash (and, for a healer, back in LOS) the trigger
+    // goes inert and stock combat rotation owns the tick again.
+    constexpr float standoff = 5.0f;
+    float const dist = bot->GetExactDist2d(tank);
+
+    float x = tank->GetPositionX();
+    float y = tank->GetPositionY();
+    float const z = tank->GetPositionZ();
+    if (dist > standoff)
+    {
+        float const frac = (dist - standoff) / dist;
+        x = bot->GetPositionX() + (tank->GetPositionX() - bot->GetPositionX()) * frac;
+        y = bot->GetPositionY() + (tank->GetPositionY() - bot->GetPositionY()) * frac;
+    }
+
+    DC_PULL_TRACE("[DC:{}] regroup: closing on tank {} ({:.1f}yd, los={})",
+                  bot->GetName(), tank->GetName(), dist,
+                  bot->IsWithinLOSInMap(tank) ? 1 : 0);
+
+    MoveTo(tank->GetMapId(), x, y, z, /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false,
            MovementPriority::MOVEMENT_COMBAT);
     return true;

@@ -105,6 +105,34 @@ DungeonClear.RestManaPct = 0
 DungeonClear.PartyMaxSpread = 25.0
 
 #
+#    DungeonClear.CombatRegroup
+#        1 (default): during combat, keep followers grouped on the leader tank.
+#        A follower that drifts beyond CombatRegroupDistance from the tank closes
+#        back on it, and a HEALER also closes whenever it loses line of sight to
+#        the tank (so it can keep healing). This fixes spread-out parties — common
+#        once advanced/dynamic pull loosens the leash — where a follower (often the
+#        healer) is left out of LOS/range and stock combat never repositions it.
+#        Inert while the party is held passive at an advanced-pull camp (the camp
+#        actions own positioning there). 0 disables, leaving stock combat movement.
+#
+#        Default: 1
+#
+
+DungeonClear.CombatRegroup = 1
+
+#
+#    DungeonClear.CombatRegroupDistance
+#        Max distance (yards) a follower may drift from the leader tank during
+#        combat before it closes back on the tank (see DungeonClear.CombatRegroup).
+#        Lower keeps the party tighter in fights; higher tolerates more spread.
+#        Has no effect when CombatRegroup = 0.
+#
+#        Default: 25.0
+#
+
+DungeonClear.CombatRegroupDistance = 25.0
+
+#
 #    DungeonClear.DynamicAggroRange
 #        1 (default): size the "blocking trash" scan band and the boss engage
 #        hand-off from each creature's REAL aggro range (the core's own

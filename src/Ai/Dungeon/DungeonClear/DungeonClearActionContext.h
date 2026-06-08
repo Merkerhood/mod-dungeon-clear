@@ -33,6 +33,7 @@ public:
         creators["dungeon clear stay at camp"] = &DungeonClearActionContext::stay_at_camp;
         creators["dungeon clear assist camp"] = &DungeonClearActionContext::assist_camp;
         creators["dungeon clear assist camp combat"] = &DungeonClearActionContext::assist_camp_combat;
+        creators["dungeon clear regroup combat"] = &DungeonClearActionContext::regroup_combat;
 
         creators["dc on"] = &DungeonClearActionContext::dc_on;
         creators["dc off"] = &DungeonClearActionContext::dc_off;
@@ -67,6 +68,7 @@ private:
     static Action* stay_at_camp(PlayerbotAI* ai) { return new DungeonClearStayAtCampAction(ai); }
     static Action* assist_camp(PlayerbotAI* ai) { return new DungeonClearAssistCampAction(ai); }
     static Action* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatAction(ai); }
+    static Action* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatAction(ai); }
 
     static Action* dc_on(PlayerbotAI* ai) { return new DcOnAction(ai); }
     static Action* dc_off(PlayerbotAI* ai) { return new DcOffAction(ai); }

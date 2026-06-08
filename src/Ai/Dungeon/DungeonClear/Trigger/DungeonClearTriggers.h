@@ -219,4 +219,23 @@ public:
     bool IsActive() override;
 };
 
+// Follower-only, COMBAT engine. Keeps the party grouped on the leader tank during
+// ANY fight (not just an advanced-pull camp) once the leash has loosened. Fires
+// while DC is active on the group, this bot is a non-leader follower in combat,
+// and either it has drifted beyond DungeonClear.CombatRegroupDistance from the
+// tank OR (for a healer) it has lost line of sight to the tank — the case where a
+// stranded healer otherwise just stands there and the party dies. Drives
+// DungeonClearRegroupCombatAction. Deliberately INERT while the party is held
+// passive at an advanced-pull camp (GetLeaderCampHold passive) — the camp/assist
+// actions own positioning there. Gated by DungeonClear.CombatRegroup.
+class DungeonClearRegroupCombatTrigger : public Trigger
+{
+public:
+    DungeonClearRegroupCombatTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear regroup combat", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

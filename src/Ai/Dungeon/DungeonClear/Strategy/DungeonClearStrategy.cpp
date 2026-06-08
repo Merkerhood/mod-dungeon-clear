@@ -188,4 +188,17 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear assist camp combat",
         { NextAction("dungeon clear assist camp combat", 35.0f) }));
+
+    // In-combat regroup for FOLLOWERS: keep the party grouped on the leader tank
+    // during any fight once the leash loosens (advanced/dynamic pull), so a healer
+    // dragged out of LOS/range of the tank closes back in instead of standing idle
+    // while the party dies. Relevance above the stock combat movers (MoveChase ~30)
+    // so it owns the tick over a follower chasing a far target, but BELOW the camp
+    // actions (assist 35, stay-at-camp / pull-maneuver 60) — those own positioning
+    // during an advanced-pull camp, where this trigger stands down anyway. Inert
+    // the instant the bot is back inside the leash / in LOS. See
+    // DungeonClearRegroupCombatTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear regroup combat",
+        { NextAction("dungeon clear regroup combat", 33.0f) }));
 }

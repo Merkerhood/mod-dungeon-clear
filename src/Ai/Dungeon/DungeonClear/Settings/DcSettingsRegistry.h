@@ -49,6 +49,17 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "RestManaPct",           DcType::UInt,   0,   0, 100,  true  },
     { "PreventBotRelease",     DcType::Bool,   1,   0,   1,  true  },
     { "PartyMaxSpread",        DcType::Float, 25,  10,  60,  true  },
+
+    // In-combat regroup: keep followers grouped on the leader tank DURING a fight,
+    // not just on the route. Once the leash loosens (advanced/dynamic pull) a fight
+    // can drift a follower out of the tank's line of sight or far behind, and stock
+    // combat won't pull it back — a healer with no LOS to the tank just stands there
+    // and the party dies. CombatRegroup is the master toggle; CombatRegroupDistance
+    // is the max leash beyond which ANY follower closes back on the tank (a healer
+    // also closes whenever it loses LOS to the tank, inside that distance or not).
+    // See DungeonClearRegroupCombat{Trigger,Action}.
+    { "CombatRegroup",         DcType::Bool,   1,   0,   1,  true  },
+    { "CombatRegroupDistance", DcType::Float, 25,  10,  60,  true  },
     { "BossEngageRangeFloor",  DcType::Float, 12,   5,  40,  true  },
     { "BossEngageRangeCap",    DcType::Float, 30,  10,  60,  true  },
     { "TrashWidthFloor",       DcType::Float,  8,   4,  30,  true  },

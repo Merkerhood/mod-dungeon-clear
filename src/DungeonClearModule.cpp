@@ -166,10 +166,12 @@ public:
         if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
             botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
 
-        // Combat-engine companion: holds only the advanced-pull maneuver, inert
-        // unless this bot is the leader mid-pull. Resident on every bot so the
-        // leader can run the pull-to-camp once it aggros (the non-combat strategy
-        // can't, since the combat engine takes over the instant combat starts).
+        // Combat-engine companion: the advanced-pull maneuver (leader, mid-pull),
+        // the camp hold/assist for held followers, and the in-combat regroup that
+        // keeps followers grouped on the tank. Resident on every bot so the leader
+        // can run the pull-to-camp once it aggros and followers can regroup mid-
+        // fight (the non-combat strategy can't — the combat engine takes over the
+        // instant combat starts). Every trigger is inert unless a DC run is active.
         if (!botAI->HasStrategy("dungeon clear combat", BOT_STATE_COMBAT))
             botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
     }

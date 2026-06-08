@@ -250,4 +250,18 @@ public:
     }
 };
 
+// Combat engine: a follower that has drifted too far from, or out of LOS of, the
+// leader tank during a fight. Closes back on the tank (stopping a few yards short)
+// so the party stays grouped and a stranded healer regains line of sight to its
+// heal target. Driven by DungeonClearRegroupCombatTrigger.
+class DungeonClearRegroupCombatAction : public MovementAction
+{
+public:
+    DungeonClearRegroupCombatAction(PlayerbotAI* botAI)
+        : MovementAction(botAI, "dungeon clear regroup combat")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 #endif

@@ -657,6 +657,46 @@ bool DungeonClearAssistCampCombatTrigger::IsActive()
     return ShouldAssistCampFight(botAI, bot);
 }
 
+bool DungeonClearRegroupCombatTrigger::IsActive()
+{
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+        return false;
+
+    // Feature toggle.
+    if (!DcSettings::GetBool(bot, "CombatRegroup"))
+        return false;
+
+    // The elected leader tank, non-null only while its clear is active and
+    // unpaused. This both gates the feature on an active run and is the bot we
+    // regroup on. The leader itself never regroups on anyone — it drives.
+    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    if (!tank || tank == bot || tank->GetMapId() != bot->GetMapId())
+        return false;
+
+    // Hand all advanced-pull camp positioning to the camp/assist actions: while
+    // the party is held PASSIVE at a camp (Forming/Advancing/Returning) it must
+    // not chase the moving tank or it would break the pull. Once released (Engage,
+    // passive == false) or in any non-camp fight, regroup runs — including the
+    // healer-LOS case the camp-fight assist (which only engages the pack) misses.
+    Position camp;
+    bool passive = false;
+    if (DungeonClearUtil::GetLeaderCampHold(bot, camp, passive) && passive)
+        return false;
+
+    float const dist = bot->GetExactDist2d(tank);
+    float const maxLeash = DcSettings::GetFloat(bot, "CombatRegroupDistance");
+
+    // Any follower closes back in once it drifts past the leash. A healer ALSO
+    // closes whenever it loses line of sight to the tank — even inside the leash —
+    // because without it the heal lands on nothing and the party dies. Melee/ranged
+    // DPS out of LOS of the tank but in range of their own target are left alone.
+    if (dist > maxLeash)
+        return true;
+    if (PlayerbotAI::IsHeal(bot) && !bot->IsWithinLOSInMap(tank))
+        return true;
+    return false;
+}
+
 bool DungeonClearFilterLootTrigger::IsActive()
 {
     if (!bot || bot->isDead() || bot->IsInCombat())
