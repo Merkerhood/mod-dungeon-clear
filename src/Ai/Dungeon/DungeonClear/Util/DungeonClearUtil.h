@@ -500,13 +500,14 @@ public:
 
     // --- Dynamic pull (auto Leeroy vs Advanced) -----------------------------
     // Classifies the pull on `target`: true => use the careful Advanced pull-to-
-    // camp (the pack sits in a multi-pack room, or is a single oversized pack);
-    // false => Leeroy it (lone small pack / single mob). Clusters the forward
-    // hostiles at a 12yd pack radius (connected components), then counts OTHER
-    // packs whose nearest mob is within PullDynamicChainRadius of the target's
-    // pack AND is in line of sight with no closed door between — the far-targets
-    // scan ignores LOS, so that gate rejects packs through a wall / a floor away /
-    // behind a door that won't actually chain. See the Dynamic Pull plan doc.
+    // camp; false => Leeroy it. Estimates how many mobs would aggro if the party
+    // fought on top of the target — every mob whose own (level-scaled) aggro
+    // radius + PullCombatSpread reaches the camp spot, plus one CallForHelp assist
+    // hop — gated to mobs in line of sight, on the same floor, with no closed door
+    // between (the far-targets scan ignores LOS). True when that estimate exceeds
+    // PullDynamicMaxLeeroyMobs. Reach comes from the real creature aggro radius
+    // (vs the lowest-level party member), so it self-tunes per zone/level. The pure
+    // count is DungeonClearMath::EstimateAggroCount. See the Dynamic Pull plan doc.
     static bool ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target);
 
     // Per-tick governor for Dynamic mode (pull setting == 2). No-op for Off/On

@@ -98,184 +98,188 @@ TEST(DungeonClearMathTest, DiagonalSegment)
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic pull classifier (Leeroy vs Advanced). packRadius 12, chainRadius 15,
-// largePackThreshold 5 mirror the shipped defaults.
+// Dynamic pull aggro estimate (Leeroy vs Advanced). combatSpread 6 and zTolerance
+// 5 mirror the shipped defaults; assistRadius 10 is the engine's default
+// CreatureFamilyAssistanceRadius (the caller passes the live config value). The
+// caller's Leeroy ceiling is 5 (Advanced when count > 5). Each mob's aggroReach is
+// the 6th brace field; the common trash radius used below is ~18yd (a mid-level
+// mob's real aggro radius).
 // ---------------------------------------------------------------------------
 namespace
 {
     using DungeonClearMath::DynPullMob;
-    constexpr float kPackR = 12.0f;
-    constexpr float kChainR = 15.0f;
-    constexpr unsigned kLarge = 5u;
-    constexpr float kZTol = 5.0f;  // DC_Z_LEVEL_TOLERANCE
+    constexpr float kSpread = 6.0f;
+    constexpr float kAssistR = 10.0f;  // engine CreatureFamilyAssistanceRadius default
+    constexpr float kZTol = 5.0f;   // DC_Z_LEVEL_TOLERANCE
+    constexpr unsigned kCeil = 5u;  // PullDynamicMaxLeeroyMobs
+    constexpr float kReach = 18.0f; // a representative mob aggro radius
 
-    bool Classify(std::vector<DynPullMob> const& m, std::size_t t)
+    unsigned Count(std::vector<DynPullMob> const& m, std::size_t t)
     {
-        return DungeonClearMath::ClassifyDynamicPull(m, t, kPackR, kChainR, kLarge, kZTol);
+        return DungeonClearMath::EstimateAggroCount(m, t, kSpread, kAssistR, kZTol);
+    }
+    // Advanced iff the estimate exceeds the Leeroy ceiling (mirrors the caller).
+    bool Advanced(std::vector<DynPullMob> const& m, std::size_t t)
+    {
+        return Count(m, t) > kCeil;
     }
 }
 
-// A single lone mob -> Leeroy.
+// A single lone mob -> count 1 -> Leeroy.
 TEST(DungeonClearDynamicPullTest, SingleMobLeeroy)
 {
-    std::vector<DynPullMob> mobs = { {0.0f, 0.0f, 0.0f, false} };
-    EXPECT_FALSE(Classify(mobs, 0));
+    std::vector<DynPullMob> mobs = { {0.0f, 0.0f, 0.0f, false, 0u, kReach} };
+    EXPECT_EQ(Count(mobs, 0), 1u);
+    EXPECT_FALSE(Advanced(mobs, 0));
 }
 
-// One bunched pack, nothing else -> Leeroy.
+// One bunched pack of 3 (all within aggro reach of the camp) -> count 3 -> Leeroy.
 TEST(DungeonClearDynamicPullTest, LoneSmallPackLeeroy)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false}, {0.0f, 4.0f, 0.0f, false}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {3.0f, 0.0f, 0.0f, true, 0u, kReach},
+        {0.0f, 4.0f, 0.0f, true, 0u, kReach}
     };
-    EXPECT_FALSE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 3u);
+    EXPECT_FALSE(Advanced(mobs, 0));
 }
 
-// Two DISTINCT packs whose nearest mobs are 13yd apart (> packRadius so they
-// don't merge into one cluster, <= chainRadius) and chain-eligible -> Advanced.
-TEST(DungeonClearDynamicPullTest, TwoPacksNearbyAdvanced)
+// The motivating case: THREE loose 2-mob packs near each other, all within aggro
+// reach of the camp spot -> 6 mobs aggro -> count 6 > ceiling 5 -> Advanced. The
+// old pack-adjacency model also Advanced here (any neighbour flips it), but now it
+// is because SIX bodies pile in, and raising the ceiling to 6 would Leeroy them.
+TEST(DungeonClearDynamicPullTest, ThreeClusteredPairsAdvanced)
 {
     std::vector<DynPullMob> mobs = {
-        // target pack near origin
-        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
-        // second pack: nearest mob (16,0) is 13yd from target mob (3,0)
-        {16.0f, 0.0f, 0.0f, true}, {19.0f, 0.0f, 0.0f, true}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {3.0f, 0.0f, 0.0f, true, 0u, kReach},
+        {10.0f, 0.0f, 0.0f, true, 0u, kReach}, {13.0f, 0.0f, 0.0f, true, 0u, kReach},
+        {0.0f, 10.0f, 0.0f, true, 0u, kReach}, {3.0f, 10.0f, 0.0f, true, 0u, kReach}
     };
-    EXPECT_TRUE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 6u);
+    EXPECT_TRUE(Advanced(mobs, 0));
 }
 
-// Second pack just beyond chainRadius -> Leeroy.
-TEST(DungeonClearDynamicPullTest, NeighbourBeyondChainRadiusLeeroy)
+// The SAME six mobs, but the two other pairs are spaced well beyond aggro reach of
+// the camp (and of each other) -> only the target pair aggros -> count 2 ->
+// Leeroy. This is the fix: spaced trivial packs are no longer all camp-pulled.
+TEST(DungeonClearDynamicPullTest, ThreeSpacedPairsLeeroy)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
-        {30.0f, 0.0f, 0.0f, true}, {33.0f, 0.0f, 0.0f, true}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {3.0f, 0.0f, 0.0f, true, 0u, kReach},
+        // 40yd / 80yd out: beyond reach(18)+spread(6)=24 of the camp, and beyond an
+        // assist hop from the target pair.
+        {40.0f, 0.0f, 0.0f, true, 0u, kReach}, {43.0f, 0.0f, 0.0f, true, 0u, kReach},
+        {80.0f, 0.0f, 0.0f, true, 0u, kReach}, {83.0f, 0.0f, 0.0f, true, 0u, kReach}
     };
-    EXPECT_FALSE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 2u);
+    EXPECT_FALSE(Advanced(mobs, 0));
 }
 
-// Distinct second pack within chainRadius but NOT chain-eligible (behind a wall
-// / door / a floor away) -> Leeroy. Nearest cross distance 13yd keeps them as
-// separate clusters; the gate is what suppresses the Advanced verdict.
-TEST(DungeonClearDynamicPullTest, NeighbourNotEligibleLeeroy)
+// A mob within its aggro reach + combat spread of the camp counts even though it
+// is outside dead-centre reach: reach 18 + spread 6 = 24, mob at 22yd -> counts.
+// The "messy combat drift" case.
+TEST(DungeonClearDynamicPullTest, CombatSpreadPullsInDriftMob)
 {
-    std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
-        {16.0f, 0.0f, 0.0f, false}, {19.0f, 0.0f, 0.0f, false}  // 13yd away but gated out
+    std::vector<DynPullMob> single = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {22.0f, 0.0f, 0.0f, true, 0u, kReach}
     };
-    EXPECT_FALSE(Classify(mobs, 0));
+    EXPECT_EQ(Count(single, 0), 2u);  // 22 <= 18 + 6
+
+    // Push it to 25yd (> 24) and, with no assist bridge, it drops out -> count 1.
+    std::vector<DynPullMob> beyond = {
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {25.0f, 0.0f, 0.0f, true, 0u, kReach}
+    };
+    EXPECT_EQ(Count(beyond, 0), 1u);
 }
 
-// A single oversized lone pack (> threshold) -> Advanced via the size override.
-TEST(DungeonClearDynamicPullTest, LargeLonePackAdvanced)
+// A mob within aggro reach but NOT chainEligible (behind a wall / door / a floor
+// away) does not aggro -> not counted.
+TEST(DungeonClearDynamicPullTest, NotEligibleNotCounted)
 {
-    // 6 mobs all within pack radius of each other, no other pack.
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {2.0f, 0.0f, 0.0f, false}, {4.0f, 0.0f, 0.0f, false},
-        {0.0f, 2.0f, 0.0f, false}, {2.0f, 2.0f, 0.0f, false}, {4.0f, 2.0f, 0.0f, false}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {5.0f, 0.0f, 0.0f, false, 0u, kReach}
     };
-    EXPECT_TRUE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 1u);  // packmate gated out
 }
 
-// Exactly at the threshold (5 mobs) with no neighbour -> still Leeroy.
-TEST(DungeonClearDynamicPullTest, ThresholdSizedLonePackLeeroy)
+// One assist hop, no transitivity. A is the target; B aggros from proximity; C is
+// within assistRadius of B (a seed mob) -> joins; D is within assistRadius of C
+// only (NOT of any seed) -> must NOT join, because assisted mobs don't chain.
+TEST(DungeonClearDynamicPullTest, AssistHopIsExactlyOneRing)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {2.0f, 0.0f, 0.0f, false}, {4.0f, 0.0f, 0.0f, false},
-        {0.0f, 2.0f, 0.0f, false}, {2.0f, 2.0f, 0.0f, false}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach},   // A target
+        {3.0f, 0.0f, 0.0f, true, 0u, kReach},    // B proximity-aggros (seed)
+        {11.0f, 0.0f, 0.0f, true, 0u, 1.0f},     // C: 8yd from B (<=assist 10) -> hop
+        {20.0f, 0.0f, 0.0f, true, 0u, 1.0f}      // D: 9yd from C, 17yd from B -> NO
     };
-    EXPECT_FALSE(Classify(mobs, 0));
+    // tiny reach on C/D means they cannot proximity-aggro the camp themselves.
+    EXPECT_EQ(Count(mobs, 0), 3u);  // A + B + C, NOT D
 }
 
-// 3D: a chain-eligible neighbour 13yd away in plan view but a full floor (20yd)
-// ABOVE the target -> Leeroy. A flat 2D test would have flagged it as a chaining
-// pack; the height gate keeps the upstairs pull out of this floor's decision.
-TEST(DungeonClearDynamicPullTest, NeighbourOnFloorAboveLeeroy)
+// 3D: a mob within aggro reach in plan view but a full floor (20yd) ABOVE the
+// target -> not counted. A flat 2D estimate would have pulled it in.
+TEST(DungeonClearDynamicPullTest, MobOnFloorAboveNotCounted)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
-        {16.0f, 0.0f, 20.0f, true}, {19.0f, 0.0f, 20.0f, true}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {5.0f, 0.0f, 20.0f, true, 0u, kReach}
     };
-    EXPECT_FALSE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 1u);
 }
 
-// 3D: the SAME 2D geometry but the neighbour is on our level (within zTolerance)
-// -> Advanced, proving the height gate is what flips it, not the plan-view layout.
-TEST(DungeonClearDynamicPullTest, NeighbourOnSameLevelAdvanced)
+// 3D: the SAME 2D geometry but on our level (within zTolerance) -> counted,
+// proving the height gate is what excludes the overhead mob, not the layout.
+TEST(DungeonClearDynamicPullTest, MobOnSameLevelCounted)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {3.0f, 0.0f, 0.0f, false},
-        {16.0f, 0.0f, 3.0f, true}, {19.0f, 0.0f, 3.0f, true}
+        {0.0f, 0.0f, 0.0f, false, 0u, kReach}, {5.0f, 0.0f, 3.0f, true, 0u, kReach}
     };
-    EXPECT_TRUE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 2u);
 }
 
-// 3D: a would-be packmate stacked directly overhead (same x/y, 20yd up) must NOT
-// merge into the target pack and inflate it past the large-pack threshold. Five
-// mobs on the floor (at threshold) + one overhead -> Leeroy.
-TEST(DungeonClearDynamicPullTest, OverheadMobDoesNotInflatePack)
+// Formation closure: a strung-out FORMATION (shared packId) where only the target
+// is near the camp still counts in FULL — you can't pull half a formation. Six
+// members, each 20yd from the next (beyond proximity/assist of the others), all
+// share id 7 -> count 6 > ceiling -> Advanced. With packId 0 they'd be lone mobs
+// out of reach and the count would be 1.
+TEST(DungeonClearDynamicPullTest, SpreadFormationCountsInFull)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false}, {2.0f, 0.0f, 0.0f, false}, {4.0f, 0.0f, 0.0f, false},
-        {0.0f, 2.0f, 0.0f, false}, {2.0f, 2.0f, 0.0f, false},
-        {2.0f, 1.0f, 20.0f, false}  // directly overhead — different floor
+        {0.0f,  0.0f, 0.0f, false, 7u, kReach}, {20.0f, 0.0f, 0.0f, true, 7u, kReach},
+        {40.0f, 0.0f, 0.0f, true,  7u, kReach}, {60.0f, 0.0f, 0.0f, true, 7u, kReach},
+        {80.0f, 0.0f, 0.0f, true,  7u, kReach}, {100.0f, 0.0f, 0.0f, true, 7u, kReach}
     };
-    EXPECT_FALSE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 6u);
+    EXPECT_TRUE(Advanced(mobs, 0));
 }
 
-// Engine pack: a strung-out FORMATION (shared packId, each member > packRadius
-// from the next so pure geometry would read them as 6 lone mobs) unions into one
-// pack. Six members > threshold -> Advanced via the size override. The same six
-// with packId 0 would each be a lone pack and the target a single mob -> Leeroy,
-// so this proves the formation id is what clusters them.
-TEST(DungeonClearDynamicPullTest, SpreadFormationClustersAdvanced)
+// Formation closure unions across HEIGHT too: a formation is atomic even if a
+// member sits a floor up. Six members share id 3, one of them overhead (20yd up)
+// -> still counted -> Advanced. Contrast MobOnFloorAboveNotCounted, where a
+// packId-0 overhead mob is correctly excluded by the z-gate.
+TEST(DungeonClearDynamicPullTest, FormationClosureUnionsAcrossFloors)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f,  0.0f, 0.0f, false, 7u}, {20.0f, 0.0f, 0.0f, false, 7u},
-        {40.0f, 0.0f, 0.0f, false, 7u}, {60.0f, 0.0f, 0.0f, false, 7u},
-        {80.0f, 0.0f, 0.0f, false, 7u}, {100.0f, 0.0f, 0.0f, false, 7u}
+        {0.0f, 0.0f, 0.0f, false, 3u, kReach}, {2.0f, 0.0f, 0.0f, true, 3u, kReach},
+        {4.0f, 0.0f, 0.0f, true,  3u, kReach}, {0.0f, 2.0f, 0.0f, true, 3u, kReach},
+        {2.0f, 2.0f, 0.0f, true,  3u, kReach},
+        {2.0f, 1.0f, 20.0f, false, 3u, kReach}  // overhead but same formation
     };
-    EXPECT_TRUE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 6u);
+    EXPECT_TRUE(Advanced(mobs, 0));
 }
 
-// Engine pack: a SMALL strung-out formation (3 members, shared packId) with no
-// neighbour clusters to size 3 — below the threshold — so it stays Leeroy. The
-// formation id clusters them but does not spuriously force the careful pull.
-TEST(DungeonClearDynamicPullTest, SmallSpreadFormationLeeroy)
+// DISTINCT packIds do NOT union. Target's own 3-mob formation (id 1) is near the
+// camp; a separate 3-mob formation (id 2) is 50yd away, out of reach and not an
+// assist hop -> only id 1 counts -> count 3 -> Leeroy.
+TEST(DungeonClearDynamicPullTest, DistinctFormationsDoNotUnion)
 {
     std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false, 7u}, {20.0f, 0.0f, 0.0f, false, 7u},
-        {40.0f, 0.0f, 0.0f, false, 7u}
+        {0.0f,  0.0f, 0.0f, false, 1u, kReach}, {4.0f,  0.0f, 0.0f, true, 1u, kReach},
+        {8.0f,  0.0f, 0.0f, true,  1u, kReach},
+        {0.0f, 50.0f, 0.0f, true,  2u, kReach}, {4.0f, 50.0f, 0.0f, true, 2u, kReach},
+        {8.0f, 50.0f, 0.0f, true,  2u, kReach}
     };
-    EXPECT_FALSE(Classify(mobs, 0));
-}
-
-// Engine pack: a shared packId unions members regardless of HEIGHT — a formation
-// is one unit even if a member sits on a ledge. Five on the floor (at threshold)
-// + one overhead but SHARING the formation id -> pack of 6 > threshold ->
-// Advanced. Contrast with OverheadMobDoesNotInflatePack, where the overhead mob
-// has packId 0 and the z-gate correctly keeps it out.
-TEST(DungeonClearDynamicPullTest, FormationIdUnionsAcrossFloors)
-{
-    std::vector<DynPullMob> mobs = {
-        {0.0f, 0.0f, 0.0f, false, 3u}, {2.0f, 0.0f, 0.0f, false, 3u},
-        {4.0f, 0.0f, 0.0f, false, 3u}, {0.0f, 2.0f, 0.0f, false, 3u},
-        {2.0f, 2.0f, 0.0f, false, 3u},
-        {2.0f, 1.0f, 20.0f, false, 3u}  // overhead but same formation -> still in pack
-    };
-    EXPECT_TRUE(Classify(mobs, 0));
-}
-
-// Engine pack: DISTINCT packIds do NOT union. Two separate 3-mob formations
-// (ids 1 and 2) standing apart, neither chain-eligible -> each its own pack of 3,
-// below threshold -> Leeroy. A non-zero id only unions mobs that SHARE it.
-TEST(DungeonClearDynamicPullTest, DistinctFormationIdsDoNotUnion)
-{
-    std::vector<DynPullMob> mobs = {
-        {0.0f,  0.0f, 0.0f, false, 1u}, {20.0f, 0.0f, 0.0f, false, 1u},
-        {40.0f, 0.0f, 0.0f, false, 1u},
-        {0.0f, 50.0f, 0.0f, false, 2u}, {20.0f, 50.0f, 0.0f, false, 2u},
-        {40.0f, 50.0f, 0.0f, false, 2u}
-    };
-    EXPECT_FALSE(Classify(mobs, 0));
+    EXPECT_EQ(Count(mobs, 0), 3u);
+    EXPECT_FALSE(Advanced(mobs, 0));
 }

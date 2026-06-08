@@ -11,24 +11,27 @@
 
 namespace DungeonClearMath
 {
-    // One forward hostile for the Dynamic-pull classifier. `chainEligible` is
-    // pre-resolved by the caller from game state: true only when this mob is in
-    // line of sight of the pull target and not separated from it by a closed door
-    // (the far-targets scan ignores LOS, so this gate keeps a pack through a wall /
-    // a floor away / behind a door from counting as a chaining neighbour). It is
-    // ignored for mobs that turn out to share the target's own pack. `z` carries
-    // the mob's world height so clustering and chaining can reject mobs on another
-    // floor (a ledge/ramp directly above or below) instead of merging them in by
-    // plan-view distance alone — see `zTolerance` on ClassifyDynamicPull.
+    // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
+    // pre-resolved by the caller from game state: true only when this mob is
+    // navmesh-reachable from the pull target with a clear line of sight and no
+    // closed door between (the far-targets scan ignores LOS, so this gate keeps a
+    // mob through a wall / a floor away / behind a door from counting as one that
+    // would aggro). It is ignored for mobs that share the target's own pack. `z`
+    // carries the mob's world height so the estimate can reject mobs on another
+    // floor (a ledge/ramp directly above or below) instead of counting them by
+    // plan-view distance alone — see `zTolerance` on EstimateAggroCount.
+    //
+    // `aggroReach` is this mob's real aggro radius (Creature::GetAggroRange +
+    // GetCombatReach, level-diff scaled — see DungeonClearUtil::ClassifyPull-
+    // Advanced) measured against the squishiest party member. It is the distance
+    // at which the mob proximity-aggros the party fighting at the camp spot, so it
+    // self-tunes per zone/level instead of a single hand-tuned chain radius.
     //
     // `packId` is an OPTIONAL engine-pack identity (0 = none) the caller resolves
     // from what actually pulls together: a creature formation group, or a
-    // creature_linked_respawn link (see DungeonClearUtil::ClassifyPullAdvanced).
-    // Mobs sharing a non-zero `packId` are members of the SAME pack regardless of
-    // spacing or height, so a strung-out formation clusters as one unit instead of
-    // reading as several lone mobs. Geometry (`packRadius` + same-level) remains
-    // the fallback for the common trash that carries no engine pack data (packId
-    // 0), so behaviour there is unchanged.
+    // creature_linked_respawn link. Mobs sharing a non-zero `packId` pull as one
+    // atomic unit regardless of spacing or height (you cannot pull half a
+    // formation), so a counted member drags its whole pack into the estimate.
     struct DynPullMob
     {
         float         x;
@@ -36,26 +39,30 @@ namespace DungeonClearMath
         float         z;
         bool          chainEligible;
         std::uint32_t packId = 0;
+        float         aggroReach = 0.0f;
     };
 
-    // Pure Dynamic-pull decision: should the pull on `mobs[targetIdx]` use the
-    // careful Advanced pull-to-camp (return true) or a Leeroy (return false)?
-    //   - Groups mobs into packs via connected components at `packRadius` (2D
-    //     distance AND within `zTolerance` height — mobs on another floor never
-    //     merge into the same pack) OR a shared non-zero `packId` (an engine
-    //     formation/link unions regardless of distance and height, so a spread
-    //     formation is one pack).
-    //   - A single ISOLATED pack larger than `largePackThreshold` => Advanced.
-    //   - Otherwise Advanced iff some OTHER pack has a `chainEligible` mob within
-    //     `chainRadius` (2D) and `zTolerance` (height) of a target-pack mob; else
-    //     Leeroy.
-    // `zTolerance` keeps the decision honest in multi-level rooms: WotLK inter-floor
-    // gaps exceed it, so a mob a ramp above/below never inflates the pack or counts
-    // as a chaining neighbour. Separated from the game-state resolution in
-    // DungeonClearUtil::ClassifyPullAdvanced so the logic is unit-testable.
-    bool ClassifyDynamicPull(std::vector<DynPullMob> const& mobs, std::size_t targetIdx,
-                             float packRadius, float chainRadius,
-                             std::uint32_t largePackThreshold, float zTolerance);
+    // Pure Dynamic-pull estimate: how many mobs aggro if the party Leeroys on top
+    // of `mobs[targetIdx]`? The camp spot is the target's position (where a Leeroy
+    // fight happens). Returns the estimated body count; the caller compares it to
+    // its Leeroy ceiling (count > ceiling => Advanced pull, else Leeroy).
+    //   - Seed = the target, its atomic pack (shared non-zero `packId`), and every
+    //     other mob that proximity-aggros the camp: within `aggroReach + combat-
+    //     Spread` (2D), on the same level (`zTolerance`), and `chainEligible`.
+    //     `combatSpread` widens the camp from a point to a disc to model players
+    //     drifting to flank/kite during the fight.
+    //   - One assist hop: a `chainEligible` mob within `assistRadius` (2D, same
+    //     level) of a SEED mob joins via CallForHelp. Proximity aggro from a fixed
+    //     camp does not chain, so assisted mobs do NOT seed further proximity or
+    //     assist — exactly one ring.
+    //   - Formation closure: any pack touched by the set is counted in full.
+    // `zTolerance` keeps the estimate honest in multi-level rooms: WotLK inter-
+    // floor gaps exceed it, so a mob a ramp above/below never counts. Separated
+    // from the game-state resolution in DungeonClearUtil::ClassifyPullAdvanced so
+    // the logic is unit-testable.
+    std::uint32_t EstimateAggroCount(std::vector<DynPullMob> const& mobs,
+                                     std::size_t targetIdx, float combatSpread,
+                                     float assistRadius, float zTolerance);
 
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,

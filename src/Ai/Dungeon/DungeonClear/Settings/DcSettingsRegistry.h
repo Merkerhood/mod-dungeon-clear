@@ -99,20 +99,24 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullCommitRangeFloor",  DcType::Float, 16,   5,  40,  true  },
     { "PullCommitRangeCap",    DcType::Float, 34,  10,  60,  true  },
 
-    // Dynamic pull (setting 2): the tank auto-picks Leeroy vs Advanced per pack.
-    // ChainRadius is how close ANOTHER pack must be to the target pack before the
-    // pull is treated as a multi-pack room and handled with the careful Advanced
-    // maneuver; below it (an isolated pack) the tank just Leeroys it. The effective
-    // chain distance is floored at PullCampSafeRadius (the clearance the Advanced
-    // camp keeps from other packs) so the decision can never pick a Leeroy fight
-    // closer to a neighbour than the careful pull would itself tolerate — raising
-    // this above PullCampSafeRadius makes Dynamic more cautious still; lowering it
-    // has no effect below that floor. The decision and the clearance test are also
-    // height-aware (a pack a floor above/below never counts). LargePackThreshold
-    // forces Advanced for a single big pack even with no neighbour. See
-    // DungeonClearUtil::ClassifyPullAdvanced.
-    { "PullDynamicChainRadius",     DcType::Float, 28,  5,  40,  true  },
-    { "PullDynamicLargePackThreshold", DcType::UInt, 5,  1,  20,  true  },
+    // Dynamic pull (setting 2): the tank auto-picks Leeroy vs Advanced per pack by
+    // ESTIMATING how many mobs aggro if it Leeroys on top of the target — proximity
+    // aggro from each mob's own level-scaled aggro radius plus one CallForHelp
+    // assist hop (see DungeonClearUtil::ClassifyPullAdvanced and DungeonClearMath::
+    // EstimateAggroCount). MaxLeeroyMobs is the party's comfortable simultaneous-
+    // mob ceiling: an estimate ABOVE it => Advanced (peel one cluster at a time),
+    // at/below => Leeroy. This single count is the whole verdict and self-tunes per
+    // zone/level because the reach comes from the real creature aggro radius, not a
+    // hand-set chain distance. (Replaces PullDynamicChainRadius +
+    // PullDynamicLargePackThreshold, both removed.)
+    { "PullDynamicMaxLeeroyMobs",   DcType::UInt,   5,  1,  20,  true  },
+    // CombatSpread pads every proximity reach to model the party drifting to
+    // flank/kite during the fight (the camp is a disc, not a point). This is a
+    // zone-independent fudge for player movement, NOT a per-zone distance, so one
+    // default holds everywhere; higher = counts mobs slightly farther out = more
+    // cautious. (The assist-hop reach is NOT a setting — it reads the engine's own
+    // CreatureFamilyAssistanceRadius directly, see ClassifyPullAdvanced.)
+    { "PullCombatSpread",           DcType::Float,  6,  0,  20,  true  },
 
     // Dynamic pull only: how far BACK the party trails the tank while it scouts
     // toward the next pack and sizes up the Leeroy/Advanced verdict (leader out of

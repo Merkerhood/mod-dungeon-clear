@@ -458,38 +458,46 @@ DungeonClear.PullCommitRangeFloor = 16.0
 DungeonClear.PullCommitRangeCap = 34.0
 
 #
-#    DungeonClear.PullDynamicChainRadius
-#        Dynamic pull (the addon's "Dynamic" advanced-pull state) only. When the
-#        tank scans the next pack, this is how close ANOTHER pack must be (yards,
-#        nearest-mob to nearest-mob, on the same floor, and reachable by a short
-#        navmesh path — around a corner is fine, but not separated by geometry or a
-#        closed door) before the engagement is treated as a multi-pack room and
-#        handled with the careful Advanced pull-to-camp. A lone
-#        pack with nothing within this radius is Leeroy-pulled (run in and fight in
-#        place). Larger = Advanced-pulls more often.
+#    DungeonClear.PullDynamicMaxLeeroyMobs
+#        Dynamic pull (the addon's "Dynamic" advanced-pull state) only. The whole
+#        Leeroy-vs-Advanced verdict. When the tank scans the next pull, the module
+#        ESTIMATES how many mobs would aggro if it just ran in and fought on top of
+#        the target: every mob whose own aggro radius (level-scaled, the real game
+#        value — plus PullCombatSpread) reaches the fight, plus one CallForHelp
+#        assist hop. If that estimate is GREATER than this number, the careful
+#        Advanced pull-to-camp is used (peel one cluster at a time); at or below it,
+#        the tank Leeroys. Set it to how many mobs your party can comfortably take
+#        at once: e.g. three loose 2-mob packs near each other estimate to 6, so a
+#        ceiling of 6 Leeroys the lot while 4 peels them. Lower = Advanced-pulls
+#        more often.
 #
-#        The effective distance is floored at PullCampSafeRadius: the decision
-#        never picks a Leeroy fight closer to a neighbour than the Advanced camp
-#        itself keeps clear, so the two halves of the feature can't disagree.
-#        Setting this below PullCampSafeRadius therefore has no effect; raise it
-#        above to make Dynamic more cautious still.
-#
-#        Default: 28.0
-#
-
-DungeonClear.PullDynamicChainRadius = 28.0
-
-#
-#    DungeonClear.PullDynamicLargePackThreshold
-#        Dynamic pull only. A single ISOLATED pack (no neighbouring pack within
-#        PullDynamicChainRadius) bigger than this many mobs is still handled with
-#        the careful Advanced pull instead of a Leeroy. Set high to always Leeroy
-#        lone packs regardless of size.
+#        Because the reach comes from each mob's real aggro radius, this is
+#        self-tuning across zones and level ranges — no per-dungeon retuning of a
+#        distance. (Replaces the old PullDynamicChainRadius +
+#        PullDynamicLargePackThreshold, both removed.)
 #
 #        Default: 5
 #
 
-DungeonClear.PullDynamicLargePackThreshold = 5
+DungeonClear.PullDynamicMaxLeeroyMobs = 5
+
+#
+#    DungeonClear.PullCombatSpread
+#        Dynamic pull only. Yards added to every mob's proximity-aggro reach in the
+#        estimate above, modelling the party drifting to flank/kite/reposition
+#        during the fight — combat happens in a disc around the target, not at a
+#        pinpoint. Larger = counts mobs slightly farther out as aggroing = more
+#        cautious (more Advanced pulls).
+#
+#        Default: 6.0
+#
+
+DungeonClear.PullCombatSpread = 6.0
+
+# Note: the assist-hop reach in the estimate above is NOT a DungeonClear setting —
+# it reads the engine's own CreatureFamilyAssistanceRadius (the same radius a
+# creature's CallAssistance uses to pull same-faction help), so it always matches
+# whatever assist behaviour the realm is configured for, with nothing to retune.
 
 #
 #    DungeonClear.PullDynamicPartyLag

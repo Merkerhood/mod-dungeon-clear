@@ -50,6 +50,7 @@
 #include "Chat.h"
 #include "ServerFacade.h"
 #include "Timer.h"
+#include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -1119,23 +1120,40 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         return false;
     AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-    // Same intra-pack grouping ComputeSafeCamp uses, so "pack" means the same
-    // thing across the feature.
+    // Packmate radius — mobs this close to the target are its own pack and come
+    // along regardless; also a search/broad-phase pad. (ComputeSafeCamp uses the
+    // same value, so "pack" means the same thing across the feature.)
     constexpr float kPackRadius = 12.0f;
-    uint32 const largePack = DcSettings::GetUInt(bot, "PullDynamicLargePackThreshold");
 
-    // The chain radius is the distance at which a NEIGHBOUR pack makes this a
-    // "careful" (Advanced) pull. It must never be SMALLER than the clearance the
-    // Advanced camp placer itself keeps from other packs (PullCampSafeRadius):
-    // otherwise Dynamic could pick Leeroy on a neighbour 18yd away that the camp
-    // logic (25yd) considers unsafe — the in-place fight would then start inside
-    // the very radius the careful pull was designed to respect, the two halves of
-    // the feature contradicting each other. Bind the decision to the camp's own
-    // safety radius so the verdict and the placement can never disagree; a player
-    // may still RAISE PullDynamicChainRadius above it to be more cautious still.
-    float const chainCfg = DcSettings::GetFloat(bot, "PullDynamicChainRadius");
-    float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
-    float const chainRadius = std::max(chainCfg, safeRadius);
+    // Dynamic verdict = estimate how many mobs aggro if we Leeroy on top of the
+    // target, then compare to the party's Leeroy ceiling. The reach that decides
+    // who aggros is each mob's OWN aggro radius (resolved per mob below), not a
+    // hand-tuned distance, so the decision self-tunes per zone/level.
+    uint32 const maxLeeroy = DcSettings::GetUInt(bot, "PullDynamicMaxLeeroyMobs");
+    float const combatSpread = DcSettings::GetFloat(bot, "PullCombatSpread");
+    // The assist-hop reach is the ENGINE's own value, not a DC knob: a creature's
+    // CallAssistance() pulls same-faction help within CONFIG_CREATURE_FAMILY_-
+    // ASSISTANCE_RADIUS. Reading it directly means the estimate tracks whatever the
+    // realm actually uses for assist propagation, with nothing to retune per zone.
+    float const assistRadius =
+        sWorld->getFloatConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_RADIUS);
+
+    // Aggro reach is computed against the LOWEST-LEVEL living party member: when
+    // the party piles onto the target in a Leeroy, that squishiest body attracts
+    // proximity aggro from the farthest out, so it is the unit whose presence at
+    // the camp decides who pulls. Fall back to the bot (solo, or no lower member).
+    Player* lowMember = bot;
+    if (Group* group = bot->GetGroup())
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* m = ref->GetSource();
+            if (!m || !m->IsAlive() || m->GetMapId() != bot->GetMapId())
+                continue;
+            if (m->GetLevel() < lowMember->GetLevel())
+                lowMember = m;
+        }
+    }
 
     // Candidate hostiles: gather them with a server-side grid search centred on the
     // PACK (target), NOT on the bot's own scan lists. The bot-cached "far targets"
@@ -1145,10 +1163,12 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     // resolved at point-blank instead of from first sight. A search around the target
     // sees the whole neighbourhood the instant the pack is picked, regardless of where
     // the tank stands or what it can see — the classification becomes a property of
-    // the ROOM, stable across the entire approach. Radius covers the target pack
-    // (kPackRadius), a neighbour at the full chain reach, and that neighbour's own
-    // pack spread, so nothing the math could count is missed.
-    float const searchRadius = chainRadius * 2.0f + kPackRadius * 2.0f;
+    // the ROOM, stable across the entire approach. Radius must cover the farthest
+    // mob the estimate could count: a proximity mob at the aggro-reach ceiling
+    // (~45yd notice + reach) plus combat drift, and an assist buddy one ring
+    // beyond that, so nothing the math could count is missed.
+    constexpr float kMaxAggroReach = 50.0f;  // GetAttackDistance clamp (45) + reach
+    float const searchRadius = kMaxAggroReach + combatSpread + assistRadius + kPackRadius;
     std::list<Creature*> nearby;
     Acore::AnyUnitInObjectRangeCheck check(target, searchRadius);
     Acore::CreatureListSearcher<Acore::AnyUnitInObjectRangeCheck> searcher(
@@ -1186,19 +1206,15 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
     // static navmesh pathes straight THROUGH a shut door, so geometry alone misses
     // it.
     //
-    // Cost is bounded: the path query runs only for a neighbour already within
-    // chainRadius in plan view (the same threshold the math re-applies, so anything
-    // beyond it can't count regardless of path) and not door-blocked — in practice a
-    // handful of mobs, often none.
-    float const chainPathBudget = chainRadius * 2.0f;
-    // Broad-phase is measured to `target`, but the math counts a neighbour within
-    // chainRadius of ANY pack member (packmates sit within kPackRadius of target),
-    // so pad the prune by kPackRadius — otherwise an edge-packmate's true threat
-    // could be pruned here before the math ever sees it.
-    float const chainBroadPhase = chainRadius + kPackRadius;
+    // Cost is bounded: every candidate was already gathered within searchRadius of
+    // the target, and the path query runs only for those not door-blocked — in
+    // practice a handful of mobs, often none. The path budget allows corner slack
+    // over the straight-line gather radius so a mob reachable around a bend still
+    // reads as same-space.
+    float const chainPathBudget = searchRadius * 1.5f;
     auto chainConnected = [&](Unit* u) -> bool
     {
-        if (target->GetExactDist2d(u) > chainBroadPhase)
+        if (target->GetExactDist2d(u) > searchRadius)
             return false;
         // Door test runs PACK->neighbour (target as origin), not bot->neighbour, so a
         // door is "between" the two PACKS regardless of where the tank is standing.
@@ -1276,12 +1292,12 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         packIds[j] = pid;
     }
 
-    // Resolve game state (positions, the per-mob connectivity/door gate, and the
-    // engine pack id) here, then hand the pure clustering/threshold decision to
-    // DungeonClearMath::ClassifyDynamicPull (unit-tested). The gate uses the target
-    // itself as the pack's stand-in: packmates sit within a pack radius of it, so
-    // connectivity to the target ~= connectivity to the pack, and it keeps
-    // eligibility precomputable before clustering.
+    // Resolve game state (positions, per-mob aggro reach, the connectivity/door
+    // gate, and the engine pack id) here, then hand the pure aggro-count estimate
+    // to DungeonClearMath::EstimateAggroCount (unit-tested). The gate uses the
+    // target itself as the pack's stand-in: packmates sit within a pack radius of
+    // it, so connectivity to the target ~= connectivity to the pack, and it keeps
+    // eligibility precomputable before the estimate.
     std::vector<DungeonClearMath::DynPullMob> mobs;
     mobs.reserve(hostiles.size());
     std::size_t targetIdx = 0;
@@ -1291,21 +1307,29 @@ bool DungeonClearUtil::ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target)
         if (u == target)
             targetIdx = i;
         bool const chainEligible = u != target && chainConnected(u);
+        // Per-mob aggro reach vs the squishiest body: the same core value the
+        // commit-range / boss handoff use (GetAggroRange + reach, level-diff
+        // scaled). Players/totems keep 0 — they never form a pull pack.
+        float aggroReach = 0.0f;
+        if (Creature* c = u->ToCreature())
+            aggroReach = c->GetAggroRange(lowMember) + c->GetCombatReach();
         mobs.push_back({u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(),
-                        chainEligible, packIds[i]});
+                        chainEligible, packIds[i], aggroReach});
     }
 
     // DC_Z_LEVEL_TOLERANCE: a mob more than this far above/below is on another
-    // floor (a ledge/ramp) — it must not merge into the pack or count as a
-    // chaining neighbour just because it is near in plan view. Same constant the
+    // floor (a ledge/ramp) — it must not seed the pack or count as a proximity /
+    // assist aggro just because it is near in plan view. Same constant the
     // corridor/boss-arrival floor guards use elsewhere in this file.
-    bool const advanced = DungeonClearMath::ClassifyDynamicPull(
-        mobs, targetIdx, kPackRadius, chainRadius, largePack, DC_Z_LEVEL_TOLERANCE);
-    DC_PULL_DEBUG("[DC:{}] dynamic: classified target {} among {} hostiles within "
-                  "{:.0f}yd of the pack (chain {:.1f}, large-pack {}) -> {}",
-                  bot->GetName(), target->GetGUID().ToString(), mobs.size(),
-                  searchRadius, chainRadius, largePack,
-                  advanced ? "ADVANCED" : "LEEROY");
+    uint32 const count = DungeonClearMath::EstimateAggroCount(
+        mobs, targetIdx, combatSpread, assistRadius, DC_Z_LEVEL_TOLERANCE);
+    bool const advanced = count > maxLeeroy;
+    DC_PULL_DEBUG("[DC:{}] dynamic: estimated {} aggro on target {} among {} hostiles "
+                  "within {:.0f}yd (low-lvl {}, spread {:.0f}, assist {:.0f}, "
+                  "ceiling {}) -> {}",
+                  bot->GetName(), count, target->GetGUID().ToString(), mobs.size(),
+                  searchRadius, uint32(lowMember->GetLevel()), combatSpread,
+                  assistRadius, maxLeeroy, advanced ? "ADVANCED" : "LEEROY");
     return advanced;
 }
 

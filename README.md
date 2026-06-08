@@ -110,13 +110,19 @@ where taking packs one controlled group at a time is worth the extra time.
 ### Dynamic
 
 Dynamic keeps Leeroy as the baseline and upgrades to an Advanced pull only when a
-pack warrants it, deciding fresh for each pack the tank approaches:
+pack warrants it, deciding fresh for each pack the tank approaches. Rather than
+counting *packs*, it estimates **how many mobs would actually aggro** if the party
+fought right on top of the target — each mob whose own (level-scaled) aggro radius
+reaches the fight, plus one assist hop — and compares that to a ceiling:
 
-- a **lone** pack — nothing else within `DungeonClear.PullDynamicChainRadius`
-  (line-of-sight, not behind a closed door) and at or under
-  `DungeonClear.PullDynamicLargePackThreshold` mobs — is **Leeroy**-pulled;
-- a **clustered** room (another pack inside the chain radius) or an oversized lone
-  pack is handled with the careful **Advanced** pull-to-camp.
+- if the estimate is **at or under `DungeonClear.PullDynamicMaxLeeroyMobs`**, the
+  tank **Leeroys** (run in, fight in place);
+- if it's **over** the ceiling, the careful **Advanced** pull-to-camp is used,
+  peeling one cluster at a time.
+
+This counts total bodies, not packs, so three loose 2-mob packs near each other
+(6 mobs) Leeroy together under a ceiling of 6, instead of being camp-pulled one
+pair at a time.
 
 Each pack gets one stable verdict, and the addon's status readout shows what
 Dynamic chose. It sits in the **middle** on both speed and risk — slower than pure
@@ -128,28 +134,28 @@ where it's actually needed.
 #### Tuning how aggressive Dynamic is
 
 Two settings move Dynamic's verdict toward more Leeroy (**aggressive** — faster,
-riskier) or more Advanced (**passive** — slower, safer). Both default to a
+riskier) or more Advanced (**passive** — slower, safer). They default to a
 balanced point; nudge them per realm to taste:
 
 | Setting | Default | More aggressive (Leeroy more) | More passive (Advanced more) |
 |---|---|---|---|
-| `DungeonClear.PullDynamicChainRadius` | `28.0` | **Lower** it — only packs almost on top of each other count as a cluster, so more rooms are Leeroy'd. | **Raise** it — packs farther apart still count as one room, so more rooms get the careful camp-pull. |
-| `DungeonClear.PullDynamicLargePackThreshold` | `5` | **Raise** it — bigger lone packs are still Leeroy'd (set very high to always Leeroy a lone pack regardless of size). | **Lower** it — even modest lone packs get Advanced-pulled. |
+| `DungeonClear.PullDynamicMaxLeeroyMobs` | `5` | **Raise** it — the party tolerates a bigger pile before camping, so more rooms are Leeroy'd. | **Lower** it — even modest clusters get the careful camp-pull. |
+| `DungeonClear.PullCombatSpread` | `6.0` | **Lower** it — only mobs squarely in aggro range of the camp count, so the estimate is smaller. | **Raise** it — mobs farther out count as aggroing (models more combat drift), inflating the estimate. |
 
-- **Chain radius** is measured nearest-mob to nearest-mob, on the same floor and
-  reachable by a short navmesh path (around a corner counts; through a wall or a
-  closed door does not). It is **floored at `DungeonClear.PullCampSafeRadius`** —
-  the verdict never Leeroys a fight closer to a neighbour than the Advanced camp
-  itself would keep clear, so setting it below `PullCampSafeRadius` has no effect.
-  Raise it above `PullCampSafeRadius` to make Dynamic more cautious still.
-- **Large-pack threshold** only applies to a pack that is otherwise **lone** (no
-  neighbour inside the chain radius); a clustered room is always Advanced-pulled
-  regardless of size.
+- **Max Leeroy mobs** is the main dial: set it to how many mobs your party can
+  comfortably fight at once. The estimate it's compared against uses each mob's
+  **real, level-scaled aggro radius** (so it self-tunes across zones — no
+  per-dungeon retuning), gated to mobs in line of sight, on the same floor, and not
+  behind a closed door.
+- **Combat spread** is a secondary trim modelling how far players drift during a
+  fight; it's the same everywhere (not a per-zone distance), so leave it at default
+  unless Dynamic consistently over- or under-camps.
+- The **assist-hop reach** has no setting on purpose — it reads the engine's own
+  `CreatureFamilyAssistanceRadius`, the exact radius a creature uses to call
+  same-faction help, so it always matches your realm's assist behaviour.
 
-For an all-aggressive feel that still camps genuine danger, keep the threshold
-high and the chain radius near its floor; for an all-careful feel, raise the chain
-radius and drop the threshold. Going all the way in either direction effectively
-turns Dynamic into Leeroy or Advanced — at which point just pick that mode.
+Set the ceiling very high to effectively always Leeroy, or to `1` to effectively
+always Advanced — at which point just pick that mode outright.
 
 Pull mode is per-run and resets with the clear. The `.dc` slash command always
 works. **Chat keywords and follow-tank need the

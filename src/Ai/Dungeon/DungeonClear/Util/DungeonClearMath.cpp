@@ -8,15 +8,15 @@
 #include <cmath>
 #include <cstddef>
 
-bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
-                                           std::size_t targetIdx, float packRadius,
-                                           float chainRadius,
-                                           std::uint32_t largePackThreshold,
-                                           float zTolerance)
+std::uint32_t DungeonClearMath::EstimateAggroCount(std::vector<DynPullMob> const& mobs,
+                                                   std::size_t targetIdx,
+                                                   float combatSpread,
+                                                   float assistRadius,
+                                                   float zTolerance)
 {
     std::size_t const n = mobs.size();
     if (n == 0 || targetIdx >= n)
-        return false;
+        return 0;
 
     auto dist2d = [&](std::size_t a, std::size_t b)
     {
@@ -25,19 +25,17 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         return std::sqrt(dx * dx + dy * dy);
     };
     // Same floor: the inter-mob height gap is within tolerance. WotLK floor-to-
-    // floor gaps comfortably exceed it, so this separates a ledge/ramp pack
-    // overhead from one the tank can actually walk into.
+    // floor gaps comfortably exceed it, so this separates a ledge/ramp mob
+    // overhead from one that shares the camp's floor.
     auto sameLevel = [&](std::size_t a, std::size_t b)
     {
         return std::fabs(mobs[a].z - mobs[b].z) <= zTolerance;
     };
 
-    // Union-Find connected components. Two mobs join the same pack when either:
-    //   - they are within packRadius (2D) AND on the same level (geometry), or
-    //   - they share a non-zero packId (an engine formation/link unites them as
-    //     one unit regardless of spacing or height — a strung-out formation reads
-    //     as one pack, not several lone mobs).
-    // n is tiny, so O(n^2) is fine.
+    // Engine-pack identity is atomic: members sharing a non-zero packId pull as
+    // one unit regardless of distance or height (a formation / linked respawn).
+    // Union them so a partially-counted pack can be closed to its full size.
+    // n is tiny, so O(n^2) union-find is fine.
     std::vector<std::size_t> parent(n);
     for (std::size_t i = 0; i < n; ++i)
         parent[i] = i;
@@ -50,41 +48,70 @@ bool DungeonClearMath::ClassifyDynamicPull(std::vector<DynPullMob> const& mobs,
         }
         return a;
     };
-    auto samePack = [&](std::size_t a, std::size_t b)
-    {
-        return mobs[a].packId != 0 && mobs[a].packId == mobs[b].packId;
-    };
     for (std::size_t i = 0; i < n; ++i)
         for (std::size_t j = i + 1; j < n; ++j)
-            if ((dist2d(i, j) <= packRadius && sameLevel(i, j)) || samePack(i, j))
+            if (mobs[i].packId != 0 && mobs[i].packId == mobs[j].packId)
                 parent[find(i)] = find(j);
 
+    std::vector<char> inSet(n, 0);
+
+    // Seed: the camp spot is the target's position. A mob proximity-aggros when a
+    // player enters ITS aggro radius, and in a Leeroy the whole party piles onto
+    // the target, so a mob counts when it sits within its own reach (+ combat
+    // drift) of the target, on the same level and reachable. The target's own
+    // atomic pack pulls regardless of distance/height.
     std::size_t const targetRoot = find(targetIdx);
-
-    // Size override: a big lone pack still earns the careful Advanced pull.
-    std::uint32_t packSize = 0;
-    for (std::size_t i = 0; i < n; ++i)
-        if (find(i) == targetRoot)
-            ++packSize;
-    if (packSize > largePackThreshold)
-        return true;
-
-    // Threatening neighbours: an OTHER pack with a chainEligible mob within
-    // chainRadius (2D) and on the same level as any target-pack mob. A neighbour
-    // directly above/below is a different floor's problem, not this pull's.
     for (std::size_t i = 0; i < n; ++i)
     {
-        if (find(i) == targetRoot || !mobs[i].chainEligible)
-            continue;
-        for (std::size_t j = 0; j < n; ++j)
+        if (find(i) == targetRoot)
         {
-            if (find(j) != targetRoot)
+            inSet[i] = 1;  // target + its atomic pack
+            continue;
+        }
+        if (mobs[i].chainEligible && sameLevel(i, targetIdx)
+            && dist2d(i, targetIdx) <= mobs[i].aggroReach + combatSpread)
+            inSet[i] = 1;
+    }
+
+    // One assist hop (no transitivity). A chainEligible mob within assistRadius of
+    // a SEED mob joins via CallForHelp, but proximity aggro from a fixed camp does
+    // not chain, so an assisted mob does not seed further proximity or assist.
+    // Iterate over a SNAPSHOT of the seed so newly-added mobs can't propagate.
+    std::vector<char> const seed = inSet;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        if (seed[j] || !mobs[j].chainEligible)
+            continue;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (!seed[i])
                 continue;
-            if (dist2d(i, j) <= chainRadius && sameLevel(i, j))
-                return true;
+            if (sameLevel(i, j) && dist2d(i, j) <= assistRadius)
+            {
+                inSet[j] = 1;
+                break;
+            }
         }
     }
-    return false;
+
+    // Formation closure: a counted member drags its whole pack in — you cannot
+    // pull half a formation. This completes packs; it does not re-seed proximity
+    // or assist, so it cannot cascade.
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!inSet[i] || mobs[i].packId == 0)
+            continue;
+        std::size_t const r = find(i);
+        for (std::size_t k = 0; k < n; ++k)
+            if (find(k) == r)
+                inSet[k] = 1;
+    }
+
+    std::uint32_t count = 0;
+    for (std::size_t i = 0; i < n; ++i)
+        if (inSet[i])
+            ++count;
+    return count;
 }
 
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
