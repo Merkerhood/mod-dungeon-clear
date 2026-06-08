@@ -606,6 +606,16 @@ public:
     // Returns false for the leader itself, outside dynamic mode, or off/paused.
     static bool IsLeaderDynamicScouting(Player* bot);
 
+    // Point `lag` yards back along the LEADER tank's breadcrumb trail (the ground
+    // the tank actually walked, which the escort spline already corridor-centered),
+    // for a follower to trail to during dynamic scouting. Walking the leader's
+    // trail keeps followers on the centered route instead of bee-lining a geometric
+    // lag point through the raw PathGenerator, which hugs walls and ledges. Reads
+    // the LEADER's crumbs cross-bot (only the tank records them) and only returns a
+    // crumb `bot` can reach over a complete generated path. False if there is no
+    // leader, the trail is empty, or no reachable point lies far enough back.
+    static bool GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out);
+
     // Force the leader of `bot`'s group to abandon the current pull and release
     // the party (sets the leader's pull phase to Engage). Used by the camp-safety
     // valve when a held, passive follower is taking unexpected damage. No-op if

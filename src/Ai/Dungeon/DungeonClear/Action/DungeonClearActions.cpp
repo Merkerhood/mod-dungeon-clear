@@ -2618,30 +2618,35 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // the tank's between-pulls wait on the party's mana.
             return false;
         }
-        // Tank pulled beyond the lag: step up to a point `lag` yards from the tank
-        // on our current bearing (i.e. behind the moving tank) and stop. normal_only
-        // so a point that isn't reachable over a real navmesh path is rejected
-        // rather than walked to via a straight spline that clips terrain.
-        float const tx = tank->GetPositionX();
-        float const ty = tank->GetPositionY();
-        float const dx = bot->GetPositionX() - tx;
-        float const dy = bot->GetPositionY() - ty;
-        float const len = std::sqrt(dx * dx + dy * dy);
-        if (len > 0.01f)
+        // Tank pulled beyond the lag: step up to a point `lag` yards behind the
+        // tank ALONG ITS BREADCRUMB TRAIL — the ground the tank actually walked,
+        // which its escort spline already corridor-centered. The earlier version
+        // projected a geometric lag point off the tank (tx + bearing*lag) and
+        // MoveTo'd it through the raw PathGenerator: no corridor centering, so
+        // followers cut their own wall-hugging corners, and the projected point
+        // itself (bot's own Z, straight off the tank) could land on a ledge lip —
+        // the reported "hugging walls / falling off ledges in dynamic pull". Trail
+        // points are reachability-gated centered crumbs, so the move stays on the
+        // safe route the tank already cleared.
+        Position trailPoint;
+        if (DungeonClearUtil::GetLeaderScoutTrailPoint(bot, lag, trailPoint))
         {
-            float const px = tx + dx / len * lag;
-            float const py = ty + dy / len * lag;
-            if (MoveTo(bot->GetMapId(), px, py, bot->GetPositionZ(),
+            // normal_only: reject (don't straight-line to) a point that isn't
+            // reachable over a real navmesh path. Crumbs are already gated for
+            // reachability, but keep the guard as a belt-and-braces backstop.
+            if (MoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
+                       trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
                        false, false, /*normal_only=*/true))
             {
-                DC_PULL_DEBUG("[DC:{}] scout-lag: stepping to lag ring "
-                              "(was {:.1f}yd behind tank, lag {:.1f})",
+                DC_PULL_DEBUG("[DC:{}] scout-lag: trailing tank along breadcrumbs "
+                              "(was {:.1f}yd behind, lag {:.1f})",
                               bot->GetName(), toTank, lag);
                 return true;
             }
         }
-        // Degenerate (on top of the tank) or unreachable trail point: fall through
-        // to a normal follow so the party never gets permanently stranded.
+        // No trail yet (pull mode just toggled on, tank hasn't moved) or the trail
+        // point was unreachable: fall through to a normal follow so the party never
+        // gets permanently stranded.
     }
 
     // Tighter cluster than default. Keeps followers in healer LOS and out

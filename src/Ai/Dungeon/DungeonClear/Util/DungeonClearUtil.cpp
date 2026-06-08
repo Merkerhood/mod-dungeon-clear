@@ -1810,6 +1810,75 @@ bool DungeonClearUtil::IsLeaderDynamicScouting(Player* bot)
     return pull.phase == DcPullPhase::Idle;
 }
 
+bool DungeonClearUtil::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader drives; only followers trail it
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    // The trail lives in the LEADER's context — only the tank runs Advance and so
+    // only the tank records breadcrumbs.
+    std::vector<Position> const& crumbs =
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get().breadcrumbs;
+    if (crumbs.empty())
+        return false;
+
+    Position const tankPos(leader->GetPositionX(), leader->GetPositionY(),
+                           leader->GetPositionZ());
+
+    // Walk BACK along the trail (newest -> oldest) accumulating real walked distance,
+    // exactly like ComputeTrailCamp, and return the first reachable crumb at least
+    // `lag` yards behind the tank. A 3D segment > kJumpGuard is a drag/teleport seam
+    // — stop, nothing beyond it is contiguously "behind" the tank. Track the farthest
+    // reachable crumb as the fallback when the trail is shorter than the full lag.
+    constexpr float kJumpGuard = 12.0f;
+    Position best = tankPos;
+    float bestAlong = 0.0f;
+    bool haveReachable = false;
+    Position prev = tankPos;
+    float along = 0.0f;
+    for (std::size_t i = crumbs.size(); i-- > 0; )
+    {
+        Position const& c = crumbs[i];
+        float const seg = prev.GetExactDist(&c);
+        prev = c;
+        if (seg > kJumpGuard)
+            break;  // discontinuity behind us — stop here
+        along += seg;
+        // Only ever trail to a crumb the follower can reach over a complete
+        // generated path; a crumb across a navmesh seam would straight-line the
+        // move under the map.
+        if (!IsNavReachable(bot, c))
+            continue;
+        haveReachable = true;
+        if (along > bestAlong)
+        {
+            best = c;
+            bestAlong = along;
+        }
+        if (along >= lag)
+        {
+            out = c;
+            return true;
+        }
+    }
+
+    // Trail shorter than the full lag: trail the farthest reachable crumb we found
+    // (the follower simply stacks a little closer until more trail accrues).
+    if (!haveReachable)
+        return false;
+    out = best;
+    return true;
+}
+
 void DungeonClearUtil::AbortLeaderPull(Player* bot)
 {
     if (!bot)
