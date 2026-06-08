@@ -1399,7 +1399,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             float const setback = DcSettings::GetFloat(bot, "PullSetback");
             float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
             if (std::optional<Position> trail =
-                    DungeonClearUtil::ComputeTrailCamp(botAI, setback, maxDrag))
+                    DcPullPlanner::ComputeTrailCamp(botAI, setback, maxDrag))
             {
                 Position const tankPos(bot->GetPositionX(), bot->GetPositionY(),
                                        bot->GetPositionZ());
@@ -3009,7 +3009,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
                 float clrAhead = 0.0f;
                 float dragAhead = 0.0f;
-                if (std::optional<Position> ahead = DungeonClearUtil::ComputeSafeCamp(
+                if (std::optional<Position> ahead = DcPullPlanner::ComputeSafeCamp(
                         botAI, trash, setback, safeRadius, maxDrag, clrAhead, dragAhead))
                 {
                     bool const campUnset =
@@ -3048,7 +3048,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
             float clearance = 0.0f;
             float drag = 0.0f;
-            std::optional<Position> camped = DungeonClearUtil::ComputeSafeCamp(
+            std::optional<Position> camped = DcPullPlanner::ComputeSafeCamp(
                 botAI, trash, setback, safeRadius, maxDrag, clearance, drag);
             if (camped.has_value())
                 camp = *camped;
@@ -3087,7 +3087,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 bot->StopMoving();
 
             bool const partySet =
-                DungeonClearUtil::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
+                DcPullPlanner::IsPartySetAtCamp(bot, camp, DC_PULL_SET_RADIUS);
             bool const formingTimedOut = (now - since) > DC_PULL_PARTY_SET_TIMEOUT_MS;
             if (!partySet && !formingTimedOut)
             {
@@ -3345,7 +3345,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                 float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
                 float clr = 0.0f;
                 float drag = 0.0f;
-                if (std::optional<Position> fresh = DungeonClearUtil::ComputeSafeCamp(
+                if (std::optional<Position> fresh = DcPullPlanner::ComputeSafeCamp(
                         botAI, aggressor, setback, safeRadius, maxDrag, clr, drag))
                 {
                     camp = *fresh;
@@ -3504,7 +3504,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
     // the slot with a tight tolerance (the wide hold radius would let the bot stop
     // before the variance ever showed); fall back to the anchor when the slot
     // probe failed (slot == camp).
-    Position const slot = DungeonClearUtil::ComputeCampSlot(bot, camp);
+    Position const slot = DcPullPlanner::ComputeCampSlot(bot, camp);
     float const toCamp = bot->GetExactDist(&slot);
     if (toCamp <= DC_PULL_SLOT_RADIUS)
     {

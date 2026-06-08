@@ -102,7 +102,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     // Dynamic pull (setting 2): the tank auto-picks Leeroy vs Advanced per pack by
     // ESTIMATING how many mobs aggro if it Leeroys on top of the target — proximity
     // aggro from each mob's own level-scaled aggro radius plus one CallForHelp
-    // assist hop (see DungeonClearUtil::ClassifyPullAdvanced and DungeonClearMath::
+    // assist hop (see DcPullPlanner::ClassifyPullAdvanced and DungeonClearMath::
     // EstimateAggroCount). MaxLeeroyMobs is the party's comfortable simultaneous-
     // mob ceiling: an estimate ABOVE it => Advanced (peel one cluster at a time),
     // at/below => Leeroy. This single count is the whole verdict and self-tunes per

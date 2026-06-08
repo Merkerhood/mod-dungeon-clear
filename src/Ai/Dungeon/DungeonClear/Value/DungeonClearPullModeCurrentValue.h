@@ -13,7 +13,7 @@ class PlayerbotAI;
 // Order-independent live read of the behavioural `dungeon clear pull mode` bool.
 //
 // In Dynamic mode (pull setting == 2) the per-pack Leeroy/Advanced verdict is
-// computed by DungeonClearUtil::UpdateDynamicPullMode, which WRITES the
+// computed by DcPullPlanner::UpdateDynamicPullMode, which WRITES the
 // `dungeon clear pull mode` bool. That update used to run as a side effect inside
 // DungeonClearPullTrigger::IsActive(), and the engage/blocking-trash triggers
 // (and the camp gates) then read the freshly-mutated bool LATER in the same

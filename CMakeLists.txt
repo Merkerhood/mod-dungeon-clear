@@ -43,4 +43,6 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (DungeonClearUtil decomposition: follow/passive marks + reapers; owns g_dc* statics)
 # Util/DcStatusPublisher.{h,cpp}
 #   (DungeonClearUtil decomposition: addon comms + event-driven status push)
+# Util/DcPullPlanner.{h,cpp}
+#   (DungeonClearUtil decomposition: camp placement + dynamic-pull classification)
 # (this comment bumps mtime to force CMake re-glob on next build)

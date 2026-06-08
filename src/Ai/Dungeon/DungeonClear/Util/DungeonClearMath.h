@@ -58,7 +58,7 @@ namespace DungeonClearMath
     //   - Formation closure: any pack touched by the set is counted in full.
     // `zTolerance` keeps the estimate honest in multi-level rooms: WotLK inter-
     // floor gaps exceed it, so a mob a ramp above/below never counts. Separated
-    // from the game-state resolution in DungeonClearUtil::ClassifyPullAdvanced so
+    // from the game-state resolution in DcPullPlanner::ClassifyPullAdvanced so
     // the logic is unit-testable.
     // `countedOut` (optional) receives the indices of every mob the estimate
     // counted, for diagnostic logging at the call site.

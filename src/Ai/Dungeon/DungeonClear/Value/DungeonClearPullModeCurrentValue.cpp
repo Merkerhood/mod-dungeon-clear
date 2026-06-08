@@ -14,6 +14,6 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // the behavioural bool. UpdateDynamicPullMode is a no-op for Off/On (where
     // DcPullAction owns the bool) and internally throttles the expensive
     // classification, so running it on every read is cheap and idempotent.
-    DungeonClearUtil::UpdateDynamicPullMode(botAI, context);
+    DcPullPlanner::UpdateDynamicPullMode(botAI, context);
     return AI_VALUE(bool, "dungeon clear pull mode");
 }

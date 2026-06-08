@@ -24,6 +24,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFollowerLifecycle.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 
 // --- Advanced-pull log channel --------------------------------------------
@@ -134,16 +135,6 @@ public:
 
 
 
-    // Returns a per-bot "camp slot": the shared camp anchor nudged 1-2yd in a
-    // deterministic, GUID-derived direction so a party holding at camp fans out
-    // instead of stacking on one identical coordinate (the bot-like single-point
-    // look). The offset is run through PathGenerator and the navmesh-snapped
-    // endpoint is returned, so the slot is guaranteed to sit inside the zone
-    // geometry; if the probe can't produce a real ground path near camp (camp
-    // against a wall / on a ledge) it falls back to the exact camp position. The
-    // result is stable across ticks for a given (bot, camp), so MoveTo dedups it
-    // and the follower settles on one spot instead of jittering.
-    static Position ComputeCampSlot(Player* bot, Position const& camp);
 
     // Scans `candidates` for the closest hostile alive unit whose 2D distance
     // to any segment of the supplied path polyline (within the first
@@ -173,67 +164,11 @@ public:
 
 
 
-    // --- Dynamic pull (auto Leeroy vs Advanced) -----------------------------
-    // Classifies the pull on `target`: true => use the careful Advanced pull-to-
-    // camp; false => Leeroy it. Estimates how many mobs would aggro if the party
-    // fought on top of the target — every mob whose own (level-scaled) aggro
-    // radius + PullCombatSpread reaches the camp spot, plus one CallForHelp assist
-    // hop — gated to mobs in line of sight, on the same floor, with no closed door
-    // between (the far-targets scan ignores LOS). True when that estimate exceeds
-    // PullDynamicMaxLeeroyMobs. Reach comes from the real creature aggro radius
-    // (vs the lowest-level party member), so it self-tunes per zone/level. The pure
-    // count is DungeonClearMath::EstimateAggroCount. See the Dynamic Pull plan doc.
-    static bool ClassifyPullAdvanced(PlayerbotAI* botAI, Unit* target);
-
-    // Per-tick governor for Dynamic mode (pull setting == 2). No-op for Off/On
-    // (DcPullAction owns the bool there). Out of combat with no pull maneuver in
-    // flight, it sizes up the next pull target (ClassifyPullAdvanced), latches the
-    // verdict per target GUID (so a single approaching pack isn't re-judged every
-    // tick and the party isn't churned between follow/hold), and drives `dungeon
-    // clear pull mode` (+ leader daze immunity + camp seed) so the rest of the
-    // existing pipeline runs the chosen maneuver. Called at the top of
-    // DungeonClearPullTrigger::IsActive, which the engine evaluates before the
-    // engage triggers each tick. Publishes the verdict to `dungeon clear pull
-    // decision` for the addon. Leader-only (the caller has already gated on that).
-    static void UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* context);
 
 
-    // Picks the advanced-pull camp: a rally point `setback` yards BACK along the
-    // already-cleared route, where the tank drags the pulled pack and the party
-    // waits. Dungeon mobs have no leash, so the camp is placed a generous fixed
-    // distance back for room rather than the minimum that "works". If the point
-    // `setback` back is still within `safeRadius` of another pack (any live
-    // hostile that is not `target` and not one of `target`'s packmates) the search
-    // keeps walking back, up to `maxDrag`, until clear. Cleared route behind the
-    // tank is inherently safe ground (we already killed through it). When the
-    // cleared route behind is too short (e.g. the first pull near the entrance) it
-    // falls back to a straight line away from the target, snapped to the navmesh.
-    // Returns nullopt only when there is no usable position at all (no bot/target).
-    // The chosen point's clearance is written to `clearanceOut` (FLT_MAX when no
-    // other pack exists) and how far back it sits to `dragOut`, for the plan log.
-    static std::optional<Position> ComputeSafeCamp(PlayerbotAI* botAI, Unit* target,
-                                                   float setback, float safeRadius,
-                                                   float maxDrag,
-                                                   float& clearanceOut, float& dragOut);
 
-    // Lean, target-less twin of ComputeSafeCamp for the Idle SCOUT phase: returns
-    // a point `setback` back along the breadcrumb trail behind the tank (capped at
-    // maxDrag), so the camp can TRAIL the moving tank while no pull is committed
-    // and the party walks along behind it at a fixed standoff. No clearance test —
-    // the tank just walked this ground, so it is by definition clear, and there is
-    // no pack to stay clear of yet. Falls back to the farthest contiguous trail
-    // point, then to the tank's own position when the trail is too short. Returns
-    // nullopt only when there is no bot.
-    static std::optional<Position> ComputeTrailCamp(PlayerbotAI* botAI, float setback,
-                                                    float maxDrag);
 
-    // True when the party is "set" for the tank to pull: every living, on-map,
-    // non-leader BOT follower is within `setRadius` of `camp` AND currently
-    // running the combat-engine "passive" strategy (so it won't break the pull).
-    // Real-player members (no PlayerbotAI) are not waited on. Solo (no group)
-    // returns true. Lets the Forming gate hold the tag until the party has
-    // actually parked and gone passive, instead of pulling into open ground.
-    static bool IsPartySetAtCamp(Player* leader, Position const& camp, float setRadius);
+
 
 
 
