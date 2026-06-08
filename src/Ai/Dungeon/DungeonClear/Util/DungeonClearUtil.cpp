@@ -2210,8 +2210,16 @@ namespace
     std::set<ObjectGuid> g_dcPassivePlayers;
     std::mutex g_dcPassiveMutex;
 
-    // Pets are released from passive on a short delay AFTER their owner: a pet
-    // freed the instant the party drops passive charges in and bodies the pack
+    // Followers are released from passive on a short delay AFTER the leader
+    // commits the pull (flips to Engage), so the tank gets a head start on
+    // threat before DPS pile on. Maps a follower GUID to the getMSTime()
+    // deadline at which it drops passive. Only the graceful Engage transition is
+    // delayed; a hard exit (run ended / paused / leader gone) and the
+    // camp-safety valve release immediately. Guarded by g_dcPassiveMutex.
+    std::map<ObjectGuid, uint32> g_dcPlayerReleaseAt;
+
+    // Pets are released from passive on a further delay AFTER their owner: a pet
+    // freed the instant its owner drops passive charges in and bodies the pack
     // before the tank has settled aggro, botching the pull. Maps a follower GUID
     // to the getMSTime() deadline at which its pet flips back to REACT_DEFENSIVE.
     // Guarded by g_dcPassiveMutex (same lifecycle as g_dcPassivePlayers).
@@ -2343,6 +2351,8 @@ void DungeonClearUtil::RemoveFollowerPassive(Player* follower)
         // Only strip passive we applied; a manual passive was never recorded.
         if (!g_dcPassivePlayers.erase(follower->GetGUID()))
             return;
+        // The release is happening now — drop any armed graceful-release timer.
+        g_dcPlayerReleaseAt.erase(follower->GetGUID());
     }
 
     if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(follower))
@@ -2434,6 +2444,7 @@ void DungeonClearUtil::ReapStrandedPassives()
         {
             std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
             g_dcPassivePlayers.erase(guid);
+            g_dcPlayerReleaseAt.erase(guid);
             continue;
         }
 
@@ -2452,13 +2463,49 @@ void DungeonClearUtil::ReapStrandedPassives()
         // teardown — fires regardless of the follower's own engine state.
         if (!inPull || !IsPullPhaseHolding(phase))
         {
-            RemoveFollowerPassive(player);
+            // The graceful pull commit (leader reached camp and flipped to
+            // Engage, so inPull is still true) can hold the party passive a
+            // little longer to give the tank a threat head start before DPS
+            // pile on — the player-side analogue of PullPetReleaseDelay, and the
+            // clock the pet delay then stacks on. A hard exit (run ended,
+            // paused, dc off, leader gone -> !inPull) always releases at once,
+            // as does a zero delay.
+            float const delaySec =
+                inPull ? DcSettings::GetFloat(player, "PullPlayerReleaseDelay") : 0.0f;
+            if (delaySec <= 0.0f)
+            {
+                RemoveFollowerPassive(player);
+                continue;
+            }
+
+            uint32 const now = getMSTime();
+            bool releaseNow = false;
+            {
+                std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+                auto it = g_dcPlayerReleaseAt.find(guid);
+                if (it == g_dcPlayerReleaseAt.end())
+                    // First Engage tick for this follower — arm the timer.
+                    g_dcPlayerReleaseAt[guid] = now + uint32(delaySec * 1000.0f);
+                else if (int32(now - it->second) >= 0)
+                    releaseNow = true;
+            }
+            if (releaseNow)
+                RemoveFollowerPassive(player);
             continue;
+        }
+
+        // Still in a holding phase. If a graceful-release timer was armed (a
+        // brief Engage flicker, or the leader re-entered a hold), disarm it so
+        // the party isn't dropped mid-hold.
+        {
+            std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+            g_dcPlayerReleaseAt.erase(guid);
         }
 
         // Camp-safety valve: a held, passive follower taking real damage (a
         // patrol clipped camp, or the pull went sideways) can't defend itself —
-        // abort the pull so the whole party drops passive and fights back.
+        // abort the pull so the whole party drops passive and fights back. This
+        // is an emergency, so it bypasses the graceful release delay entirely.
         if (player->IsInCombat() && safetyHp > 0.0f &&
             player->GetHealthPct() < safetyHp)
         {
@@ -2466,6 +2513,7 @@ void DungeonClearUtil::ReapStrandedPassives()
                          "combat -> aborting pull, releasing party",
                          player->GetName(), player->GetHealthPct());
             AbortLeaderPull(player);
+            RemoveFollowerPassive(player);
         }
     }
 }

@@ -66,10 +66,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
     { "PullMaxDrag",           DcType::Float, 40,  20, 200,  true  },
 
-    // Seconds a follower's pet stays passive AFTER its owner is released from the
-    // camp hold. Releasing pet and owner in lockstep lets the pet charge in and
-    // pull aggro off the tank before he's settled, botching the pull; the delay
-    // lets the tank establish threat first. 0 = release the pet immediately.
+    // Seconds the party stays passive AFTER the leader commits the pull (flips to
+    // Engage) before DPS are freed to fight — gives the tank a threat head start.
+    // Only the graceful Engage commit is delayed; ending/pausing the run or the
+    // camp-safety valve release at once. 0 = release the party immediately.
+    { "PullPlayerReleaseDelay", DcType::Float, 1.5,  0,  10,  true  },
+
+    // Seconds a follower's pet stays passive AFTER its owner is released (on top
+    // of PullPlayerReleaseDelay). Releasing pet and owner in lockstep lets the
+    // pet charge in and pull aggro off the tank before he's settled, botching the
+    // pull; the delay lets the tank establish threat first. 0 = release at once.
     { "PullPetReleaseDelay",   DcType::Float, 2.5,  0,  10,  true  },
 
     // PullCommitRange{Floor,Cap}: how close the pack must be before the tank stops,

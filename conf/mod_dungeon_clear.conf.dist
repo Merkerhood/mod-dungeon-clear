@@ -327,13 +327,30 @@ DungeonClear.PullCampSafeRadius = 25.0
 DungeonClear.PullMaxDrag = 40.0
 
 #
+#    DungeonClear.PullPlayerReleaseDelay
+#        Advanced pull only. Seconds the party stays passive AFTER the leader
+#        commits the pull (reaches the camp and flips to Engage) before the DPS
+#        followers are freed to fight. Gives the tank a head start on threat so the
+#        party doesn't rip mobs off him the instant he tags the pack. Only the
+#        graceful pull commit is delayed: ending or pausing the run, or the
+#        camp-safety valve (a held follower taking heavy damage), release the party
+#        immediately regardless. Set to 0 to release the party at once (the old
+#        behaviour). Healers are never held passive and are unaffected. The pet
+#        delay below stacks on top of this.
+#
+#        Default: 1.5
+#
+
+DungeonClear.PullPlayerReleaseDelay = 1.5
+
+#
 #    DungeonClear.PullPetReleaseDelay
 #        Advanced pull only. Seconds a follower's pet stays passive AFTER its owner
-#        is released from the camp hold. Releasing pet and owner together lets the
-#        pet charge in and pull aggro off the tank before he has settled threat,
-#        botching the pull; this delay lets the tank establish aggro first while the
-#        rest of the party engages. Set to 0 to release pets immediately with their
-#        owners (the old behaviour).
+#        is released (on top of PullPlayerReleaseDelay). Releasing pet and owner
+#        together lets the pet charge in and pull aggro off the tank before he has
+#        settled threat, botching the pull; this delay lets the tank establish
+#        aggro first while the rest of the party engages. Set to 0 to release pets
+#        immediately with their owners (the old behaviour).
 #
 #        Default: 2.5
 #
