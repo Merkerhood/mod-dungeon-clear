@@ -45,4 +45,8 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (DungeonClearUtil decomposition: addon comms + event-driven status push)
 # Util/DcPullPlanner.{h,cpp}
 #   (DungeonClearUtil decomposition: camp placement + dynamic-pull classification)
+# Util/DcTargeting.{h,cpp}
+#   (DungeonClearUtil decomposition: find-the-thing-to-fight unit; owns the
+#    corridor trash-scan helpers. Completes the split — DungeonClearUtil class
+#    is now empty; DungeonClearUtil.h is the umbrella + DC_PULL_* macros.)
 # (this comment bumps mtime to force CMake re-glob on next build)

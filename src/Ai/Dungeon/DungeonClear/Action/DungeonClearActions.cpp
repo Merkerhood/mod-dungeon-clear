@@ -1311,7 +1311,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBossNotPresentStal
 {
     DungeonBossInfo const* next = st.next;
 
-    if (!DungeonClearUtil::IsCreaturePresentOnMap(bot, next->entry))
+    if (!DcTargeting::IsCreaturePresentOnMap(bot, next->entry))
     {
         // "Not present" only means "not spawned" once we're close enough that
         // the boss's grid is certainly loaded. While we're still far, the grid
@@ -1392,7 +1392,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
             AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
         bool const noPackInRange =
             !nextForTrail.has_value() ||
-            !DungeonClearUtil::FindPullTarget(botAI, *nextForTrail);
+            !DcTargeting::FindPullTarget(botAI, *nextForTrail);
         if (!bot->IsInCombat() &&
             pullPhase == DcPullPhase::Idle && noPackInRange)
         {
@@ -1437,7 +1437,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // the boss actually is instead of parking at the spawn anchor. Falls back to
     // the static coords when the creature isn't loaded (far grid not streamed in
     // yet — see DC_BOSS_GRID_LOADED_RANGE).
-    Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
+    Creature* const liveBoss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     float const bossX = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const bossY = liveBoss ? liveBoss->GetPositionY() : next->y;
     float const bossZ = liveBoss ? liveBoss->GetPositionZ() : next->z;
@@ -2217,7 +2217,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
             AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
         if (path.reachable && !path.segments.empty())
         {
-            fresh = DungeonClearUtil::FindBlockingTrashOnPath(
+            fresh = DcTargeting::FindBlockingTrashOnPath(
                 bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
         }
         else
@@ -2226,7 +2226,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
             Movement::PointsArray corridor;
             if (DcEngageGeometry::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
             {
-                fresh = DungeonClearUtil::FindBlockingTrashCorridor(
+                fresh = DcTargeting::FindBlockingTrashCorridor(
                     bot, corridor, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
             }
         }
@@ -2236,7 +2236,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
         // Final fallback: cone scan, same predicate as the trigger uses.
         // Keeps the engagement path live when path computation can't
         // produce any usable corridor (boss off-mesh, etc.).
-        fresh = DungeonClearUtil::FindBlockingTrash(
+        fresh = DcTargeting::FindBlockingTrash(
             bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
     }
 
@@ -2313,7 +2313,7 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
     if (!next.has_value())
         return false;
 
-    Creature* boss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
+    Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     if (!boss)
     {
         StallDungeonClear(botAI,
@@ -2330,7 +2330,7 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
 
 bool DungeonClearClearStalledAction::Execute(Event /*event*/)
 {
-    Unit* target = DungeonClearUtil::FindNearestReachableHostile(bot);
+    Unit* target = DcTargeting::FindNearestReachableHostile(bot);
     if (!target)
     {
         // We're stalled with nothing left to kill. Leave the stall reason in
@@ -2511,7 +2511,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // the same cached long-path Advance builds. Targeting the static anchor
         // here while Advance targets the live boss would flip the shared cache's
         // built-toward position every tick and thrash rebuilds.
-        Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
+        Creature* const liveBoss = DcTargeting::GetLiveBoss(bot, context, next->entry);
         DungeonBossInfo effectiveTarget = *next;
         if (liveBoss)
         {
@@ -2975,7 +2975,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // Begin a pull: choose a SAFE camp back along the cleared route, hold
             // here, and let the party reposition to it (the tank doesn't retreat).
             Unit* trash = next.has_value()
-                ? DungeonClearUtil::FindPullTarget(botAI, *next) : nullptr;
+                ? DcTargeting::FindPullTarget(botAI, *next) : nullptr;
             if (!trash)
             {
                 DC_PULL_TRACE("[DC:{}] pull idle: no pull target -> yield to advance",
@@ -3107,7 +3107,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
         {
             // Tag the pack. The moment combat starts the non-combat trigger stops
             // firing and DungeonClearPullManeuverAction drags it back to camp.
-            Unit* trash = next.has_value() ? DungeonClearUtil::FindPullTarget(botAI, *next) : nullptr;
+            Unit* trash = next.has_value() ? DcTargeting::FindPullTarget(botAI, *next) : nullptr;
             if (!trash)
             {
                 // Pack died / despawned before we tagged it — nothing to pull.

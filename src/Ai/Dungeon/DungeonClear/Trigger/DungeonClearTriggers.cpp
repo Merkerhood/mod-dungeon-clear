@@ -117,7 +117,7 @@ bool DungeonClearAtBossTrigger::IsActive()
     // down so door-blocked parks at its stand-off; re-evaluates the instant the
     // door opens. Checked fresh, not via the 500ms-cached blocking-door value,
     // which can still read empty the moment the boss first comes into range.
-    Creature* const liveBoss = DungeonClearUtil::GetLiveBoss(bot, context, next->entry);
+    Creature* const liveBoss = DcTargeting::GetLiveBoss(bot, context, next->entry);
     float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
     float const bz = liveBoss ? liveBoss->GetPositionZ() : next->z;
@@ -198,7 +198,7 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
             AI_VALUE(ChunkedPathfinder::Result&, "dungeon clear long path");
         if (path.reachable && !path.segments.empty())
         {
-            trash = DungeonClearUtil::FindBlockingTrashOnPath(
+            trash = DcTargeting::FindBlockingTrashOnPath(
                 bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
         }
         // No usable long-path cache — fall back to a single-shot corridor
@@ -207,15 +207,15 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         {
             Movement::PointsArray corridor;
             if (DcEngageGeometry::ComputeCorridor(bot, next->x, next->y, next->z, corridor))
-                trash = DungeonClearUtil::FindBlockingTrashCorridor(
+                trash = DcTargeting::FindBlockingTrashCorridor(
                     bot, corridor, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
             else
-                trash = DungeonClearUtil::FindBlockingTrash(
+                trash = DcTargeting::FindBlockingTrash(
                     bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
         }
     }
     else
-        trash = DungeonClearUtil::FindBlockingTrash(
+        trash = DcTargeting::FindBlockingTrash(
             bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
 
     if (!trash)
@@ -484,7 +484,7 @@ bool DungeonClearPullTrigger::IsActive()
     if (!IsBetweenPullsReady(bot, context))
         return false;
 
-    Unit* trash = DungeonClearUtil::FindPullTarget(botAI, *next);
+    Unit* trash = DcTargeting::FindPullTarget(botAI, *next);
     if (!trash)
         return false;
 

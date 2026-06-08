@@ -17,7 +17,7 @@ class PlayerbotAI;
 // trigger ladder plus the advance action each do that several times per tick
 // for the same boss. Caching only the GUID (not a raw Creature*) lets callers
 // re-resolve it in O(1) via ObjectAccessor every call (see
-// DungeonClearUtil::GetLiveBoss): the returned position stays live and we never
+// DcTargeting::GetLiveBoss): the returned position stays live and we never
 // hold a pointer that could dangle if the creature despawns between ticks.
 struct DungeonClearLiveBoss
 {

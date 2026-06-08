@@ -493,17 +493,17 @@ bool DcBossesAction::Execute(Event event)
     // crux of the fix: a boss corpse despawns about a minute after death, so the
     // old "present-but-no-live-creature == dead" heuristic made every killed boss
     // silently flip from "dead" to "missing" the moment its body vanished.
-    InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+    InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
 
     for (DungeonBossInfo const& info : bosses)
     {
         bool const killed =
             info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)) != 0u;
-        bool const liveOnMap = DungeonClearUtil::FindLiveCreatureOnMap(bot, info.entry) != nullptr;
+        bool const liveOnMap = DcTargeting::FindLiveCreatureOnMap(bot, info.entry) != nullptr;
         // Only scan a second time for a corpse when there's no live instance.
         bool const corpseOnMap =
-            !liveOnMap && DungeonClearUtil::IsCreaturePresentOnMap(bot, info.entry);
+            !liveOnMap && DcTargeting::IsCreaturePresentOnMap(bot, info.entry);
 
         // Remember every boss we've actually seen alive this run so a later
         // disappearance reads as "missing" rather than an unreached boss whose
@@ -629,7 +629,7 @@ bool DcGoAction::Execute(Event event)
         return false;
     }
 
-    InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+    InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
     if (matched->encounterIndex < 32 && (completedMask & (1u << matched->encounterIndex)))
     {

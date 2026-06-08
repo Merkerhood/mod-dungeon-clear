@@ -3,12 +3,13 @@
  * and/or modify it under version 3 of the License, or (at your option), any later version.
  */
 
-#include "DungeonClearUtil.h"
+#include "DcTargeting.h"
+
+#include "DungeonClearUtil.h"   // DcEngageGeometry:: cross-unit calls + DC_PULL_* macros
+
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
-
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -23,7 +24,6 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
-
 #include "AttackersValue.h"
 #include "CellImpl.h"
 #include "Config.h"
@@ -58,109 +58,6 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
-
-Unit* DungeonClearUtil::FindBlockingTrash(Player* bot,
-                                          DungeonBossInfo const& boss,
-                                          float range,
-                                          float halfAngle,
-                                          GuidVector const& possibleTargets)
-{
-    if (!bot || possibleTargets.empty())
-        return nullptr;
-
-    float const bossDx = boss.x - bot->GetPositionX();
-    float const bossDy = boss.y - bot->GetPositionY();
-    float const bossAngle = std::atan2(bossDy, bossDx);
-
-    Unit* best = nullptr;
-    float bestDist = range;
-
-    for (ObjectGuid guid : possibleTargets)
-    {
-        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
-        if (!u || !u->IsAlive())
-            continue;
-        if (!bot->IsHostileTo(u))
-            continue;
-        // Deliberately do NOT skip in-combat units. A hostile in our forward
-        // corridor that's already engaged on another party member is *more*
-        // reason to engage, not less — otherwise the tank walks past while
-        // the healer gets clawed.
-
-        float const dx = u->GetPositionX() - bot->GetPositionX();
-        float const dy = u->GetPositionY() - bot->GetPositionY();
-        float const dist = std::hypot(dx, dy);
-        if (dist > range)
-            continue;
-
-        float const ang = std::atan2(dy, dx);
-        float delta = std::fabs(ang - bossAngle);
-        if (delta > static_cast<float>(M_PI))
-            delta = 2.0f * static_cast<float>(M_PI) - delta;
-        if (delta > halfAngle)
-            continue;
-
-        if (dist < bestDist && DcEngageGeometry::IsLevelReachable(bot, u))
-        {
-            best = u;
-            bestDist = dist;
-        }
-    }
-    return best;
-}
-
-Unit* DungeonClearUtil::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& next)
-{
-    if (!botAI)
-        return nullptr;
-    Player* bot = botAI->GetBot();
-    if (!bot)
-        return nullptr;
-    AiObjectContext* context = botAI->GetAiObjectContext();
-
-    // Same look-ahead / band the blocking-trash trigger uses; keep them aligned
-    // so the pull aims at the very pack the normal flow would otherwise pull.
-    constexpr float kLookAhead = 35.0f;
-    constexpr float kWidth = 18.0f;
-    constexpr float kConeRange = 35.0f;
-    float const kConeHalfAngle = static_cast<float>(M_PI) / 3.0f;  // 60°
-
-    GuidVector const& farTargets = context->GetValue<GuidVector>("dungeon clear far targets")->Get();
-    GuidVector const& possibleTargets = context->GetValue<GuidVector>("possible targets")->Get();
-    GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
-
-    Unit* trash = nullptr;
-    ChunkedPathfinder::Result const& path =
-        context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
-    if (path.reachable && !path.segments.empty())
-    {
-        trash = FindBlockingTrashOnPath(bot, path.segments, kLookAhead, kWidth, candidates);
-    }
-    else
-    {
-        Movement::PointsArray corridor;
-        if (DcEngageGeometry::ComputeCorridor(bot, next.x, next.y, next.z, corridor))
-            trash = FindBlockingTrashCorridor(bot, corridor, kLookAhead, kWidth, candidates);
-        else
-            trash = FindBlockingTrash(bot, next, kConeRange, kConeHalfAngle, candidates);
-    }
-
-    if (!trash)
-        return nullptr;
-
-    // Never pull a pack on the far side of a closed door (mirrors the trigger's
-    // veto): some doors are navmesh-passable, so the tank would otherwise run
-    // through and drag the pack back through the doorway.
-    if (DcEngageGeometry::ClosedDoorBetween(bot, trash->GetPositionX(), trash->GetPositionY(), trash->GetPositionZ()))
-    {
-        DC_PULL_TRACE("[DC:{}] pull target {} vetoed — closed door between us and it",
-                      bot->GetName(), trash->GetGUID().ToString());
-        return nullptr;
-    }
-
-    return trash;
-}
-
 
 namespace
 {
@@ -339,7 +236,56 @@ namespace
     }
 }
 
-Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
+Unit* DcTargeting::FindBlockingTrash(Player* bot,
+                                          DungeonBossInfo const& boss,
+                                          float range,
+                                          float halfAngle,
+                                          GuidVector const& possibleTargets)
+{
+    if (!bot || possibleTargets.empty())
+        return nullptr;
+
+    float const bossDx = boss.x - bot->GetPositionX();
+    float const bossDy = boss.y - bot->GetPositionY();
+    float const bossAngle = std::atan2(bossDy, bossDx);
+
+    Unit* best = nullptr;
+    float bestDist = range;
+
+    for (ObjectGuid guid : possibleTargets)
+    {
+        Unit* u = ObjectAccessor::GetUnit(*bot, guid);
+        if (!u || !u->IsAlive())
+            continue;
+        if (!bot->IsHostileTo(u))
+            continue;
+        // Deliberately do NOT skip in-combat units. A hostile in our forward
+        // corridor that's already engaged on another party member is *more*
+        // reason to engage, not less — otherwise the tank walks past while
+        // the healer gets clawed.
+
+        float const dx = u->GetPositionX() - bot->GetPositionX();
+        float const dy = u->GetPositionY() - bot->GetPositionY();
+        float const dist = std::hypot(dx, dy);
+        if (dist > range)
+            continue;
+
+        float const ang = std::atan2(dy, dx);
+        float delta = std::fabs(ang - bossAngle);
+        if (delta > static_cast<float>(M_PI))
+            delta = 2.0f * static_cast<float>(M_PI) - delta;
+        if (delta > halfAngle)
+            continue;
+
+        if (dist < bestDist && DcEngageGeometry::IsLevelReachable(bot, u))
+        {
+            best = u;
+            bestDist = dist;
+        }
+    }
+    return best;
+}
+Unit* DcTargeting::FindBlockingTrashCorridor(Player* bot,
                                                   Movement::PointsArray const& corridor,
                                                   float maxLookAhead,
                                                   float corridorWidth,
@@ -380,75 +326,7 @@ Unit* DungeonClearUtil::FindBlockingTrashCorridor(Player* bot,
     // shadow a visible blocker further along the corridor.
     return PickBlockingTrash(bot, segments, corridorWidth, possibleTargets);
 }
-
-Creature* DungeonClearUtil::FindLiveCreatureOnMap(Player* bot, uint32 entry)
-{
-    if (!bot)
-        return nullptr;
-    Map* map = bot->GetMap();
-    if (!map)
-        return nullptr;
-
-    for (auto const& kv : map->GetCreatureBySpawnIdStore())
-    {
-        Creature* c = kv.second;
-        if (c && c->GetEntry() == entry && c->IsAlive())
-            return c;
-    }
-    return nullptr;
-}
-
-Creature* DungeonClearUtil::GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 entry)
-{
-    if (!bot || !ctx || !entry)
-        return nullptr;
-
-    DungeonClearLiveBoss const cached =
-        ctx->GetValue<DungeonClearLiveBoss>("dungeon clear live boss")->Get();
-    if (cached.entry == entry && !cached.guid.IsEmpty())
-    {
-        // Re-resolve the cached GUID every call so the position stays live and
-        // we never touch a pointer that may have been freed since the scan.
-        Creature* c = ObjectAccessor::GetCreature(*bot, cached.guid);
-        if (c && c->IsAlive() && c->GetEntry() == entry)
-            return c;
-        // Cached GUID went stale within the interval (died / despawned). Fall
-        // through to a direct scan rather than miss a still-present instance.
-    }
-
-    // Cache miss: computed for a different boss (just after a boss change), or
-    // a stale GUID — pay one direct scan. Steady state hits the branch above.
-    return FindLiveCreatureOnMap(bot, entry);
-}
-
-bool DungeonClearUtil::IsCreaturePresentOnMap(Player* bot, uint32 entry)
-{
-    if (!bot)
-        return false;
-    Map* map = bot->GetMap();
-    if (!map)
-        return false;
-
-    for (auto const& kv : map->GetCreatureBySpawnIdStore())
-    {
-        Creature* c = kv.second;
-        if (c && c->GetEntry() == entry)
-            return true;
-    }
-    return false;
-}
-
-
-
-
-
-
-
-
-
-
-
-Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
+Unit* DcTargeting::FindBlockingTrashOnPath(Player* bot,
                                                 std::vector<PathSegment> const& segments,
                                                 float maxLookAhead,
                                                 float corridorWidth,
@@ -536,8 +414,58 @@ Unit* DungeonClearUtil::FindBlockingTrashOnPath(Player* bot,
 
     return PickBlockingTrash(bot, segs, corridorWidth, candidates);
 }
+Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& next)
+{
+    if (!botAI)
+        return nullptr;
+    Player* bot = botAI->GetBot();
+    if (!bot)
+        return nullptr;
+    AiObjectContext* context = botAI->GetAiObjectContext();
 
-Unit* DungeonClearUtil::FindNearestReachableHostile(Player* bot)
+    // Same look-ahead / band the blocking-trash trigger uses; keep them aligned
+    // so the pull aims at the very pack the normal flow would otherwise pull.
+    constexpr float kLookAhead = 35.0f;
+    constexpr float kWidth = 18.0f;
+    constexpr float kConeRange = 35.0f;
+    float const kConeHalfAngle = static_cast<float>(M_PI) / 3.0f;  // 60°
+
+    GuidVector const& farTargets = context->GetValue<GuidVector>("dungeon clear far targets")->Get();
+    GuidVector const& possibleTargets = context->GetValue<GuidVector>("possible targets")->Get();
+    GuidVector const& candidates = farTargets.empty() ? possibleTargets : farTargets;
+
+    Unit* trash = nullptr;
+    ChunkedPathfinder::Result const& path =
+        context->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+    if (path.reachable && !path.segments.empty())
+    {
+        trash = FindBlockingTrashOnPath(bot, path.segments, kLookAhead, kWidth, candidates);
+    }
+    else
+    {
+        Movement::PointsArray corridor;
+        if (DcEngageGeometry::ComputeCorridor(bot, next.x, next.y, next.z, corridor))
+            trash = FindBlockingTrashCorridor(bot, corridor, kLookAhead, kWidth, candidates);
+        else
+            trash = FindBlockingTrash(bot, next, kConeRange, kConeHalfAngle, candidates);
+    }
+
+    if (!trash)
+        return nullptr;
+
+    // Never pull a pack on the far side of a closed door (mirrors the trigger's
+    // veto): some doors are navmesh-passable, so the tank would otherwise run
+    // through and drag the pack back through the doorway.
+    if (DcEngageGeometry::ClosedDoorBetween(bot, trash->GetPositionX(), trash->GetPositionY(), trash->GetPositionZ()))
+    {
+        DC_PULL_TRACE("[DC:{}] pull target {} vetoed — closed door between us and it",
+                      bot->GetName(), trash->GetGUID().ToString());
+        return nullptr;
+    }
+
+    return trash;
+}
+Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
 {
     if (!bot)
         return nullptr;
@@ -585,8 +513,61 @@ Unit* DungeonClearUtil::FindNearestReachableHostile(Player* bot)
     }
     return nullptr;
 }
+Creature* DcTargeting::FindLiveCreatureOnMap(Player* bot, uint32 entry)
+{
+    if (!bot)
+        return nullptr;
+    Map* map = bot->GetMap();
+    if (!map)
+        return nullptr;
 
-InstanceScript* DungeonClearUtil::GetInstanceScript(Player* bot)
+    for (auto const& kv : map->GetCreatureBySpawnIdStore())
+    {
+        Creature* c = kv.second;
+        if (c && c->GetEntry() == entry && c->IsAlive())
+            return c;
+    }
+    return nullptr;
+}
+Creature* DcTargeting::GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 entry)
+{
+    if (!bot || !ctx || !entry)
+        return nullptr;
+
+    DungeonClearLiveBoss const cached =
+        ctx->GetValue<DungeonClearLiveBoss>("dungeon clear live boss")->Get();
+    if (cached.entry == entry && !cached.guid.IsEmpty())
+    {
+        // Re-resolve the cached GUID every call so the position stays live and
+        // we never touch a pointer that may have been freed since the scan.
+        Creature* c = ObjectAccessor::GetCreature(*bot, cached.guid);
+        if (c && c->IsAlive() && c->GetEntry() == entry)
+            return c;
+        // Cached GUID went stale within the interval (died / despawned). Fall
+        // through to a direct scan rather than miss a still-present instance.
+    }
+
+    // Cache miss: computed for a different boss (just after a boss change), or
+    // a stale GUID — pay one direct scan. Steady state hits the branch above.
+    return FindLiveCreatureOnMap(bot, entry);
+}
+bool DcTargeting::IsCreaturePresentOnMap(Player* bot, uint32 entry)
+{
+    if (!bot)
+        return false;
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+
+    for (auto const& kv : map->GetCreatureBySpawnIdStore())
+    {
+        Creature* c = kv.second;
+        if (c && c->GetEntry() == entry)
+            return true;
+    }
+    return false;
+}
+InstanceScript* DcTargeting::GetInstanceScript(Player* bot)
 {
     if (!bot)
         return nullptr;
@@ -596,52 +577,3 @@ InstanceScript* DungeonClearUtil::GetInstanceScript(Player* bot)
     InstanceMap* im = map->ToInstanceMap();
     return im ? im->GetInstanceScript() : nullptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// Event-driven STATUS / BOSS pushes
-// ---------------------------------------------------------------------------
-//
-// Rather than have the addon poll `CMD\tstatus` on a fixed interval, the server
-// recomputes the status string cheaply each world tick for the small set of
-// tanks actually running a clear and emits a packet only when the meaningful
-// state changes. BuildStatusPayload is the single source of truth for the
-// STATUS line (also used by the on-demand `dc status`), so the two paths can
-// never diverge.
-
-
-
-
-
-
-

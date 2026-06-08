@@ -5,7 +5,7 @@
 
 #include "DcStatusPublisher.h"
 
-#include "DungeonClearUtil.h"   // DungeonClearUtil::GetInstanceScript (until DcTargeting moves)
+#include "DungeonClearUtil.h"   // DcTargeting::GetInstanceScript (until DcTargeting moves)
 
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -94,7 +94,7 @@ namespace
         if (!bot)
             return 0;
 
-        InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
         uint32 const mask = inst ? inst->GetCompletedEncounterMask() : 0u;
         uint32 const skipped =
             static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped").size());

@@ -166,7 +166,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     // kills a boss but never advances to the next one). The mask is reliable
     // for every dungeon whose encounters are ENCOUNTER_CREDIT_KILL_CREATURE,
     // which is precisely the set BossSpawnIndex indexes.
-    InstanceScript* inst = DungeonClearUtil::GetInstanceScript(bot);
+    InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
 
     // Resolve every boss's liveness in a single store pass (shared by the

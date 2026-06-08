@@ -5,7 +5,7 @@
 
 #include "DcEngageGeometry.h"
 
-#include "DungeonClearUtil.h"   // DungeonClearUtil::GetLiveBoss (until DcTargeting moves)
+#include "DungeonClearUtil.h"   // DcTargeting::GetLiveBoss (until DcTargeting moves)
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -88,7 +88,7 @@ float DcEngageGeometry::BossEngageRange(Player* bot, AiObjectContext* ctx,
     if (!DcSettings::GetBool(bot, "DynamicAggroRange"))
         return staticRange;
 
-    Creature* live = DungeonClearUtil::GetLiveBoss(bot, ctx, boss.entry);
+    Creature* live = DcTargeting::GetLiveBoss(bot, ctx, boss.entry);
     if (!live)
         return staticRange;         // not loaded yet — use the static fallback
 
@@ -143,7 +143,7 @@ bool DcEngageGeometry::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
     if (!bot || !ctx)
         return false;
 
-    Creature* live = DungeonClearUtil::GetLiveBoss(bot, ctx, boss.entry);
+    Creature* live = DcTargeting::GetLiveBoss(bot, ctx, boss.entry);
     float const bx = live ? live->GetPositionX() : boss.x;
     float const by = live ? live->GetPositionY() : boss.y;
     float const bz = live ? live->GetPositionZ() : boss.z;

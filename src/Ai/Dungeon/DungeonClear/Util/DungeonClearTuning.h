@@ -35,7 +35,7 @@ constexpr float DC_ENGAGE_RANGE = 22.0f;
 // Cone scan for "blocking trash" — the geometric fallback the trigger uses and
 // the action falls back to when the corridor path scan can't run (boss off-mesh,
 // etc.). 35yd catches packs one tick-cycle earlier than the engage range. Both
-// TUs feed it to DungeonClearUtil::FindBlockingTrash, so it is one constant
+// TUs feed it to DcTargeting::FindBlockingTrash, so it is one constant
 // despite the old per-context names (DC_ENGAGE_CONE_* / DC_TRASH_CONE_*).
 constexpr float DC_TRASH_CONE_RANGE = 35.0f;
 constexpr float DC_TRASH_CONE_HALF_ANGLE = static_cast<float>(M_PI) / 3.0f;  // 60°

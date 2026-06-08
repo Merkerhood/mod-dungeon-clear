@@ -285,8 +285,8 @@ TEST_F(DungeonClearUtilTest, NullptrSafetyChecks)
     EXPECT_FALSE(DcPartyState::IsAnyPartyMemberLooting(nullptr));
     EXPECT_FALSE(DcEngageGeometry::IsReachable(nullptr, 0.0f, 0.0f, 0.0f));
     EXPECT_FALSE(DcEngageGeometry::IsLevelReachable(nullptr, nullptr));
-    EXPECT_EQ(DungeonClearUtil::FindBlockingTrash(nullptr, {}, 10.0f, 1.0f, {}), nullptr);
-    EXPECT_EQ(DungeonClearUtil::FindBlockingTrashCorridor(nullptr, {}, 10.0f, 5.0f, {}), nullptr);
+    EXPECT_EQ(DcTargeting::FindBlockingTrash(nullptr, {}, 10.0f, 1.0f, {}), nullptr);
+    EXPECT_EQ(DcTargeting::FindBlockingTrashCorridor(nullptr, {}, 10.0f, 5.0f, {}), nullptr);
 }
 }
 

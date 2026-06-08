@@ -5,7 +5,7 @@
 
 #include "DcPullPlanner.h"
 
-#include "DungeonClearUtil.h"   // DC_PULL_* macros + DungeonClearUtil::FindPullTarget (until DcTargeting moves)
+#include "DungeonClearUtil.h"   // DC_PULL_* macros + DcTargeting::FindPullTarget (until DcTargeting moves)
 
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -409,7 +409,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
 
     std::optional<DungeonBossInfo> next =
         context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
-    Unit* target = next.has_value() ? DungeonClearUtil::FindPullTarget(botAI, *next) : nullptr;
+    Unit* target = next.has_value() ? DcTargeting::FindPullTarget(botAI, *next) : nullptr;
     if (!target)
     {
         // Nothing to size up: fall back to the Leeroy ladder and drop the latch.
