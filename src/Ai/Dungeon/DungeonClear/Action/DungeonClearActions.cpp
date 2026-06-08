@@ -36,6 +36,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
@@ -72,25 +73,12 @@ namespace
     constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
     constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 
-    // Must match DungeonClearTriggers.cpp.
-    constexpr float DC_ENGAGE_RANGE = 22.0f;
-    constexpr float DC_ENGAGE_CONE_RANGE = 35.0f;
-    constexpr float DC_ENGAGE_CONE_HALF_ANGLE = static_cast<float>(M_PI) / 3.0f;
-    // Rest-gate HP/mana thresholds live in DungeonClearUtil::RestMin{Hp,Mp}Pct(),
-    // which clamp to mod-playerbots' drink/eat targets (see DungeonClearUtil.h).
-    // Max distance the tank may lead a party member before it holds the advance
-    // to let them catch up. Configurable; see DungeonClear.PartyMaxSpread. Must
-    // stay aligned with the same key's default in DungeonClearTriggers.cpp.
-    constexpr float DC_PARTY_MAX_SPREAD_DEFAULT = 25.0f;
-    constexpr bool  DC_USE_CORRIDOR_SCAN = true;
-    constexpr float DC_CORRIDOR_LOOKAHEAD = 35.0f;
-    // Half-width of the path "blocking trash" band. Widened from 8 to 18 so it
-    // roughly matches level-80 elite aggro radius: a pack sitting a few yards
-    // off the route line still aggros as the tank passes, so it must count as
-    // blocking trash. With the old 8yd band such a pack was never a candidate,
-    // so the selector picked an on-line mob farther ahead and the tank ran
-    // straight through the side pack to reach it. Must match DungeonClearTriggers.cpp.
-    constexpr float DC_CORRIDOR_WIDTH = 18.0f;
+    // Shared tuning constants (DC_ENGAGE_RANGE, the cone scan range/angle,
+    // DC_PARTY_MAX_SPREAD_DEFAULT, DC_USE_CORRIDOR_SCAN, DC_CORRIDOR_*,
+    // DC_PULL_START_RANGE) now live in DungeonClearTuning.h, shared with the
+    // trigger ladder so the two layers cannot drift. The old per-context cone
+    // names (DC_ENGAGE_CONE_RANGE / DC_ENGAGE_CONE_HALF_ANGLE) are the trash-cone
+    // scan; use DC_TRASH_CONE_RANGE / DC_TRASH_CONE_HALF_ANGLE.
 
     // Any hostile already inside this radius of the bot will pull as the tank
     // moves, regardless of whether it sits on the corridor line. The engage
@@ -2249,7 +2237,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
         // Keeps the engagement path live when path computation can't
         // produce any usable corridor (boss off-mesh, etc.).
         fresh = DungeonClearUtil::FindBlockingTrash(
-            bot, *next, DC_ENGAGE_CONE_RANGE, DC_ENGAGE_CONE_HALF_ANGLE, candidates);
+            bot, *next, DC_TRASH_CONE_RANGE, DC_TRASH_CONE_HALF_ANGLE, candidates);
     }
 
     // Proximity preempt: a hostile already inside the bot's aggro bubble will
@@ -2927,16 +2915,16 @@ bool DungeonClearFilterLootAction::Execute(Event /*event*/)
 // instead of the party running out to the tank.
 namespace
 {
-    // STATIC FALLBACK commit range — the distance at which the tank stops gliding,
-    // holds, and waits in Forming for the party to set at the camp BEFORE it steps in
-    // to tag. The live value is normally DungeonClearUtil::PullCommitRange, sized to
-    // the pack's REAL aggro radius so the tank Forms just outside where it would
-    // face-pull; this constant only applies when DynamicAggroRange is off or the
-    // target isn't a creature. It still sits outside a same-level mob's ~20yd aggro so
-    // even the fallback doesn't face-pull. Until the pack is this close Advance glides
-    // the tank in (blocking-trash stands down in pull mode so it can't engage first).
-    // Kept in sync with the copy in DungeonClearTriggers.cpp.
-    constexpr float DC_PULL_START_RANGE = 26.0f;
+    // STATIC FALLBACK commit range (DC_PULL_START_RANGE) — the distance at which
+    // the tank stops gliding, holds, and waits in Forming for the party to set at
+    // the camp BEFORE it steps in to tag. The live value is normally
+    // DungeonClearUtil::PullCommitRange, sized to the pack's REAL aggro radius so
+    // the tank Forms just outside where it would face-pull; this constant only
+    // applies when DynamicAggroRange is off or the target isn't a creature. It
+    // still sits outside a same-level mob's ~20yd aggro so even the fallback
+    // doesn't face-pull. Until the pack is this close Advance glides the tank in
+    // (blocking-trash stands down in pull mode so it can't engage first). Defined
+    // once in DungeonClearTuning.h (shared with the trigger).
     // Per-leg watchdog (tag / return) — abort a leg that makes no progress so a
     // navmesh wedge can never freeze the pull.
     constexpr uint32 DC_PULL_LEG_TIMEOUT_MS = 10000;

@@ -19,48 +19,17 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Playerbots.h"
 
 namespace
 {
-    // Asymmetric ranges so a trash pack sitting just outside the boss room
-    // gets engaged before the at-boss trigger fires. 22yd is just outside
-    // most level-80 elite aggro radii (~18-20yd), giving room to position
-    // before melee; 35yd for trash catches packs one tick-cycle earlier.
-    constexpr float DC_ENGAGE_RANGE = 22.0f;
-    constexpr float DC_TRASH_CONE_RANGE = 35.0f;
-    constexpr float DC_TRASH_CONE_HALF_ANGLE = static_cast<float>(M_PI) / 3.0f;  // 60°
-
-    // When true, evaluate "blocking trash" via the bot's actual mmap path
-    // polyline instead of the geometric cone. Catches packs around corners
-    // and avoids "pack on the other side of a wall" false positives.
-    // Falls back to the cone scan when path computation fails.
-    constexpr bool  DC_USE_CORRIDOR_SCAN = true;
-    constexpr float DC_CORRIDOR_LOOKAHEAD = 35.0f;
-    // Widened from 8 to 18 to roughly match elite aggro radius — see the
-    // matching constant in DungeonClearActions.cpp. The trigger and action use
-    // the same FindBlockingTrashOnPath band, so these must stay in sync.
-    constexpr float DC_CORRIDOR_WIDTH = 18.0f;
-
-    // Advanced-pull commit range: a pull is only STARTED once its target pack is
-    // within this distance, so the camp (stamped at the tank's spot) stays close
-    // enough that the run-in reaches the pack and the drag-back is short. The
-    // corridor scan sees packs out to ~35yd, so without this the camp lands in
-    // the run-in's overshoot dead band and every pull after the first whiffs.
-    // Must stay aligned with DC_PULL_START_RANGE in DungeonClearActions.cpp
-    // (commit outside the pack's aggro radius so the tank Forms and the party sets
-    // at camp before the tag, instead of face-pulling mid-glide).
-    constexpr float DC_PULL_START_RANGE = 26.0f;
-
-    // Between-pulls wait policy. Tank holds advance/trash-engage until the party
-    // has caught up, rested, and tank-side loot is collected. The HP/mana
-    // recovery thresholds come from DungeonClearUtil::RestMin{Hp,Mp}Pct(), which
-    // clamp to mod-playerbots' drink/eat targets (see DungeonClearUtil.h).
-    // Max distance the tank may lead a party member before it holds the advance
-    // to let them catch up. Configurable; see DungeonClear.PartyMaxSpread. Must
-    // stay aligned with the same key's default in DungeonClearActions.cpp.
-    constexpr float DC_PARTY_MAX_SPREAD_DEFAULT = 25.0f;
+    // Shared tuning constants (DC_ENGAGE_RANGE, DC_TRASH_CONE_*,
+    // DC_USE_CORRIDOR_SCAN, DC_CORRIDOR_*, DC_PULL_START_RANGE,
+    // DC_PARTY_MAX_SPREAD_DEFAULT) now live in DungeonClearTuning.h so the
+    // trigger ladder and the action layer cannot drift. See that header for the
+    // unit/why annotations.
 
     // DC must be enabled AND not paused for the driving ladder to fire. Pause
     // is a soft stop: `enabled` (and all boss progress) stays set, but every
