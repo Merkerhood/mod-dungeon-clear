@@ -7,6 +7,7 @@
 
 #include <cmath>
 
+#include "Optional.h"          // Optional<> used (unguarded) by GridTerrainData.h
 #include "GridTerrainData.h"   // ZLiquidStatus (LIQUID_MAP_*)
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
