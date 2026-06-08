@@ -327,6 +327,20 @@ DungeonClear.PullCampSafeRadius = 25.0
 DungeonClear.PullMaxDrag = 40.0
 
 #
+#    DungeonClear.PullPetReleaseDelay
+#        Advanced pull only. Seconds a follower's pet stays passive AFTER its owner
+#        is released from the camp hold. Releasing pet and owner together lets the
+#        pet charge in and pull aggro off the tank before he has settled threat,
+#        botching the pull; this delay lets the tank establish aggro first while the
+#        rest of the party engages. Set to 0 to release pets immediately with their
+#        owners (the old behaviour).
+#
+#        Default: 2.5
+#
+
+DungeonClear.PullPetReleaseDelay = 2.5
+
+#
 #    DungeonClear.PullCommitRangeFloor / DungeonClear.PullCommitRangeCap
 #        Advanced pull only. How close the pack must be before the tank stops
 #        gliding, holds, and waits for the party to set at the camp BEFORE it steps

@@ -66,6 +66,12 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
     { "PullMaxDrag",           DcType::Float, 40,  20, 200,  true  },
 
+    // Seconds a follower's pet stays passive AFTER its owner is released from the
+    // camp hold. Releasing pet and owner in lockstep lets the pet charge in and
+    // pull aggro off the tank before he's settled, botching the pull; the delay
+    // lets the tank establish threat first. 0 = release the pet immediately.
+    { "PullPetReleaseDelay",   DcType::Float, 2.5,  0,  10,  true  },
+
     // PullCommitRange{Floor,Cap}: how close the pack must be before the tank stops,
     // holds, and waits for the party at camp BEFORE stepping in to tag. Sized to the
     // pack's REAL aggro radius (Creature::GetAggroRange + reaches + AggroRangeMargin

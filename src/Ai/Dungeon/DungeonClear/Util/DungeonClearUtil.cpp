@@ -2209,6 +2209,13 @@ namespace
     // recorded, so it's never clobbered.
     std::set<ObjectGuid> g_dcPassivePlayers;
     std::mutex g_dcPassiveMutex;
+
+    // Pets are released from passive on a short delay AFTER their owner: a pet
+    // freed the instant the party drops passive charges in and bodies the pack
+    // before the tank has settled aggro, botching the pull. Maps a follower GUID
+    // to the getMSTime() deadline at which its pet flips back to REACT_DEFENSIVE.
+    // Guarded by g_dcPassiveMutex (same lifecycle as g_dcPassivePlayers).
+    std::map<ObjectGuid, uint32> g_dcPetReleaseAt;
 }
 
 void DungeonClearUtil::MarkFollowing(ObjectGuid player)
@@ -2318,6 +2325,9 @@ void DungeonClearUtil::ApplyFollowerPassive(Player* follower)
     {
         std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
         g_dcPassivePlayers.insert(follower->GetGUID());
+        // Re-holding within the post-release grace window: cancel the pending
+        // pet release so the pet we just set passive isn't flipped back.
+        g_dcPetReleaseAt.erase(follower->GetGUID());
     }
 
     DC_PULL_DEBUG("[DC:{}] advanced-pull: held passive at camp", follower->GetName());
@@ -2339,15 +2349,69 @@ void DungeonClearUtil::RemoveFollowerPassive(Player* follower)
     {
         if (botAI->HasStrategy("passive", BOT_STATE_COMBAT))
             botAI->ChangeStrategy("-passive", BOT_STATE_COMBAT);
-        if (Pet* pet = follower->GetPet())
+
+        // Hold the pet passive a little longer than its owner: releasing them in
+        // lockstep lets the pet bolt in and pull aggro off the tank before he's
+        // settled. Schedule the flip back to REACT_DEFENSIVE; ReapPetReleases
+        // (ticked from ReapStrandedPassives) applies it once the delay elapses.
+        // A non-positive delay reverts to the old immediate release.
+        float const delaySec = DcSettings::GetFloat(follower, "PullPetReleaseDelay");
+        if (delaySec > 0.0f && follower->GetPet())
+        {
+            std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+            g_dcPetReleaseAt[follower->GetGUID()] =
+                getMSTime() + uint32(delaySec * 1000.0f);
+        }
+        else if (Pet* pet = follower->GetPet())
             pet->SetReactState(REACT_DEFENSIVE);
 
         DC_PULL_DEBUG("[DC:{}] advanced-pull: released from passive", follower->GetName());
     }
 }
 
+// Flip any pets whose post-owner-release grace window has elapsed back to
+// REACT_DEFENSIVE. Kept separate from the player sweep below because pet
+// releases outlive g_dcPassivePlayers: the owner is dropped from that set the
+// instant it's freed, but its pet stays scheduled here for a few more seconds.
+static void ReapPetReleases()
+{
+    std::vector<ObjectGuid> due;
+    {
+        std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+        if (g_dcPetReleaseAt.empty())
+            return;
+        uint32 const now = getMSTime();
+        for (auto it = g_dcPetReleaseAt.begin(); it != g_dcPetReleaseAt.end();)
+        {
+            // getMSTime() wraps ~every 49 days; the signed-diff test stays
+            // correct across the wrap where (now >= deadline) would not.
+            if (int32(now - it->second) >= 0)
+            {
+                due.push_back(it->first);
+                it = g_dcPetReleaseAt.erase(it);
+            }
+            else
+                ++it;
+        }
+    }
+
+    for (ObjectGuid guid : due)
+    {
+        Player* player = ObjectAccessor::FindPlayer(guid);
+        if (!player || !player->IsInWorld())
+            continue;
+        if (Pet* pet = player->GetPet())
+            pet->SetReactState(REACT_DEFENSIVE);
+    }
+}
+
 void DungeonClearUtil::ReapStrandedPassives()
 {
+    // Apply any due pet releases first: these persist after the owner has been
+    // dropped from g_dcPassivePlayers, so they must run even when the player
+    // sweep below early-returns on an empty set.
+    ReapPetReleases();
+
     std::vector<ObjectGuid> marked;
     {
         std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
