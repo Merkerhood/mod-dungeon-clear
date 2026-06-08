@@ -2610,7 +2610,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             }
             DC_PULL_TRACE("[DC:{}] scout-lag: holding {:.1f}yd behind tank (lag {:.1f})",
                           bot->GetName(), toTank, lag);
-            return true;
+            // Return FALSE, not true: the bot is already stopped, so yield the tick
+            // to the lower-relevance pipeline (eat/drink, loot) exactly as stock
+            // Follow() does on its "no need to follow" in-range early-out. Consuming
+            // the tick here (return true) suppressed the out-of-combat rest routine
+            // — the party held forever at the lag ring and never drank, deadlocking
+            // the tank's between-pulls wait on the party's mana.
+            return false;
         }
         // Tank pulled beyond the lag: step up to a point `lag` yards from the tank
         // on our current bearing (i.e. behind the moving tank) and stop. normal_only
