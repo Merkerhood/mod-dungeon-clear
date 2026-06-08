@@ -2575,7 +2575,16 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // Tighter cluster than default. Keeps followers in healer LOS and out
     // of mob aggro-radius arcs during the advance. Default followDistance
     // (~10yd) had them strung out by the time the tank engaged.
-    float const dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
+    float dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
+    // In DYNAMIC pull mode, trail the tank further back while it scouts toward the
+    // next pack and decides Leeroy vs Advanced (leader out of combat, phase Idle).
+    // The tight 6yd bubble otherwise dragged the party onto the tank's heels and
+    // into the pack's aggro arc before the tank committed, accidentally pulling.
+    // The lag drops back to the tight follow the instant the tank engages (this
+    // gate flips false) so DPS aren't left trailing once the fight is on; an
+    // Advanced verdict marks a camp and hands the party to hold-at-camp instead.
+    if (DungeonClearUtil::IsLeaderDynamicScouting(bot))
+        dist = std::max(dist, DcSettings::GetFloat(bot, "PullDynamicPartyLag"));
     // Remember who we're chasing so the teardown branch above can cancel this
     // continuous MoveFollow once the DC tank goes away.
     followedTank = tank->GetGUID();

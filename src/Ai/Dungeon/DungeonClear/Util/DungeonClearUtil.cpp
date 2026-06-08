@@ -1775,6 +1775,41 @@ bool DungeonClearUtil::IsLeaderCampFightActive(Player* bot)
     return phase == static_cast<uint32>(DcPullPhase::Engage) && leader->IsInCombat();
 }
 
+bool DungeonClearUtil::IsLeaderDynamicScouting(Player* bot)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;  // the leader drives; the lag applies to followers only
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        return false;
+
+    // Dynamic mode only (pull setting == 2). Off/On have no scouting-then-decide
+    // window — the party either always follows close (Off) or always holds at camp
+    // (On) — so the lag would only ever delay them for no benefit there.
+    if (ctx->GetValue<uint32>("dungeon clear pull setting")->Get() != 2u)
+        return false;
+
+    // Still scouting: the verdict for the upcoming pack hasn't been committed. Once
+    // the tank tags the pack it enters combat, and an Advanced verdict marks a camp
+    // (handing the party to hold-at-camp) — either way the phase leaves Idle and the
+    // party stops lagging and engages.
+    if (leader->IsInCombat())
+        return false;
+    DcPullContext const& pull =
+        ctx->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+    return pull.phase == DcPullPhase::Idle;
+}
+
 void DungeonClearUtil::AbortLeaderPull(Player* bot)
 {
     if (!bot)

@@ -103,6 +103,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PullDynamicChainRadius",     DcType::Float, 28,  5,  40,  true  },
     { "PullDynamicLargePackThreshold", DcType::UInt, 5,  1,  20,  true  },
 
+    // Dynamic pull only: how far BACK the party trails the tank while it scouts
+    // toward the next pack and sizes up the Leeroy/Advanced verdict (leader out of
+    // combat, pull phase Idle). The normal ~6yd follow bubble would trail the party
+    // right onto the tank's heels and into the pack's aggro arc before the tank had
+    // committed, accidentally triggering the pull. This wider lag keeps the party a
+    // safe distance back so the tank reaches aggro range alone, decides, and only
+    // then does the party arrive (it holds at camp for Advanced, or catches up to
+    // charge once the tank commits the Leeroy). See DungeonClearFollowTankAction.
+    { "PullDynamicPartyLag",   DcType::Float, 15,   6,  40,  true  },
+
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },

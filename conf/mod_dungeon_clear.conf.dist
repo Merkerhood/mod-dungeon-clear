@@ -408,3 +408,21 @@ DungeonClear.PullDynamicChainRadius = 28.0
 #
 
 DungeonClear.PullDynamicLargePackThreshold = 5
+
+#
+#    DungeonClear.PullDynamicPartyLag
+#        Dynamic pull only. How far back (yards) the party trails the tank while it
+#        scouts toward the next pack and decides Leeroy vs Advanced (tank still out
+#        of combat, not yet committed). The normal follow bubble (~6yd) trails the
+#        party onto the tank's heels and into the pack's aggro arc before the tank
+#        has made the call, accidentally starting the pull. This wider lag holds the
+#        party back so the tank can edge up to aggro range alone, decide, and only
+#        then does the party engage — it holds at camp for an Advanced pull, or
+#        catches up to charge once the tank commits a Leeroy. Larger = more cautious
+#        (party further back); the lag drops back to the normal follow distance the
+#        instant the tank enters combat so DPS aren't left trailing in the fight.
+#
+#        Default: 15.0
+#
+
+DungeonClear.PullDynamicPartyLag = 15.0

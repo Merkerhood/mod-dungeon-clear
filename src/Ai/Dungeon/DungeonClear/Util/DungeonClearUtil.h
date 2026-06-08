@@ -595,6 +595,17 @@ public:
     // the leader, outside pull mode, or when the leader isn't mid camp-fight.
     static bool IsLeaderCampFightActive(Player* bot);
 
+    // True when `bot`'s elected leader is running DYNAMIC pull (pull setting == 2)
+    // and is still scouting/deciding the next pack — i.e. out of combat with the
+    // pull phase Idle, before it has committed to a Leeroy or an Advanced camp.
+    // This is the window in which the party must hang BACK so it doesn't trail the
+    // tank into an accidental aggro before the verdict is in; DungeonClearFollow
+    // TankAction widens its follow distance (PullDynamicPartyLag) while it holds.
+    // The instant the tank commits (enters combat, or an Advanced camp is marked),
+    // this returns false and the party reverts to the tight follow / camp hold.
+    // Returns false for the leader itself, outside dynamic mode, or off/paused.
+    static bool IsLeaderDynamicScouting(Player* bot);
+
     // Force the leader of `bot`'s group to abandon the current pull and release
     // the party (sets the leader's pull phase to Engage). Used by the camp-safety
     // valve when a held, passive follower is taking unexpected damage. No-op if
