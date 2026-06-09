@@ -347,9 +347,9 @@ public:
 // control), distinct from the behavioral `dungeon clear pull mode` bool above:
 //   0 Off     — no advanced pull; the bool is false.
 //   1 On      — always pull-to-camp; the bool is true.
-//   2 Dynamic — let the AI decide when to pull. NOT YET IMPLEMENTED; for now it
-//               behaves as Off (the bool stays false) but the preference is
-//               stored and reported so the UI can offer it ahead of the feature.
+//   2 Dynamic — let the AI decide per pack whether to Leeroy or pull-to-camp
+//               (DcPullPlanner governor drives the bool live); the default and
+//               recommended mode.
 // DcPullAction is the single writer and keeps the bool in lock-step (true only
 // for On). It is settable BEFORE a run: a preference set while DC is disabled
 // survives the off window and is applied by `dc on` when the run starts (so the
@@ -359,7 +359,7 @@ class DungeonClearPullSettingValue : public ManualSetValue<uint32>
 {
 public:
     DungeonClearPullSettingValue(PlayerbotAI* botAI)
-        : ManualSetValue<uint32>(botAI, 0u, "dungeon clear pull setting")
+        : ManualSetValue<uint32>(botAI, 2u, "dungeon clear pull setting")
     {
     }
 };

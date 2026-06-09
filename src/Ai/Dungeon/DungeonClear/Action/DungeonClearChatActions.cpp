@@ -313,7 +313,10 @@ bool DcOffAction::Execute(Event event)
     context->GetValue<bool>("dungeon clear paused")->Set(false);
     context->GetValue<std::string&>("dungeon clear pause reason")->Get().clear();
     context->GetValue<ObjectGuid>("dungeon clear paused door")->Set(ObjectGuid::Empty);
-    context->GetValue<uint32>("dungeon clear pull setting")->Set(0u);
+    // Revert the pull preference to the default (Dynamic) rather than Off, so a
+    // fresh `dc on` after an off starts in the recommended mode just like a
+    // brand-new bot does (see DungeonClearPullSettingValue's 2u default).
+    context->GetValue<uint32>("dungeon clear pull setting")->Set(2u);
     context->GetValue<bool>("dungeon clear pull mode")->Set(false);
     DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
     ResetPullTransient(context);
