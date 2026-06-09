@@ -5,10 +5,11 @@
 
 #include "SwimPathfinder.h"
 
+#include <array>
 #include <cmath>
 
 #include "Optional.h"          // Optional<> used (unguarded) by GridTerrainData.h
-#include "GridTerrainData.h"   // ZLiquidStatus (LIQUID_MAP_*)
+#include "GridTerrainData.h"   // ZLiquidStatus (LIQUID_MAP_*); std::array<> used (unguarded) too
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
 #include "Player.h"
