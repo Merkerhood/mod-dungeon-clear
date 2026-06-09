@@ -22,10 +22,12 @@ cmake -B build -DBUILD_TESTING=ON
 echo "Building dungeon_clear_tests target..."
 cmake --build build --target dungeon_clear_tests -j$(nproc)
 
-# Run the unit tests filter for DungeonClear test cases
+# Run the DungeonClear test cases. The binary is the module's standalone suite,
+# so this covers the DungeonClear* fixtures plus the Dc* suites (the approach
+# regressions and the replay harness round-trip/fixture runner).
 echo "Running unit tests..."
 cd "${BUILD_DIR}"
-./dungeon_clear_tests --gtest_filter=*DungeonClear*
+./dungeon_clear_tests --gtest_filter='*DungeonClear*:Dc*'
 
 echo "----------------------------------------------------------"
 echo "Tests completed successfully!"

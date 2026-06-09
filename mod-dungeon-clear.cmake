@@ -7,7 +7,15 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestDungeonClearMath.cpp"
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"
+            "${MOD_PATH}/t/TestApproachDecisions.cpp"
+            "${MOD_PATH}/t/replay_decisions.cpp"
             "${CMAKE_SOURCE_DIR}/src/test/mocks/TestMap.cpp"
+        )
+
+        # The replay runner reads the captured-decision fixtures from the source
+        # tree (the test binary runs from the build dir). Pass the path in.
+        target_compile_definitions(dungeon_clear_tests PRIVATE
+            DC_FIXTURE_DIR="${MOD_PATH}/t/fixtures"
         )
 
         # Link the necessary targets

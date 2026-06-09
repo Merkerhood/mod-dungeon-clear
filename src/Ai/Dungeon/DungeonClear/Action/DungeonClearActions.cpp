@@ -34,6 +34,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -419,6 +420,25 @@ namespace
         o.pursuitFailLimit    = DC_PURSUIT_FAIL_LIMIT;
         o.doneNotEngagedLimit = DC_DONE_NOT_ENGAGED_LIMIT;
         return o;
+    }
+
+    // DecideApproach + the record/replay capture hook in one call. Returns the
+    // pure verdict exactly as DecideApproach would; additionally, when the run
+    // has RecordDecisions on (off by default, an addon-toggleable per-run flag),
+    // appends this (observation -> verdict) decision to the capture file. That
+    // is the whole orchestration replay harness seam: a freeze reproduced with
+    // capture on becomes a JSONL fixture that t/replay_decisions.cpp pins
+    // forever. Each of Execute's staged DecideApproach consults routes through
+    // here so every live decision the action acts on is captured — the verdict
+    // is unchanged whether recording is on or off (capture is a side effect).
+    DungeonClearApproach::Verdict DecideAndMaybeRecord(
+        Player* bot, DungeonClearApproach::Observation const& o)
+    {
+        DungeonClearApproach::Verdict const v = DungeonClearApproach::DecideApproach(o);
+        if (bot && DcSettings::GetBool(bot, "RecordDecisions"))
+            DungeonClearApproachIo::Record(bot->GetGUID().GetRawValue(),
+                                           getMSTime(), o, v);
+        return v;
     }
 
     // Per-approach counter resets now live as named subset methods on the owning
@@ -1385,7 +1405,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryPosStuckRecovery(A
     // displacement, else the neutral terminal.
     DungeonClearApproach::Observation stuckObs = MakeApproachObs();
     stuckObs.posStuckTicks = posStuck;
-    if (DungeonClearApproach::DecideApproach(stuckObs) == DungeonClearApproach::Verdict::StuckRecover)
+    if (DecideAndMaybeRecord(bot, stuckObs) == DungeonClearApproach::Verdict::StuckRecover)
     {
         posStuck = 0;
         // Wedged and replanning — surface "recovering" to the status poll.
@@ -1484,7 +1504,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryDirectPursuit(Adva
     DungeonClearApproach::Observation pursueObs = MakeApproachObs();
     pursueObs.canPursue = true;
     pursueObs.pursuitFailTicks = pursuitFailTicks;
-    if (DungeonClearApproach::DecideApproach(pursueObs) == DungeonClearApproach::Verdict::Pursue)
+    if (DecideAndMaybeRecord(bot, pursueObs) == DungeonClearApproach::Verdict::Pursue)
     {
         // Drop any stale long-path escort glide so it doesn't keep driving the
         // bot toward the spawn anchor while we steer toward the live boss.
@@ -1717,7 +1737,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryHopDoneEscalation(
     hopObs.engageDist = engageDist;
     hopObs.engageRange = engageRange;
     hopObs.doneNotEngagedTicks = doneNotEngagedTicks;
-    if (DungeonClearApproach::DecideApproach(hopObs) == DungeonClearApproach::Verdict::FinalApproach)
+    if (DecideAndMaybeRecord(bot, hopObs) == DungeonClearApproach::Verdict::FinalApproach)
     {
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] path ends {:.0f}yd short of {} (>{:.0f}, attempt {}/{}) "

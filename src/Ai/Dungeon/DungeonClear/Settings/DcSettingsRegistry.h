@@ -48,6 +48,14 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "RestHealthPct",         DcType::UInt,   0,   0, 100,  true  },
     { "RestManaPct",           DcType::UInt,   0,   0, 100,  true  },
     { "PreventBotRelease",     DcType::Bool,   1,   0,   1,  true  },
+
+    // Diagnostics: record every boss-approach decision (the pure DecideApproach
+    // observation + verdict) to a JSONL capture file for the offline replay
+    // harness. OFF by default — turn it on only to freeze a live freeze/stutter
+    // into a permanent regression fixture (see t/replay_decisions.cpp). The
+    // capture path is dungeonclear_decisions.jsonl in the worldserver's working
+    // dir, overridable via the DUNGEONCLEAR_DECISIONS_FILE env var.
+    { "RecordDecisions",       DcType::Bool,   0,   0,   1,  true  },
     { "PartyMaxSpread",        DcType::Float, 25,  10,  60,  true  },
 
     // In-combat regroup: keep followers grouped on the leader tank DURING a fight,

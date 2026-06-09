@@ -53,4 +53,9 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (advance phase-machine §C: pure, engine-free decision core for the boss-
 #    approach tail ladder — DecideApproach(Observation) -> Verdict, gtested at
 #    every threshold edge; mirrors DungeonClearAdvanceAction's tail order.)
+# Util/DungeonClearApproachIo.{h,cpp}
+#   (orchestration replay harness: engine-free JSONL serialize/parse of the
+#    DecideApproach (observation -> verdict) record + the live capture hook,
+#    gated by DcSettings RecordDecisions. Replayed offline by t/replay_decisions
+#    against t/fixtures/*.jsonl to lock every historical freeze as a regression.)
 # (this comment bumps mtime to force CMake re-glob on next build)

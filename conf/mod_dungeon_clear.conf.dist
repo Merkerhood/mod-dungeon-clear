@@ -36,6 +36,24 @@
 DungeonClear.PreventBotRelease = 1
 
 #
+#    DungeonClear.RecordDecisions
+#        Diagnostics. 0 (default): off. 1: append every boss-approach decision
+#        (the pure DecideApproach observation + the verdict the tank acted on) as
+#        one JSON line to a capture file. Used to turn a live freeze/stutter into
+#        a permanent offline regression fixture: enable this, reproduce the
+#        problem, then feed the captured lines to the replay harness
+#        (t/replay_decisions.cpp asserts DecideApproach(obs) == verdict for every
+#        line). Capture is append-only writes on an already-gathered struct, so
+#        the cost is negligible, but leave it off in normal play.
+#        Path: dungeonclear_decisions.jsonl in the worldserver working directory,
+#        overridable with the DUNGEONCLEAR_DECISIONS_FILE environment variable.
+#
+#        Default: 0
+#
+
+DungeonClear.RecordDecisions = 0
+
+#
 #    DungeonClear.LootMinQuality
 #        Minimum item rarity worth looting. Corpses holding only items below
 #        this floor are skipped without a detour. Quest items always qualify.
