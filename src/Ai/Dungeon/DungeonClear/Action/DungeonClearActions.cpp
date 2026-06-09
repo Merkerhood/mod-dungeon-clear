@@ -3552,10 +3552,13 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
     // CC-assist. If the tank is crowd-controlled mid-drag (stunned / feared /
     // confused / rooted, or slowed below PullCcSlowFloor) the retreat is failing —
     // it can't reach camp and just eats the pack while the party sits passive. Once
-    // the CC has persisted past the grace, ABORT the pull: flip to Engage, which
-    // both drops the party's passive camp-hold and trips IsLeaderCampFightActive so
-    // the followers pile onto the pack and help. The grace ignores a brief micro-CC
-    // so a single stutter-stun doesn't throw an otherwise-fine pull away.
+    // the CC has persisted past the grace, ABORT the pull: the tank STOPS the
+    // run-home (cancelling the in-flight glide so it doesn't resume to camp when
+    // the CC clears) and engages the pack where it stands, and the phase flips to
+    // Engage — which both drops the party's passive camp-hold and trips
+    // IsLeaderCampFightActive so the followers pile onto the pack and help. The
+    // grace ignores a brief micro-CC so a single stutter-stun doesn't throw an
+    // otherwise-fine pull away.
     if (DcSettings::GetBool(bot, "PullCcAssist"))
     {
         float const slowFloor = DcSettings::GetFloat(bot, "PullCcSlowFloor");
@@ -3569,12 +3572,48 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
         if (ccAbort)
         {
             pull.ccSince = 0;
-            if (bot->isMoving())
-                bot->StopMoving();
+
+            // Hard-cancel the run-home. The drag-back is a launched MoveTo
+            // (MOVEMENT_COMBAT) glide; a plain StopMoving can leave it queued
+            // UNDER the active CC generator, so the instant the impairment
+            // wears off the tank resumes sprinting to the (now abandoned) camp
+            // instead of fighting. StopActiveSplineGlide drops any escort
+            // spline + clears the LastMovement wait, and StopMovingOnCurrentPos
+            // pins the point-move on the spot.
+            StopActiveSplineGlide(bot);
+            bot->StopMovingOnCurrentPos();
+
             DcSetPullPhase(context, DcPullPhase::Engage);
+
+            // Start combat right here. Flipping to Engage already releases the
+            // party (ReapStrandedPassives + IsLeaderCampFightActive), but the
+            // tank itself must commit to the pack too: face and attack the
+            // nearest attacker so it turns on the mob the moment the CC clears,
+            // rather than drifting back toward camp before stock combat
+            // re-acquires. Mirrors EngageDirect's in-range branch.
+            Unit* aggressor = bot->GetVictim();
+            for (Unit* a : bot->getAttackers())
+            {
+                if (!a || !a->IsAlive())
+                    continue;
+                if (!aggressor ||
+                    bot->GetExactDist2d(a) < bot->GetExactDist2d(aggressor))
+                    aggressor = a;
+            }
+            if (aggressor)
+            {
+                bot->SetSelection(aggressor->GetGUID());
+                if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, aggressor))
+                    ServerFacade::instance().SetFacingTo(bot, aggressor);
+                context->GetValue<Unit*>("current target")->Set(aggressor);
+                bot->Attack(aggressor, botAI->IsMelee(bot));
+            }
+            botAI->ChangeEngine(BOT_STATE_COMBAT);
+
             DC_PULL_INFO("[DC:{}] advanced-pull: tank {} mid-drag (held >{} ms) -> "
-                         "abort pull, releasing party to assist", bot->GetName(),
-                         ccReason, graceMs);
+                         "abort pull, stop run-home + engage {}, releasing party "
+                         "to assist", bot->GetName(), ccReason, graceMs,
+                         aggressor ? aggressor->GetGUID().ToString() : "pack");
             return false;
         }
     }
