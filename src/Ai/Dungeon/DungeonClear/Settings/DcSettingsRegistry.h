@@ -67,7 +67,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     // also closes whenever it loses LOS to the tank, inside that distance or not).
     // See DungeonClearRegroupCombat{Trigger,Action}.
     { "CombatRegroup",         DcType::Bool,   1,   0,   1,  true  },
-    { "CombatRegroupDistance", DcType::Float, 25,  10,  60,  true  },
+    { "CombatRegroupDistance", DcType::Float, 17,  10,  60,  true  },
     { "BossEngageRangeFloor",  DcType::Float, 12,   5,  40,  true  },
     { "BossEngageRangeCap",    DcType::Float, 30,  10,  60,  true  },
     { "TrashWidthFloor",       DcType::Float,  8,   4,  30,  true  },
@@ -83,7 +83,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     // walks further back (up to MaxDrag) until it is. See ComputeSafeCamp.
     { "PullSetback",           DcType::Float, 25,  10, 100,  true  },
     { "PullCampSafeRadius",    DcType::Float, 25,  12,  60,  true  },
-    { "PullMaxDrag",           DcType::Float, 40,  20, 200,  true  },
+    { "PullMaxDrag",           DcType::Float, 35,  20, 200,  true  },
 
     // Seconds the party stays passive AFTER the leader commits the pull (flips to
     // Engage) before DPS are freed to fight — gives the tank a threat head start.
@@ -162,7 +162,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },
     { "PathCenterEnable",      DcType::Bool,   1,   0,   1,  false },
     { "PathWallClearance",     DcType::Float,  3,   0,  10,  false },
-    { "PathCenterMaxPush",     DcType::Float,  3,   0,  10,  false },
+    { "PathCenterMaxPush",     DcType::Float,  5,   0,  10,  false },
     { "PathCenterSmoothIters", DcType::Int,    2,   0,   8,  false },
 };
 

@@ -145,10 +145,10 @@ DungeonClear.CombatRegroup = 1
 #        Lower keeps the party tighter in fights; higher tolerates more spread.
 #        Has no effect when CombatRegroup = 0.
 #
-#        Default: 25.0
+#        Default: 17.0
 #
 
-DungeonClear.CombatRegroupDistance = 25.0
+DungeonClear.CombatRegroupDistance = 17.0
 
 #
 #    DungeonClear.DynamicAggroRange
@@ -301,10 +301,10 @@ DungeonClear.PathWallClearance = 3.0
 #        Hard cap (yards) on how far centring may displace a single point,
 #        preventing a bad wall normal from flinging a point through a thin wall.
 #
-#        Default: 3.0
+#        Default: 5.0
 #
 
-DungeonClear.PathCenterMaxPush = 3.0
+DungeonClear.PathCenterMaxPush = 5.0
 
 #
 #    DungeonClear.PathCenterSmoothIters
@@ -421,10 +421,10 @@ DungeonClear.PullCampSafeRadius = 25.0
 #        pull can't drag a pack across the entire instance; with no leash to worry
 #        about it can be large.
 #
-#        Default: 40.0
+#        Default: 35.0
 #
 
-DungeonClear.PullMaxDrag = 40.0
+DungeonClear.PullMaxDrag = 35.0
 
 #
 #    DungeonClear.PullPlayerReleaseDelay
