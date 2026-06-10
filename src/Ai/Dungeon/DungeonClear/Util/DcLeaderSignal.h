@@ -84,6 +84,22 @@ public:
     // the leader, outside pull mode, or when the leader isn't mid camp-fight.
     static bool IsLeaderCampFightActive(Player* bot);
 
+    // The GENERAL "tank is fighting -> the party assists" gate: true when `bot`'s
+    // elected leader tank is in combat on an active (enabled, unpaused) run and
+    // the party is expected to pile in RIGHT NOW. Includes the advanced-pull camp
+    // fight (IsLeaderCampFightActive), but ALSO every fight the camp machinery
+    // does not own: pull mode off, a Leeroy verdict in dynamic mode, boss
+    // walk-ins, and unplanned aggro outside a camp hold. This is what covers a
+    // tank that aggros around a corner or beyond a follower's natural engage
+    // range — group combat never propagates that far, and DC's multiplier mutes
+    // the stock proactive pickers, so without this push the party stands idle
+    // while the tank solos. Defers (false) while an advanced-pull camp hold is
+    // in effect outside the camp fight: the holding phases pin the party passive
+    // and an Idle-phase aggro is dragged back to camp first. False for the
+    // leader itself, off/paused runs, or a leader out of combat. Drives
+    // DungeonClearAssistCamp{,Combat}Trigger.
+    static bool IsLeaderFightAssistWanted(Player* bot);
+
     // True when `bot`'s elected leader is running DYNAMIC pull (pull setting == 2)
     // and is still scouting/deciding the next pack — i.e. out of combat with the
     // pull phase Idle, before it has committed to a Leeroy or an Advanced camp.
