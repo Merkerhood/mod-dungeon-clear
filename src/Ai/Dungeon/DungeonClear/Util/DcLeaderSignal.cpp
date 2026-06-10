@@ -309,6 +309,45 @@ bool DcLeaderSignal::IsLeaderCampFightActive(Player* bot)
     // flips the phase out of Idle before any party member would assist.
     return phase == static_cast<uint32>(DcPullPhase::Engage) && leader->IsInCombat();
 }
+bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
+{
+    // Advanced-pull camp fight: the existing Engage-phase gate.
+    if (IsLeaderCampFightActive(bot))
+        return true;
+
+    if (!bot || bot->isDead())
+        return false;
+
+    // Any OTHER advanced-pull camp-hold state defers to the pull machinery:
+    // during the holding phases (Forming/Advancing/Returning) the party is
+    // pinned passive at camp, and unplanned aggro while scouting (Idle) is
+    // dragged back to camp by the maneuver before the party may engage.
+    Position camp;
+    bool passive = false;
+    if (GetLeaderCampHold(bot, camp, passive))
+        return false;
+
+    // General case — no camp in effect (pull mode off, a Leeroy verdict in
+    // dynamic mode, boss walk-ins): the leader tank fighting ANYTHING on an
+    // active run means the whole party assists. This covers tank aggro around
+    // a corner or beyond a follower's natural engage range, where group combat
+    // never propagates and the (multiplier-suppressed) stock pickers would
+    // leave the party idling behind.
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+        ctx->GetValue<bool>("dungeon clear paused")->Get())
+        return false;
+
+    return leader->IsInCombat();
+}
 bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
 {
     if (!bot)

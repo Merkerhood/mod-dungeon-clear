@@ -85,13 +85,16 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear hold at camp",
         { NextAction("dungeon clear hold at camp", 28.0f) }));
 
-    // Out-of-LOS camp fight: while the leader fights a pack the drag-back parked
-    // out of the camp's line of sight (around a corner), a follower idling at
-    // camp must close on the fight to regain sight and engage — the stock target
-    // picker LOS-filters and would never acquire it. Relevance above hold-at-camp
-    // (28) so it preempts the camp yield; inert the moment a target is visible
-    // (the trigger gates on an empty LOS attacker list). See
-    // DungeonClearAssistCampTrigger.
+    // Leader-fight assist: while the leader tank is in combat, every follower
+    // still OUT of combat is driven into the fight — the advanced-pull camp
+    // fight, but also any Leeroy/dynamic/boss pull the tank took around a corner
+    // or beyond the follower's natural engage range, where group combat never
+    // propagates and the stock target picker (LOS-filtered, and multiplier-
+    // suppressed anyway) would never acquire it. Relevance above hold-at-camp
+    // (28) so it preempts the camp yield, and above the rest triggers (26) so
+    // "tank is fighting" outranks topping up. Defers to the camp hold during
+    // the passive pull phases. See DungeonClearAssistCampTrigger /
+    // DcLeaderSignal::IsLeaderFightAssistWanted.
     triggers.push_back(new TriggerNode(
         "dungeon clear assist camp",
         { NextAction("dungeon clear assist camp", 29.0f) }));
@@ -178,10 +181,11 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
         "dungeon clear stay at camp",
         { NextAction("dungeon clear stay at camp", 60.0f) }));
 
-    // Out-of-LOS camp fight, combat-engine side. A released follower that was
-    // dragged into combat but has the pack around a corner has an empty LOS
-    // attacker list and so idles in the combat engine — stock MoveChase/attack
-    // have no target. Drive it onto the leader's pack to regain sight. Relevance
+    // Leader-fight assist, combat-engine side. A follower that was dragged into
+    // combat (group combat / stray hit) but has the pack around a corner has an
+    // empty LOS attacker list and so idles in the combat engine — stock
+    // MoveChase/attack have no target. Drive it onto the leader's pack to
+    // regain sight; fires for ANY leader fight, not just the camp fight. Relevance
     // above the stock combat movers (MoveChase ~30) so it owns the tick; inert
     // the instant a valid attacker is visible, handing back to stock combat. Sits
     // below stay-at-camp / pull-maneuver (60), which are inert at Engage anyway.

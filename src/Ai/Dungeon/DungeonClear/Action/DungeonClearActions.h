@@ -236,15 +236,18 @@ public:
     }
 };
 
-// Shared body for the two follower-only "join the out-of-LOS camp fight" actions.
+// Shared body for the two follower-only "join the leader's fight" actions.
 // Resolves the nearest live unit attacking the leader tank — LINE-OF-SIGHT BLIND
 // on purpose — sets it as the bot's current target, forces the bot into combat
-// with it, and moves the bot onto it. This is the fix for a camp parked near a
-// corner: the drag-back can leave the pack out of the camp's line of sight, where
-// the stock LOS-gated target picker never acquires it and the released party
-// stands idle. Moving the follower in regains sight, at which point its trigger
-// goes inert (a valid attacker is now visible) and stock combat owns the fight.
-// Registered under two names on the two engines (see the subclasses below).
+// with it, and moves the bot onto it. This is the fix for a fight the follower
+// can't see or reach: a camp parked near a corner, or a Leeroy/dynamic/boss
+// pull the tank took around a corner or beyond the follower's natural engage
+// range — anywhere the stock LOS-gated target picker never acquires the pack
+// and the party stands idle while the tank solos. Moving the follower in
+// regains sight, at which point its trigger goes inert (a valid attacker is
+// now visible) and stock combat owns the fight. Gated by
+// DcLeaderSignal::IsLeaderFightAssistWanted; registered under two names on the
+// two engines (see the subclasses below).
 class DungeonClearAssistCampActionBase : public MovementAction
 {
 public:
@@ -255,7 +258,8 @@ public:
     bool Execute(Event event) override;
 };
 
-// Non-combat engine: a follower that never took a hit, sitting idle at camp.
+// Non-combat engine: a follower that never took a hit, sitting idle while the
+// leader tank fights.
 class DungeonClearAssistCampAction : public DungeonClearAssistCampActionBase
 {
 public:

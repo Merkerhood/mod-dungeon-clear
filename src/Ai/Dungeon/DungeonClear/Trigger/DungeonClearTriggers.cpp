@@ -588,8 +588,8 @@ bool DungeonClearHoldAtCampCombatTrigger::IsActive()
 
 namespace
 {
-    // Gate for the COMBAT-side camp-fight assist: this follower's leader is mid
-    // camp-fight AND the bot currently has NO line-of-sight target of its own. The
+    // Gate for the COMBAT-side fight assist: this follower's leader is mid
+    // fight AND the bot currently has NO line-of-sight target of its own. The
     // empty-attackers test is what makes the combat assist self-limiting: the
     // stock AttackersValue LOS-filters, so "attackers" is empty exactly while the
     // pack is out of sight (the bug) and becomes non-empty the moment movement
@@ -599,7 +599,7 @@ namespace
     // (see DungeonClearAssistCampTrigger).
     bool ShouldAssistCampFight(PlayerbotAI* botAI, Player* bot)
     {
-        if (!DcLeaderSignal::IsLeaderCampFightActive(bot))
+        if (!DcLeaderSignal::IsLeaderFightAssistWanted(bot))
             return false;
         return botAI->GetAiObjectContext()
                    ->GetValue<GuidVector>("attackers")->Get().empty();
@@ -608,18 +608,23 @@ namespace
 
 bool DungeonClearAssistCampTrigger::IsActive()
 {
-    // Non-combat side: ANY follower still out of combat while the tank fights the
-    // camp pack must be driven in — NOT just the out-of-LOS ones. An idle follower
-    // that DOES have line of sight to the pack cannot self-engage either: DC's
+    // Non-combat side: ANY follower still out of combat while the leader tank
+    // fights must be driven in — NOT just the out-of-LOS ones. An idle follower
+    // that DOES have line of sight to the fight cannot self-engage either: DC's
     // multiplier suppresses the stock proactive-engagement pickers ("attack
     // anything" / pull) for every follower while a clear is active, so without an
-    // explicit push it just stands at camp watching the fight. The assist action
-    // force-targets the pack and SetInCombatWith()s the bot, flipping it into the
-    // combat engine where its own rotation/heal logic (un-suppressed there) takes
-    // over. Hence we gate on the camp fight alone, not on an empty attacker list.
+    // explicit push it just stands there watching. And a follower the fight never
+    // touched (tank aggroed around a corner / past natural engage range) never
+    // enters combat at all, so the combat-engine regroup/assist can't reach it.
+    // The assist action force-targets the pack and SetInCombatWith()s the bot,
+    // flipping it into the combat engine where its own rotation/heal logic
+    // (un-suppressed there) takes over. Hence we gate on the leader's fight
+    // alone, not on an empty attacker list. Covers the advanced-pull camp fight
+    // AND every fight the camp machinery does not own (Leeroy/dynamic/boss);
+    // defers to the camp hold during the passive pull phases.
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
-    return DcLeaderSignal::IsLeaderCampFightActive(bot);
+    return DcLeaderSignal::IsLeaderFightAssistWanted(bot);
 }
 
 bool DungeonClearAssistCampCombatTrigger::IsActive()
