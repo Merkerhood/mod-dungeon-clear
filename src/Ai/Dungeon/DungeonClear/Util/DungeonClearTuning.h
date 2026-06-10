@@ -100,4 +100,25 @@ constexpr float DC_DOOR_Z_BAND = 6.0f;
 // and the dynamic-pull classification.
 constexpr float DC_Z_LEVEL_TOLERANCE = 5.0f;
 
+// Vertical half-band for matching a trash candidate to a leg of the corridor in
+// the blocking-trash scans. The corridor band test is otherwise 2D, so a mob at
+// the bottom of a ledge — directly under (or over) an early leg of the route in
+// plan view — would match that leg and get picked NOW, even though along the
+// actual route it is far beyond the lookahead (the tank reaches it only after
+// winding down the ramp). With this gate the mob can only match the legs on its
+// OWN floor, which the along-path lookahead then correctly defers until the
+// tank actually descends. Looser than DC_Z_LEVEL_TOLERANCE to absorb
+// navmesh-vs-terrain Z drift along the polyline and mobs perched on bumps.
+constexpr float DC_CORRIDOR_Z_BAND = 8.0f;
+
+// Detour gates for IsLevelReachable's cross-level path probe. A candidate on
+// another vertical level only counts as reachable when the NAVIGATIONAL path to
+// it is commensurate with its straight-line distance: a mob 15yd below the
+// ledge whose real approach is a 70yd ramp detour merely LOOKS close and must
+// not be proactively engaged/pulled (it is handled when the route brings the
+// tank to its floor). The slack term keeps legitimate short around-the-corner
+// detours alive at close range, where a pure ratio test is too strict.
+constexpr float DC_TRASH_DETOUR_RATIO = 2.0f;
+constexpr float DC_TRASH_DETOUR_SLACK = 20.0f;
+
 #endif  // _DUNGEON_CLEAR_TUNING_H

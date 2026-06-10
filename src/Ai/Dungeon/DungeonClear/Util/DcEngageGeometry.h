@@ -141,11 +141,15 @@ public:
     // railings or floor gaps routinely reports a target the bot cannot path
     // to. For those we run a single short-range PathGenerator probe and accept
     // only a PATHFIND_NORMAL route whose endpoint actually lands on the
-    // candidate's level. This stops the tank from locking onto an above/below
-    // mob it can never reach and wedging against the geometry. Trash is always
-    // within a corridor/cone lookahead well under PathGenerator's single-call
-    // range cap, so one direct probe is both cheaper and more precise here than
-    // the strided boss pathfinder behind IsReachable.
+    // candidate's level AND whose length is commensurate with the straight-line
+    // distance (DC_TRASH_DETOUR_RATIO/SLACK): a mob below a ledge that "looks"
+    // 15yd away but is really a 70yd ramp detour reads NOT reachable, so the
+    // tank neither locks onto an unreachable above/below mob and wedges against
+    // the geometry, nor wanders off on a huge detour to one it technically can
+    // reach. Trash is always within a corridor/cone lookahead well under
+    // PathGenerator's single-call range cap, so one direct probe is both
+    // cheaper and more precise here than the strided boss pathfinder behind
+    // IsReachable.
     static bool IsLevelReachable(Player* bot, Unit* u);
 
     // Computes the mmap path from the bot's current position to (bx, by, bz).

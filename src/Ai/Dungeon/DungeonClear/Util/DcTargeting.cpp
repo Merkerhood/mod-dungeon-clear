@@ -61,10 +61,13 @@
 
 namespace
 {
-    // A 2D line segment of the lookahead corridor (a→b), projected onto the XY
-    // plane. Both corridor-trash scanners build a flat list of these and hand
-    // it to PickBlockingTrash.
-    struct Seg2D { float ax, ay, bx, by; };
+    // A line segment of the lookahead corridor (a→b). The band test is 2D (XY
+    // projection) but the endpoint Z is carried so PickBlockingTrash can reject
+    // a candidate on a different vertical level than the leg it matched — a mob
+    // at the bottom of a ledge sits under the route in plan view but is NOT
+    // blocking the legs that run along the top. Both corridor-trash scanners
+    // build a flat list of these and hand it to PickBlockingTrash.
+    struct Seg2D { float ax, ay, az, bx, by, bz; };
 
     // DC_DOOR_BAND, DC_DOOR_Z_BAND, DC_Z_LEVEL_TOLERANCE now live in
     // DungeonClearTuning.h (shared across the split util units).
@@ -102,14 +105,12 @@ namespace
     // True if any door lies within DC_DOOR_BAND (2D) of segment a→b AND on the
     // segment's floor (door Z within DC_DOOR_Z_BAND of the segment's Z span).
     // The Z gate stops a door one deck up/down — near in plan-view but not on
-    // this leg of the route — from truncating the scan. `az`/`bz` are the Z of
-    // the segment's two endpoints.
-    bool SegmentHitsClosedDoor(Seg2D const& s, float az, float bz,
-                               std::vector<DoorPt> const& doors)
+    // this leg of the route — from truncating the scan.
+    bool SegmentHitsClosedDoor(Seg2D const& s, std::vector<DoorPt> const& doors)
     {
         float const bandSq = DC_DOOR_BAND * DC_DOOR_BAND;
-        float const loZ = std::min(az, bz) - DC_DOOR_Z_BAND;
-        float const hiZ = std::max(az, bz) + DC_DOOR_Z_BAND;
+        float const loZ = std::min(s.az, s.bz) - DC_DOOR_Z_BAND;
+        float const hiZ = std::max(s.az, s.bz) + DC_DOOR_Z_BAND;
         for (auto const& d : doors)
         {
             if (d.z < loZ || d.z > hiZ)
@@ -210,9 +211,19 @@ namespace
                 DcEngageGeometry::AggroRangeOf(bot, u, corridorWidth, widthFloor, widthCap);
             float const widthSq = band * band;
 
+            // A candidate may only match a leg on its OWN vertical level. The
+            // band test is 2D, so without this a mob at the bottom of a ledge
+            // matches the legs running along the top — plan-view close, but its
+            // real along-path distance is way past the lookahead. Restricted to
+            // its own floor's legs, the lookahead defers it correctly until the
+            // route actually descends to it.
+            float const uz = u->GetPositionZ();
             bool inCorridor = false;
             for (Seg2D const& s : segs)
             {
+                if (uz < std::min(s.az, s.bz) - DC_CORRIDOR_Z_BAND ||
+                    uz > std::max(s.az, s.bz) + DC_CORRIDOR_Z_BAND)
+                    continue;
                 if (DungeonClearMath::DistSqToSegment2D(ux, uy, s.ax, s.ay, s.bx, s.by) <= widthSq)
                 {
                     inCorridor = true;
@@ -310,8 +321,8 @@ Unit* DcTargeting::FindBlockingTrashCorridor(Player* bot,
     {
         G3D::Vector3 const& a = corridor[i];
         G3D::Vector3 const& b = corridor[i + 1];
-        Seg2D const s{a.x, a.y, b.x, b.y};
-        if (!doors.empty() && SegmentHitsClosedDoor(s, a.z, b.z, doors))
+        Seg2D const s{a.x, a.y, a.z, b.x, b.y, b.z};
+        if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
             break;
         segments.push_back(s);
         float const dx = b.x - a.x;
@@ -372,8 +383,8 @@ Unit* DcTargeting::FindBlockingTrashOnPath(Player* bot,
         // only if a segment somehow has no polyline at all.
         if (seg.polyline.empty())
         {
-            Seg2D const s{prevX, prevY, seg.ex, seg.ey};
-            if (!doors.empty() && SegmentHitsClosedDoor(s, prevZ, seg.ez, doors))
+            Seg2D const s{prevX, prevY, prevZ, seg.ex, seg.ey, seg.ez};
+            if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
                 break;
             float const dx = seg.ex - prevX;
             float const dy = seg.ey - prevY;
@@ -389,8 +400,8 @@ Unit* DcTargeting::FindBlockingTrashOnPath(Player* bot,
 
         for (G3D::Vector3 const& pt : seg.polyline)
         {
-            Seg2D const s{prevX, prevY, pt.x, pt.y};
-            if (!doors.empty() && SegmentHitsClosedDoor(s, prevZ, pt.z, doors))
+            Seg2D const s{prevX, prevY, prevZ, pt.x, pt.y, pt.z};
+            if (!doors.empty() && SegmentHitsClosedDoor(s, doors))
             {
                 stop = true;
                 break;

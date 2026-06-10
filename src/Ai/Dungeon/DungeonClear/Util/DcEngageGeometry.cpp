@@ -479,7 +479,21 @@ bool DcEngageGeometry::IsLevelReachable(Player* bot, Unit* u)
     if (path.empty())
         return false;
     G3D::Vector3 const& end = path.back();
-    return std::fabs(end.z - u->GetPositionZ()) <= DC_Z_LEVEL_TOLERANCE;
+    if (std::fabs(end.z - u->GetPositionZ()) > DC_Z_LEVEL_TOLERANCE)
+        return false;
+
+    // A path existing is not enough: a mob at the bottom of a ledge can be 15yd
+    // away in a straight line while its real approach is a 70yd ramp detour.
+    // Proactively engaging/pulling it from up here sends the tank on that whole
+    // detour (or wedges it on the ledge lip when the run-in can't path). Treat
+    // such a candidate as NOT reachable for target selection — the route brings
+    // the tank to its floor eventually, where the straight distance collapses
+    // and it's picked up normally. Mirrors the navigational-distance guard in
+    // IsAtBossEngage. The slack term keeps legitimate short around-the-corner
+    // detours alive at close range, where the pure ratio is too strict.
+    float const straight = bot->GetDistance(u);
+    return gen.getPathLength() <=
+           std::max(straight * DC_TRASH_DETOUR_RATIO, straight + DC_TRASH_DETOUR_SLACK);
 }
 bool DcEngageGeometry::ComputeCorridor(Player* bot,
                                        float bx, float by, float bz,
