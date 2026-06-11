@@ -51,6 +51,17 @@ struct DcPullContext
                                                  // line of sight to it (rangers must
                                                  // close to melee). Stamped at commit
                                                  // for the addon status line.
+    uint32      campPublishedMs = 0;             // getMSTime() of the last camp
+                                                 // write by the PULL machinery
+                                                 // (prospective publish, commit,
+                                                 // dynamic-upgrade seed, fresh
+                                                 // unplanned-aggro camp). Advance's
+                                                 // scout camp-trailing runs only
+                                                 // while this is STALE (see
+                                                 // DC_CAMP_PUBLISH_FRESH_MS), so
+                                                 // exactly one owner moves the camp
+                                                 // on any tick and it can never
+                                                 // silently freeze between them.
 
     // --- CC-assist gate ---------------------------------------------------
     uint32      ccSince    = 0;                  // getMSTime() the tank's CURRENT

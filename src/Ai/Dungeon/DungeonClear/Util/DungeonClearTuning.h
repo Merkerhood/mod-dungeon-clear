@@ -7,6 +7,11 @@
 #define _DUNGEON_CLEAR_TUNING_H
 
 #include <cmath>
+#include <cstdint>
+
+using uint32 = std::uint32_t;  // matches the core's Define.h typedef; this
+                               // header stays core-include-free (tests build it
+                               // standalone), so alias locally instead.
 
 // Single source of truth for the DungeonClear tuning constants that are SHARED
 // across translation units. Historically several of these were defined twice
@@ -63,6 +68,17 @@ constexpr float DC_CORRIDOR_WIDTH = 18.0f;
 // run-in's overshoot dead band and every pull after the first whiffs. The pull
 // trigger and the pull action must agree on when a pull starts.
 constexpr float DC_PULL_START_RANGE = 26.0f;
+
+// How long a camp write by the pull machinery (prospective publish, commit,
+// dynamic seed, unplanned-aggro fresh camp) counts as "fresh". While fresh, the
+// pull action owns the camp and Advance's scout camp-trailing stands down; once
+// it goes stale (the pull trigger is loot/ready-gated, or no pull is running)
+// Advance trails the camp behind the moving tank every tick. Replaces the old
+// "is a pack in pull-scan range" ownership test, whose conditions were weaker
+// than the ones the pull action actually needs to run — any tick the two
+// disagreed, NOBODY moved the camp, and the spread gate (camp-anchored in pull
+// mode) kept passing while the tank glided away from the party.
+constexpr uint32 DC_CAMP_PUBLISH_FRESH_MS = 1000;
 
 // The max party-spread default lives in DcSettingsRegistry ("PartyMaxSpread");
 // the trigger, the advance gate, and the status publisher all read it through

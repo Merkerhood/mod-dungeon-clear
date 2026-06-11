@@ -842,6 +842,27 @@ namespace
         }
     }
 
+    // Hard-stop for Advance's hold/yield rungs (engage-hold, loot-yield,
+    // between-pulls rest). Those rungs fire while an escort glide may be in
+    // flight, and a plain StopMoving does NOT cancel a launched escort spline
+    // (see the pull-commit halt / the door-blocked park): the tank kept coasting
+    // to the end of its spline window — up to MAX_SPLINE_WINDOW_POINTS — while
+    // "party not ready" logged impotently every tick, the reported scout-runaway
+    // gap. Escort-aware and idempotent: no-ops once the bot is standing, so the
+    // per-tick hold calls don't spam stop packets.
+    void HaltForHold(Player* bot)
+    {
+        if (!bot)
+            return;
+        MotionMaster* mm = bot->GetMotionMaster();
+        bool const escortGlide =
+            mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE;
+        if (!escortGlide && !bot->isMoving())
+            return;
+        StopActiveSplineGlide(bot);
+        bot->StopMovingOnCurrentPos();
+    }
+
     // Face `unit` if we're meaningfully off-axis. One facing packet when needed,
     // none when already facing (the HasInArc guard keeps it idempotent across a
     // multi-second hold), so it is safe to call every hold tick. Used at the
@@ -1232,8 +1253,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryEngageHold(Advance
                       IsBetweenPullsReady(bot, context) ? 1 : 0,
                       AI_VALUE(bool, "has available loot") ? 1 : 0,
                       AI_VALUE(bool, "can loot") ? 1 : 0);
-            if (bot->isMoving())
-                bot->StopMoving();
+            HaltForHold(bot);
             ClearStall(context);
             // Parked at the boss waiting for the at-boss pull — not navigating,
             // so clear the nav phase (status reads this as "idle / holding").
@@ -1308,8 +1328,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] advance yielding: loot in progress ({}ms)",
                       bot->GetName(), now - lootYieldStart);
-            if (bot->isMoving())
-                bot->StopMoving();
+            HaltForHold(bot);
             return Step::ReturnFalse;
         }
     }
@@ -1328,8 +1347,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     {
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
-        if (bot->isMoving())
-            bot->StopMoving();
+        HaltForHold(bot);
         return Step::ReturnFalse;
     }
     return Step::Continue;
@@ -2072,22 +2090,25 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // tank/party gap the player reported. By creeping the camp to a point
         // PullSetback behind the moving tank each tick, hold-at-camp re-issues the
         // followers toward it so they walk ALONG behind the tank and pause at its
-        // trailing position, exactly as a real party would. The prospective-camp
-        // publish in DungeonClearPullAction::Idle owns the camp once a pack is
-        // actually in range (it biases toward the pack), so defer to it then; this
-        // only covers the pure-scout gap (no pack detected / post-fight glide).
+        // trailing position, exactly as a real party would.
+        //
+        // Ownership is by TIMESTAMP, not by "is a pack in pull-scan range": the
+        // pull action stamps campPublishedMs on every camp write, and this trail
+        // defers only while that stamp is fresh (DC_CAMP_PUBLISH_FRESH_MS). The
+        // old GetPullTarget probe was a weaker condition than the gates the pull
+        // TRIGGER actually needs to fire (no tank loot, abort-target pack, party
+        // ready) — any tick the two disagreed NOBODY moved the camp, and with the
+        // spread gate anchored at that frozen camp (right where the party stood,
+        // post-fight) the tank kept gliding away unchecked: the scout-runaway gap.
         // Forward-only: adopt the new trailing point only when it sits closer to
         // the tank than the current camp (i.e. more forward), with a few yards of
         // hysteresis, so tick jitter never churns it or drags the party backward.
-        DcPullPhase const pullPhase =
-            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().phase;
-        std::optional<DungeonBossInfo> const nextForTrail =
-            AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
-        bool const noPackInRange =
-            !nextForTrail.has_value() ||
-            !DcTargeting::GetPullTarget(botAI);
+        DcPullContext const& pullForTrail =
+            context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        bool const pullOwnsCamp =
+            getMSTimeDiff(pullForTrail.campPublishedMs, getMSTime()) < DC_CAMP_PUBLISH_FRESH_MS;
         if (!bot->IsInCombat() &&
-            pullPhase == DcPullPhase::Idle && noPackInRange)
+            pullForTrail.phase == DcPullPhase::Idle && !pullOwnsCamp)
         {
             float const setback = DcSettings::GetFloat(bot, "PullSetback");
             float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
@@ -3314,6 +3335,12 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     float const candToTrash = ahead->GetExactDist2d(trash);
                     // +3yd hysteresis: only rewrite when the candidate is meaningfully
                     // more forward, so the party isn't churned by tick-to-tick jitter.
+                    // A successful camp computation claims ownership for this
+                    // tick even when the hysteresis below keeps the old point —
+                    // "no change" is still an ownership decision, and Advance's
+                    // scout-trailing must not wrestle the camp meanwhile (see
+                    // campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
+                    pull.campPublishedMs = now;
                     if (campUnset || candToTrash + 3.0f < camp.GetExactDist2d(trash))
                     {
                         camp = *ahead;
@@ -3350,6 +3377,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 camp = *camped;
             else
                 camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+            pull.campPublishedMs = now;
 
             // Record whether this is a line-of-sight pull (ranged pack, camp placed
             // to break LOS) so the addon status line can announce it. Mirrors the
@@ -3658,6 +3686,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                         botAI, aggressor, setback, safeRadius, maxDrag, clr, drag))
                 {
                     camp = *fresh;
+                    pull.campPublishedMs = now;
                     DC_PULL_INFO("[DC:{}] advanced-pull: unplanned aggro while scouting "
                                  "-> fresh camp ({:.1f},{:.1f},{:.1f}) drag {:.1f}yd, "
                                  "party converges", bot->GetName(),
@@ -3671,7 +3700,10 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
         // fighting in place rather than dragging the pack to the map origin.
         if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
             camp.GetPositionZ() == 0.0f)
+        {
             camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+            pull.campPublishedMs = now;
+        }
 
         DcSetPullPhase(context, DcPullPhase::Returning);
         DC_PULL_INFO("[DC:{}] advanced-pull: aggro confirmed at {:.1f}yd from camp "

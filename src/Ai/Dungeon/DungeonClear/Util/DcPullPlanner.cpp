@@ -421,6 +421,9 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
             pull.camp = seed ? *seed
                              : Position(bot->GetPositionX(), bot->GetPositionY(),
                                         bot->GetPositionZ());
+            // Pull-machinery camp write: stamp ownership so Advance's scout
+            // camp-trailing defers (see campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
+            pull.campPublishedMs = getMSTime();
         }
     };
 
