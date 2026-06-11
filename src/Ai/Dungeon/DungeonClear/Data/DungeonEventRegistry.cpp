@@ -1,0 +1,216 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#include "DungeonEventRegistry.h"
+
+#include <utility>
+
+// --- EventBuilder ---------------------------------------------------------
+
+EventBuilder::EventBuilder(uint32 mapId, uint32 id, std::string name)
+{
+    _ev.mapId = mapId;
+    _ev.id = id;
+    _ev.name = std::move(name);
+}
+
+EventStep& EventBuilder::Add(EventStepKind kind)
+{
+    _ev.steps.emplace_back();
+    EventStep& s = _ev.steps.back();
+    s.kind = kind;
+    return s;
+}
+
+EventBuilder& EventBuilder::Anchored(uint32 orderIndex)
+{
+    _ev.activation = EventActivation::Anchored;
+    _ev.orderIndex = orderIndex;
+    return *this;
+}
+
+EventBuilder& EventBuilder::Conditional(uint32 conditionId)
+{
+    _ev.activation = EventActivation::Conditional;
+    _ev.conditionId = conditionId;
+    return *this;
+}
+
+EventBuilder& EventBuilder::Optional()
+{
+    _ev.required = false;
+    return *this;
+}
+
+EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
+{
+    EventStep& s = Add(EventStepKind::MoveTo);
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::UseGO(uint32 goEntry, float searchRadius,
+                                  float x, float y, float z)
+{
+    EventStep& s = Add(EventStepKind::UseGameObject);
+    s.goEntry = goEntry;
+    s.radius = searchRadius;
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    return *this;
+}
+
+EventBuilder& EventBuilder::Gossip(uint32 creatureEntry, int32 option, float searchRadius)
+{
+    EventStep& s = Add(EventStepKind::Gossip);
+    s.creatureEntry = creatureEntry;
+    s.gossipOption = option;
+    s.radius = searchRadius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::WaitForSpawn(uint32 creatureEntry, bool wantAlive, uint32 timeoutMs)
+{
+    EventStep& s = Add(EventStepKind::WaitForSpawn);
+    s.creatureEntry = creatureEntry;
+    s.wantAlive = wantAlive;
+    s.timeoutMs = timeoutMs;
+    return *this;
+}
+
+EventBuilder& EventBuilder::WaitForGOState(uint32 goEntry, uint32 wantState,
+                                           uint32 timeoutMs, float searchRadius)
+{
+    EventStep& s = Add(EventStepKind::WaitForGameObjectState);
+    s.goEntry = goEntry;
+    s.wantState = wantState;
+    s.timeoutMs = timeoutMs;
+    s.radius = searchRadius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::KillCreature(uint32 creatureEntry, uint32 count, float searchRadius)
+{
+    EventStep& s = Add(EventStepKind::KillCreature);
+    s.creatureEntry = creatureEntry;
+    s.count = count;
+    s.radius = searchRadius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::Wait(uint32 durationMs)
+{
+    EventStep& s = Add(EventStepKind::Wait);
+    s.durationMs = durationMs;
+    return *this;
+}
+
+EventBuilder& EventBuilder::Custom(uint32 hookId)
+{
+    EventStep& s = Add(EventStepKind::Custom);
+    s.hookId = hookId;
+    return *this;
+}
+
+// --- The event table ------------------------------------------------------
+// One block per dungeon. Event ids are per-map and are referenced from the
+// matching travel-objective anchor's DungeonBossInfo::eventId (BossRosterRegistry).
+
+namespace
+{
+    std::vector<DungeonEvent> const& EventTable()
+    {
+        static std::vector<DungeonEvent> const kEvents = []
+        {
+            std::vector<DungeonEvent> t;
+
+            // --- Sunken Temple (map 109), event 1 --------------------------
+            // The Altar of Hakkar objective: the tank leads the party to the
+            // central altar (the anchor handles travel), then this event holds
+            // there waiting for the Avatar of Hakkar (8443) to manifest from the
+            // Atal'ai sacrifice. Optional: whether the summon triggers off the
+            // trash the bots kill is unverified, so on timeout the event SKIPS
+            // (the clear advances) rather than stalling forever — matching the
+            // roster note that you may have to `dc skip` it. 45s tolerates a slow
+            // approach + the scripted sequence.
+            t.push_back(EventBuilder(109, 1, "Altar of Hakkar (Avatar event)")
+                            .Anchored(7)
+                            .WaitForSpawn(8443, /*wantAlive*/ true, /*timeout*/ 45000)
+                            .Optional()
+                            .Build());
+
+            // --- ZulFarrak (map 209), event 1 ------------------------------
+            // Temple-summit (Sandfury prisoner) event: reaching the summit fires
+            // the scripted event that opens Chief Ukorz's door. The anchor's
+            // travel + arrival already drives that today; this event row migrates
+            // the objective onto the framework with NO extra steps, so behaviour
+            // is unchanged (arrive => complete). TODO(milestone 2): once the
+            // prisoner-release lever / gossip is verified, add UseGO/Gossip +
+            // WaitForGOState here so the door open is explicit rather than
+            // incidental.
+            t.push_back(EventBuilder(209, 1, "Temple Summit (Executioner event)")
+                            .Anchored(7)
+                            .Build());
+
+            // --- Shadowfang Keep (map 33), event 1 — CONDITIONAL -----------
+            // The Courtyard Door (GO 18895) gates the keep past the entry rooms
+            // and is opened only by a freed prisoner, not by the party: the bot
+            // walks to the prisoner (Sorcerer Ashcrombe 3850 / Deathstalker
+            // Adamant 3849 — both spawn in AC) and gossips "Please unlock the
+            // courtyard door." (menu option 0), then holds until the door swings
+            // open. Conditional (off the boss list): condition 1 is "courtyard
+            // door shut AND a prisoner alive" (EventConditionRegistry), so it
+            // fires early — the moment the party is in the keep — and preempts
+            // the boss pull / door-blocked stall (trigger rel 31 > at-boss 30 >
+            // door-blocked 22). Optional so that if the gossip path doesn't open
+            // the door (timeout) the run degrades to the normal door-blocked
+            // "open this for me" stall instead of livelocking.
+            // TODO(live-verify): confirm option 0 unlocks for BOTH factions and
+            // the door reaches GO_STATE_ACTIVE within the 20s budget in a real run.
+            t.push_back(EventBuilder(33, 1, "Free the Prisoner (Courtyard Door)")
+                            .Conditional(1)
+                            .MoveTo(-242.3f, 2118.0f, 81.26f, /*radius*/ 8.0f)
+                            .Gossip(/*creatureEntry*/ 3850, /*option*/ 0)
+                            .WaitForGOState(/*goEntry*/ 18895, /*wantState*/ 0 /*GO_STATE_ACTIVE*/,
+                                            /*timeout*/ 20000)
+                            .Optional()
+                            .Build());
+
+            return t;
+        }();
+        return kEvents;
+    }
+}
+
+DungeonEvent const* DungeonEventRegistry::Find(uint32 mapId, uint32 id)
+{
+    if (id == 0)
+        return nullptr;
+    for (DungeonEvent const& e : EventTable())
+        if (e.mapId == mapId && e.id == id)
+            return &e;
+    return nullptr;
+}
+
+bool DungeonEventRegistry::HasEvents(uint32 mapId)
+{
+    for (DungeonEvent const& e : EventTable())
+        if (e.mapId == mapId)
+            return true;
+    return false;
+}
+
+std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId)
+{
+    std::vector<DungeonEvent const*> out;
+    for (DungeonEvent const& e : EventTable())
+        if (e.mapId == mapId && e.activation == EventActivation::Conditional)
+            out.push_back(&e);
+    return out;
+}

@@ -39,7 +39,9 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -2604,21 +2606,41 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
     if (!next.has_value() || next->kind != DungeonAnchorKind::Objective)
         return false;
 
-    // Hold at the anchor while the (optional) hook runs — HaltForHold cancels a
+    // Hold at the anchor while the event/hook runs — HaltForHold cancels a
     // launched escort glide so the tank doesn't coast past the objective.
     HaltForHold(bot);
 
-    ObjectiveArriveResult const result =
-        ObjectiveHookRegistry::Run(next->onArriveHook, bot, context, *next);
-
-    if (result == ObjectiveArriveResult::Running)
+    // Prefer a declarative event (DungeonEventRegistry) when the anchor names
+    // one; otherwise fall back to the legacy freeform hook (ObjectiveHookRegistry)
+    // so existing objectives are unchanged. Both reduce to one drive outcome.
+    EventDriveOutcome outcome = EventDriveOutcome::Completed;
+    DungeonEvent const* ev =
+        next->eventId ? DungeonEventRegistry::Find(next->mapId, next->eventId) : nullptr;
+    if (ev)
     {
-        // Hook still working — keep holding; it is called again next tick.
+        auto& prog =
+            context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+        outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
+    }
+    else
+    {
+        switch (ObjectiveHookRegistry::Run(next->onArriveHook, bot, context, *next))
+        {
+            case ObjectiveArriveResult::Running: outcome = EventDriveOutcome::Running; break;
+            case ObjectiveArriveResult::Blocked: outcome = EventDriveOutcome::Stalled; break;
+            case ObjectiveArriveResult::Done:
+            default:                             outcome = EventDriveOutcome::Completed; break;
+        }
+    }
+
+    if (outcome == EventDriveOutcome::Running)
+    {
+        // Event/hook still working — keep holding; it is driven again next tick.
         SetPhase(context, "objective");
         return true;
     }
 
-    if (result == ObjectiveArriveResult::Blocked)
+    if (outcome == EventDriveOutcome::Stalled)
     {
         // The event needs the human (something the bot can't drive). Stall so
         // the player can sort it; they can also `dc skip` past the objective.
@@ -2627,7 +2649,7 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
         return true;
     }
 
-    // Done (or no hook): latch the objective complete so NextDungeonBossValue
+    // Completed or Skipped: latch the objective complete so NextDungeonBossValue
     // advances and never re-targets it (objectives have no kill-bit to read).
     auto& cleared =
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
@@ -2638,6 +2660,56 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
         LOG_DEBUG("playerbots.dungeonclear",
                   "[dungeon-clear] {} reached objective '{}' (entry {}) — marked cleared",
                   bot->GetName(), next->name, next->entry);
+    }
+    SetPhase(context, "");
+    return true;
+}
+
+bool DcRunEventAction::Execute(Event /*event*/)
+{
+    Map* map = bot ? bot->GetMap() : nullptr;
+    if (!map)
+        return false;
+
+    DungeonEvent const* ev =
+        DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId());
+    if (!ev)
+        return false;  // condition went false between trigger and action — stand down
+
+    // Hold position while driving the event. StopActiveSplineGlide only cancels a
+    // launched escort glide (the coast-past from the advance ladder) — it leaves a
+    // step's own intra-room MovePoint (HopTo) alone, so MoveTo/Gossip walk-ins
+    // still work, unlike HaltForHold.
+    StopActiveSplineGlide(bot);
+
+    auto& prog =
+        context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
+    EventDriveOutcome const outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
+
+    if (outcome == EventDriveOutcome::Running)
+    {
+        SetPhase(context, "event");
+        return true;
+    }
+
+    if (outcome == EventDriveOutcome::Stalled)
+    {
+        StallDungeonClear(botAI, "I can't progress the event '" + ev->name +
+                                     "' on my own. Sort it and I'll continue, or `dc skip`.");
+        return true;
+    }
+
+    // Completed or Skipped: latch the event under its synthetic key so the
+    // trigger stops re-firing it and the clear proceeds.
+    auto& cleared =
+        context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+    if (cleared.insert(DungeonEventExecutor::ConditionalLatchKey(ev->id)).second)
+    {
+        ClearStall(context);
+        DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tEvent '" + ev->name + "' done \xe2\x80\x94 continuing.");
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[dungeon-clear] {} completed conditional event '{}' (id {}) — latched",
+                  bot->GetName(), ev->name, ev->id);
     }
     SetPhase(context, "");
     return true;
