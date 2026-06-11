@@ -79,6 +79,20 @@ struct DcPullContext
                                                   // pull-spell-opener dedupe (was
                                                   // "dungeon clear last pull target")
 
+    // --- engage-fizzle latch ------------------------------------------------
+    ObjectGuid  pullTarget;                      // pack THIS pull tagged (stamped at
+                                                 // commit and on unplanned scout
+                                                 // aggro; NOT cleared by EnterEngage).
+                                                 // Read at the Engage cleanup to
+                                                 // detect a fizzled drag: the target
+                                                 // still alive and idle after the
+                                                 // "camp fight" means it never came.
+    ObjectGuid  fizzleTarget;                    // pack whose pulls keep fizzling
+    uint32      fizzleCount = 0;                 // consecutive fizzles of fizzleTarget;
+                                                 // at DC_PULL_FIZZLE_MAX the pack is
+                                                 // handed to the walk-in engage via
+                                                 // abortTarget instead of re-pulled
+
     // --- dynamic verdict (pull setting == 2) ------------------------------
     uint32      decision       = 0;              // 0 none / 1 leeroy / 2 advanced
     ObjectGuid  decisionTarget;                  // pack the verdict applies to
