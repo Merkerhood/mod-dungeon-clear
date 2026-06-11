@@ -46,6 +46,21 @@ float DungeonClearMultiplier::GetValue(Action* action)
         }
     }
 
+    // The stock anti-stack shuffle ("move out of collision", NonCombatStrategy
+    // relevance 2) fights DC's positioning and can livelock a follower: the
+    // follow-tank/camp-hold pin is a FIXED point, so when another unit stands
+    // inside ContactDistance the shuffle hops the bot ~followDistance away in a
+    // random direction, the persistent MoveFollow generator walks it straight
+    // back onto the pin, and the two alternate forever — a rapid two-steps-out/
+    // two-steps-back dance. The bot never stands still long enough to sit, so
+    // it can't drink/eat, and the leader's between-pulls rest gate then stalls
+    // the whole run on its mana. DC's own positioning decides where everyone
+    // stands; drop the shuffle for every member of an active run (same
+    // cross-bot gate as the rest cap above).
+    if (name == "move out of collision" &&
+        AI_VALUE(Player*, "dungeon clear party tank"))
+        return 0.0f;
+
     // Wander-style autonomous navigation (grind / rpg / travel). This is what
     // drives the bot around the world on its own.
     bool const isWander =

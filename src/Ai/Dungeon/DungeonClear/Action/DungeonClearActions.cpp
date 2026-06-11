@@ -3077,7 +3077,18 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // orphan reaper can cancel it if the AI is deleted out from under us — a
     // self-bot leaving bot mode never runs the teardown branch above.
     DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
-    return Follow(tank, dist);
+    // Explicit per-bot angle: every follower here is a self-bot (master ==
+    // itself), and MovementAction::GetFollowAngle() skips the master while
+    // scanning the group — a self-bot never matches its own entry and falls out
+    // at 0.0f — so the default Follow() overload gave the WHOLE party the same
+    // follow slot and stacked it on one point (which is also what kept the
+    // stock collision shuffle permanently armed). Same deterministic
+    // golden-angle fan as ComputeCampSlot, so the cluster spreads evenly and
+    // each bot's slot never moves between ticks.
+    uint32 const seed = static_cast<uint32>(bot->GetGUID().GetCounter());
+    float const angle =
+        Position::NormalizeOrientation(static_cast<float>(seed) * 2.39996323f);
+    return Follow(tank, dist, angle);
 }
 
 bool DungeonClearFilterLootAction::Execute(Event /*event*/)
