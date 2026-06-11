@@ -86,7 +86,7 @@ float DcPartyState::RestMinMpPct(Player* bot)
     return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
 }
 bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
-                                Position const* spreadAnchor)
+                                Position const* spreadAnchor, float maxTankGap)
 {
     if (!bot)
         return false;
@@ -109,6 +109,11 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
             float const spread = spreadAnchor ? member->GetDistance(*spreadAnchor)
                                               : bot->GetDistance(member);
             if (spread > maxSpread)
+                return false;
+            // Absolute tank<->member backstop (camp-anchored mode only): a stale
+            // camp sitting where the party stands passes the anchored spread
+            // forever while the tank glides away — cap the real gap too.
+            if (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap)
                 return false;
         }
         if (member->GetHealthPct() < minHpPct)
@@ -151,7 +156,19 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
     if (context->GetValue<bool>("dungeon clear pull mode")->Get() &&
         (pull.camp.GetPositionX() != 0.0f || pull.camp.GetPositionY() != 0.0f ||
          pull.camp.GetPositionZ() != 0.0f))
+    {
         gate.anchor = &pull.camp;
+        // Camp-anchored backstop: members set at a live camp are by construction
+        // within PartyMaxSpread + the camp's own standoff behind the tank
+        // (PullSetback normally, drag-extended up to PullMaxDrag for clearance /
+        // LOS-break camps), so this cap never trips in healthy states. It only
+        // bites when the camp has gone stale at the party's feet — the case
+        // where the anchored spread alone passes forever while the tank glides
+        // away (the scout-runaway gap).
+        float const setback = DcSettings::GetFloat(bot, "PullSetback");
+        float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
+        gate.maxTankGap = gate.maxSpread + std::max(setback, maxDrag);
+    }
     return gate;
 }
 bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot)
@@ -161,7 +178,8 @@ bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bo
     if (requireNoLoot && context->GetValue<bool>("has available loot")->Get())
         return false;
     SpreadGate const gate = GetSpreadGate(bot, context);
-    return IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), gate.maxSpread, gate.anchor);
+    return IsPartyReady(bot, RestMinHpPct(bot), RestMinMpPct(bot), gate.maxSpread, gate.anchor,
+                        gate.maxTankGap);
 }
 bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
 {
@@ -197,7 +215,8 @@ bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
 std::string DcPartyState::DescribePartyNotReady(Player* bot,
                                                     float minHpPct, float minMpPct,
                                                     float maxSpread,
-                                                    Position const* spreadAnchor)
+                                                    Position const* spreadAnchor,
+                                                    float maxTankGap)
 {
     if (!bot)
         return "";
@@ -225,8 +244,9 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
         // most intuitively, then health, then mana.
         std::string reason;
         if (member != bot &&
-            (spreadAnchor ? member->GetDistance(*spreadAnchor)
-                          : bot->GetDistance(member)) > maxSpread)
+            ((spreadAnchor ? member->GetDistance(*spreadAnchor)
+                           : bot->GetDistance(member)) > maxSpread ||
+             (maxTankGap > 0.0f && bot->GetDistance(member) > maxTankGap)))
             reason = "out of range";
         else if (member->GetHealthPct() < minHpPct)
             reason = "low HP";

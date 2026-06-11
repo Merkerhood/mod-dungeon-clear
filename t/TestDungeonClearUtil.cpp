@@ -469,6 +469,33 @@ TEST_F(DungeonClearGroupTest, GroupSpreadAnchoredStragglerScenario)
               "Waiting on Member3 (out of range)");
 }
 
+// 9. Camp-anchored spread with the absolute tank-gap backstop: a camp gone
+// stale right where the party stands satisfies the anchored spread forever
+// while the tank glides away — the scout-runaway gap. The maxTankGap cap
+// catches it; a tank still within the cap stays ready.
+TEST_F(DungeonClearGroupTest, GroupSpreadAnchoredStaleCampTankGapScenario)
+{
+    // Stale camp sitting on the party, tank (player, at origin pre-Relocate)
+    // scouted 80yd ahead of everyone.
+    Position const camp(1.0f, 0.0f, 0.0f);
+    for (int i = 0; i < 4; ++i)
+        members[i]->Relocate(1.0f + 0.5f * (i + 1), 0.0f, 0.0f);
+    player->Relocate(80.0f, 0.0f, 0.0f);
+
+    // Anchored spread alone: the party is "set at camp" -> passes, the runaway.
+    EXPECT_TRUE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f, &camp));
+    // With the backstop the 77yd+ real gap trips the gate...
+    EXPECT_FALSE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f, &camp, 60.0f));
+    // ...and every member reports as the limiting reason (LIFO order, capped).
+    EXPECT_EQ(DcPartyState::DescribePartyNotReady(player, 90.0f, 75.0f, 30.0f, &camp, 60.0f),
+              "Waiting on Member4 (out of range), Member3 (out of range), "
+              "Member2 (out of range) +1 more");
+
+    // Tank back inside the cap: ready again (members still set at the camp).
+    player->Relocate(40.0f, 0.0f, 0.0f);
+    EXPECT_TRUE(DcPartyState::IsPartyReady(player, 90.0f, 75.0f, 30.0f, &camp, 60.0f));
+}
+
 class DungeonClearStatusTest : public DungeonClearTestBase
 {
 protected:

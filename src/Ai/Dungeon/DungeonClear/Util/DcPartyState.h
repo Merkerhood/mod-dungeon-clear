@@ -36,11 +36,18 @@ public:
     //  - every living mana-using party member has mana% >= minMpPct,
     //  - every living member is within maxSpread yards of the bot — or of
     //    *spreadAnchor when given (pull mode measures against the camp the party
-    //    is held at, since it is not allowed to stand near the tank there).
+    //    is held at, since it is not allowed to stand near the tank there),
+    //  - and, when maxTankGap > 0, every living member is ALSO within maxTankGap
+    //    yards of the bot itself. Absolute backstop for the anchored case: a camp
+    //    gone stale right where the party stands satisfies the anchored spread
+    //    forever while the tank glides away unchecked (the scout-runaway gap).
+    //    Sized generously (spread + the largest legitimate camp standoff) so it
+    //    never trips in healthy pull states — see GetSpreadGate.
     // Dead members are not blocking — the party-died trigger handles them.
     // Callers pass RestMinHpPct()/RestMinMpPct() for the recovery thresholds.
     static bool IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
-                             Position const* spreadAnchor = nullptr);
+                             Position const* spreadAnchor = nullptr,
+                             float maxTankGap = 0.0f);
 
     // The effective inputs of the between-pulls spread check for `bot` right now:
     // the live PartyMaxSpread (waived to "infinite" while a pull maneuver is
@@ -60,10 +67,16 @@ public:
     // pull mode means "set at the camp they were told to hold", so the spread is
     // anchored there. The anchor points into the bot's pull-context value
     // (stable storage); treat it as valid for the current tick only.
+    // maxTankGap is the camp-anchored backstop described on IsPartyReady: set
+    // (> 0) only alongside the camp anchor, to PartyMaxSpread + the largest
+    // standoff a live camp may legitimately sit behind the tank
+    // (max(PullSetback, PullMaxDrag)). A correctly-trailing camp keeps every
+    // member inside it by construction; only a stale camp (the runaway) trips it.
     struct SpreadGate
     {
-        float maxSpread;
-        Position const* anchor;  // nullptr = measure against the bot (tank)
+        float maxSpread = 0.0f;
+        Position const* anchor = nullptr;  // nullptr = measure against the bot (tank)
+        float maxTankGap = 0.0f;           // 0 = no absolute tank cap
     };
     static SpreadGate GetSpreadGate(Player* bot, AiObjectContext* context);
 
@@ -100,7 +113,8 @@ public:
     static std::string DescribePartyNotReady(Player* bot,
                                              float minHpPct, float minMpPct,
                                              float maxSpread,
-                                             Position const* spreadAnchor = nullptr);
+                                             Position const* spreadAnchor = nullptr,
+                                             float maxTankGap = 0.0f);
 
     // Names the living bot party members currently looting (walking to or
     // standing on a corpse), comma-joined and capped like DescribePartyNotReady.

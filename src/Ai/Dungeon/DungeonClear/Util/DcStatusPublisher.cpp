@@ -260,12 +260,13 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         // mode), so the panel can never report a different wait than the gate.
         else if (DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
                  !DcPartyState::IsPartyReady(bot, DcPartyState::RestMinHpPct(bot), DcPartyState::RestMinMpPct(bot),
-                                             gate.maxSpread, gate.anchor))
+                                             gate.maxSpread, gate.anchor, gate.maxTankGap))
         {
             stateStr = "resting";
             std::string const who = DcPartyState::DescribePartyNotReady(bot, DcPartyState::RestMinHpPct(bot),
                                                                             DcPartyState::RestMinMpPct(bot),
-                                                                            gate.maxSpread, gate.anchor);
+                                                                            gate.maxSpread, gate.anchor,
+                                                                            gate.maxTankGap);
             detail = who.empty() ? "Waiting for the party to recover." : (who + ".");
         }
         else if (!stall.empty())
