@@ -8,6 +8,16 @@
  * their roll dialog — a double roll. Suppressing the bot vote lets only the
  * player roll.
  *
+ * Improvement #2: roll on gear the bot will grow into. Stock rolling asks
+ * ItemUsageValue, which rejects any weapon/armor whose RequiredLevel is above
+ * the bot's current level (BotCanUseItem fails), so the bot greeds or passes
+ * on its own future upgrades. Here, when the level requirement is the ONLY
+ * thing blocking the item, the vote is computed as if the bot already were
+ * that level: Need when the bot will have the proficiency at that level
+ * (plate/mail unlocks at 40 included) and the item's stats score for its
+ * spec, Greed otherwise. The server's LootNeedRollLevel/LootGreedRollLevel
+ * and unique-equipped post-checks still apply, exactly as in stock.
+ *
  * Housed in this module (not in mod-playerbots) so the stock module stays
  * unedited and conflict-free on upstream pulls. The wiring is the same override
  * seam DungeonClear already uses for "auto release" (see StayDeadAction.h):
@@ -36,6 +46,11 @@ public:
         : LootRollAction(botAI, "loot roll") {}
 
     bool isUseful() override;
+    bool Execute(Event event) override;
+
+private:
+    bool IsFutureWearable(ItemTemplate const* proto) const;
+    RollVote CalculateFutureVote(ItemTemplate const* proto, int32 randomProperty);
 };
 
 #endif

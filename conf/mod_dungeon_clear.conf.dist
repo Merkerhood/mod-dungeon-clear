@@ -84,8 +84,18 @@ DungeonClear.LootMinQuality = 0
 #        roll dialog would never matter — producing a double roll. With this on,
 #        only you roll on loot while in bot-self mode; bots with a separate human
 #        master are unaffected and keep rolling as before.
+#
+#        Second improvement: bots roll on gear they will grow into. Stock
+#        rolling greeds or passes on any weapon/armor whose required level is
+#        above the bot's current level, even when it is that bot's own future
+#        upgrade. With this on, an item blocked ONLY by its level requirement
+#        is judged as if the bot already were that level: Need when the bot
+#        will have the proficiency by then (mail/plate unlocking at 40 is
+#        accounted for) and the stats suit its spec, Greed otherwise. The
+#        server's LootNeedRollLevel / LootGreedRollLevel policies and the
+#        unique-equipped check still apply as usual.
 #            0 = stock playerbots rolling (default)
-#            1 = bot-self does not auto-roll; the player rolls
+#            1 = improved rolling as described above
 #
 #        Default: 0
 #
