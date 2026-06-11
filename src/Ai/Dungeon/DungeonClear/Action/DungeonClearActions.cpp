@@ -3212,6 +3212,13 @@ namespace
     // Per-leg watchdog (tag / return) — abort a leg that makes no progress so a
     // navmesh wedge can never freeze the pull.
     constexpr uint32 DC_PULL_LEG_TIMEOUT_MS = 10000;
+    // Consecutive fizzled pulls of the SAME pack (Engage cleanup found the pull
+    // target alive and idle — the drag never delivered it) before the pack is
+    // handed to the normal walk-in engage via abortTarget. Casters and planted
+    // stragglers ignore the drag-back, evade home once the tank breaks LOS at
+    // camp, and a re-pull just repeats the fizzle — the tank bouncing forward
+    // and back while the party stands at camp never entering combat.
+    constexpr uint32 DC_PULL_FIZZLE_MAX = 2;
     // Longest the tank waits in Forming for the party to park+go passive at camp
     // before tagging anyway. Sized to cover the party walking back to a far camp
     // (PullSetback can be tens of yards); past it the tank tags regardless and the
@@ -3384,6 +3391,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // gate inside ComputeSafeCamp.
             pull.losPull = DcSettings::GetBool(bot, "PullRangedLosBreak") &&
                            DcEngageGeometry::IsRangedAttacker(bot, trash);
+
+            // The pack this pull is about. Survives EnterEngage so the Engage
+            // cleanup can detect a fizzled drag (target alive + idle after the
+            // camp fight) and latch the pack over to the walk-in engage.
+            pull.pullTarget = trash->GetGUID();
 
             // Halt the escort glide for real before committing. A plain StopMoving
             // does NOT cancel a launched escort spline (see StopActiveSplineGlide /
@@ -3621,12 +3633,59 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
 
         case DcPullPhase::Engage:
         default:
+        {
             // Out-of-combat cleanup: the camp fight is over, ready the next pull.
             pull.abortTarget = ObjectGuid::Empty;
+
+            // Engage-fizzle latch. The fight "ended" (tank out of combat) with
+            // the pulled pack still alive and idle: the drag never delivered it
+            // — a caster/planted straggler held its ground and evaded home the
+            // moment the tank broke LOS at camp. Re-pulling repeats the exact
+            // same fizzle (the tank bounces forward and back while the party
+            // stands passive at camp, never entering combat), so after
+            // DC_PULL_FIZZLE_MAX consecutive fizzles hand the pack to the
+            // normal walk-in engage: blocking-trash exempts the abortTarget
+            // from pull-mode standdown, the tank fights it where it stands, and
+            // the leader-fight assist drives the party in. A pack that died or
+            // is still being fought by the party resets the latch.
+            Unit* pulled = pull.pullTarget.IsEmpty()
+                ? nullptr : ObjectAccessor::GetUnit(*bot, pull.pullTarget);
+            if (pulled && pulled->IsAlive() && !pulled->IsInCombat())
+            {
+                if (pull.fizzleTarget == pull.pullTarget)
+                    ++pull.fizzleCount;
+                else
+                {
+                    pull.fizzleTarget = pull.pullTarget;
+                    pull.fizzleCount = 1;
+                }
+                if (pull.fizzleCount >= DC_PULL_FIZZLE_MAX)
+                {
+                    pull.abortTarget = pull.fizzleTarget;
+                    DC_PULL_INFO("[DC:{}] advanced-pull: pull of {} fizzled {}x "
+                                 "(pack alive and idle after the camp fight) -> "
+                                 "handing to normal engage", bot->GetName(),
+                                 pull.fizzleTarget.ToString(), pull.fizzleCount);
+                }
+                else
+                    DC_PULL_DEBUG("[DC:{}] advanced-pull: pull of {} fizzled "
+                                  "(pack alive and idle after the camp fight, "
+                                  "{}/{})", bot->GetName(),
+                                  pull.pullTarget.ToString(), pull.fizzleCount,
+                                  DC_PULL_FIZZLE_MAX);
+            }
+            else
+            {
+                pull.fizzleTarget = ObjectGuid::Empty;
+                pull.fizzleCount = 0;
+            }
+            pull.pullTarget = ObjectGuid::Empty;
+
             DcSetPullPhase(context, DcPullPhase::Idle);
             DC_PULL_DEBUG("[DC:{}] advanced-pull: camp fight done -> idle, ready for "
                           "next pull", bot->GetName());
             return false;
+        }
     }
 }
 
@@ -3677,6 +3736,11 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
             }
             if (aggressor)
             {
+                // Same fizzle bookkeeping as a planned pull: if this aggressor
+                // evades home mid-drag over and over, the Engage cleanup must
+                // see it and eventually hand it to the walk-in engage.
+                pull.pullTarget = aggressor->GetGUID();
+
                 float const setback = DcSettings::GetFloat(bot, "PullSetback");
                 float const safeRadius = DcSettings::GetFloat(bot, "PullCampSafeRadius");
                 float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");

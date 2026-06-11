@@ -336,13 +336,21 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
     if (!bot || bot->isDead())
         return false;
 
-    // Any OTHER advanced-pull camp-hold state defers to the pull machinery:
-    // during the holding phases (Forming/Advancing/Returning) the party is
-    // pinned passive at camp, and unplanned aggro while scouting (Idle) is
-    // dragged back to camp by the maneuver before the party may engage.
+    // Defer to the pull machinery ONLY while a holding phase actually pins the
+    // party passive at camp (Forming/Advancing/Returning — the drag must not
+    // be broken by followers charging out after the tank). A camp that is
+    // merely MARKED (GetLeaderCampHold returns true for ANY phase while pull
+    // mode is on) must NOT mute the assist: at phase Idle/Engage with the
+    // leader in combat — a walk-in on an aborted pack, the tank chasing a
+    // caster/straggler out of the camp fight, scout aggro the maneuver hasn't
+    // picked up yet — an unconditional defer left the followers parked at camp
+    // watching the tank solo, and an out-of-LOS follower never entered combat
+    // at all. The brief Idle+combat window before the maneuver's first combat
+    // tick flips the phase to Returning is harmless: the moment the phase
+    // turns holding this defers again and stay-at-camp re-pins the party.
     Position camp;
     bool passive = false;
-    if (GetLeaderCampHold(bot, camp, passive))
+    if (GetLeaderCampHold(bot, camp, passive) && passive)
         return false;
 
     // General case — no camp in effect (pull mode off, a Leeroy verdict in
