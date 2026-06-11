@@ -94,11 +94,16 @@ inline constexpr DcSettingDef kDcSettings[] =
     // combat on engage (SM Cathedral, Shadow Lab, Pandemonius, Dagran, …), clear
     // that room BEFORE pulling the boss instead of eating the pile. The clear
     // honours the chosen pull type. RoomClearTimeout is the no-progress give-up:
-    // if the remaining room trash hasn't dropped for this many seconds (an
-    // unreachable straggler / a respawn churn) the tank stops holding and pulls
-    // the boss anyway, noting it in chat. 0 = never give up (not recommended).
+    // if the remaining room trash hasn't dropped for this many seconds the tank
+    // stops holding and pulls the boss anyway, noting it in chat. The clock only
+    // runs WHILE the tank is at the boss and actively clearing (it's re-armed
+    // during the walk-in), so this measures a true stall — an unreachable
+    // straggler or respawn churn — not the time to clear. It must therefore
+    // tolerate a slow pack plus a between-pulls drink/rest, hence the generous
+    // default. 0 = never give up. Max 600s. (Old 30s default tripped before the
+    // tank even reached the room.)
     { "ClearRoomBeforeBoss",   DcType::Bool,   1,   0,    1,  true  },
-    { "RoomClearTimeout",      DcType::UInt,  30,   0,  300,  true  },
+    { "RoomClearTimeout",      DcType::UInt, 180,   0,  600,  true  },
 
     // Travel-objective anchors (BossRosterRegistry, e.g. Sunken Temple event
     // waypoints): the default arrival radius at which a non-combat objective is
