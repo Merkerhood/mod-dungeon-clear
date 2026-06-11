@@ -20,6 +20,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 GuidVector DungeonClearRoomTrashValue::Calculate()
 {
@@ -141,6 +142,23 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         lastProgressMs = now;
         return out;
     }
+
+    // CRITICAL: the room-clear driver (DungeonClearRoomTrashTrigger) only fires
+    // once the tank is at the boss's engage range — while it's still walking the
+    // long path to the room, no trash is being engaged and the count can't drop.
+    // So keep the clock RE-ARMED until the tank actually arrives; otherwise the
+    // whole timeout is burned by the travel leg and the room-clear "gives up"
+    // before the first pull (a 192yd approach trivially outlasts 30s). The
+    // no-progress window must measure stalls WHILE CLEARING, not the walk in.
+    bool const atBoss =
+        DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
+    if (!atBoss)
+    {
+        lastRemaining = remaining;
+        lastProgressMs = now;
+        return out;
+    }
+
     if (lastRemaining == 0 || remaining < lastRemaining)
     {
         lastRemaining = remaining;
