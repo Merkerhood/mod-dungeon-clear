@@ -158,27 +158,44 @@ namespace
                             .Anchored(7)
                             .Build());
 
-            // --- Shadowfang Keep (map 33), event 1 — CONDITIONAL -----------
+            // --- Shadowfang Keep (map 33) — CONDITIONAL, FACTION-SPECIFIC ---
             // The Courtyard Door (GO 18895) gates the keep past the entry rooms
-            // and is opened only by a freed prisoner, not by the party: the bot
-            // walks to the prisoner (Sorcerer Ashcrombe 3850 / Deathstalker
-            // Adamant 3849 — both spawn in AC) and gossips "Please unlock the
-            // courtyard door." (menu option 0), then holds until the door swings
-            // open. Conditional (off the boss list): condition 1 is "courtyard
-            // door shut AND a prisoner alive" (EventConditionRegistry), so it
-            // fires early — the moment the party is in the keep — and preempts
-            // the boss pull / door-blocked stall (trigger rel 31 > at-boss 30 >
-            // door-blocked 22). Optional so that if the gossip path doesn't open
-            // the door (timeout) the run degrades to the normal door-blocked
-            // "open this for me" stall instead of livelocking.
-            // TODO(live-verify): confirm option 0 unlocks for BOTH factions and
-            // the door reaches GO_STATE_ACTIVE within the 20s budget in a real run.
-            t.push_back(EventBuilder(33, 1, "Free the Prisoner (Courtyard Door)")
+            // and is opened only by a freed prisoner, not by the party. The real
+            // mechanic (verified from the SFK SmartAI, 2026-06-11) is faction-
+            // specific — each side has its OWN lever + prisoner:
+            //   Alliance: pull lever 18901 (opens cell gate 18936) -> gossip
+            //             Sorcerer Ashcrombe (3850, menu 21213) option 0.
+            //   Horde:    pull lever 18900 (opens cell gate 18934) -> gossip
+            //             Deathstalker Adamant (3849, menu 21214) option 0.
+            // Picking the option fires the prisoner's GOSSIP_SELECT SmartAI: he
+            // walks to the courtyard door and, ~35s later (5s + 30s waypoint
+            // pauses), opens it. Two events, one per faction, each gated by a
+            // team-aware condition (1 = Alliance, 2 = Horde) so the right lever +
+            // prisoner drive; only one is ever due for a given party. The step
+            // list is lever -> gossip -> wait-for-door (the earlier version
+            // skipped the lever, so the bot could never reach the caged prisoner
+            // and the gossip was a no-op). Relevance 31 (DungeonClearEventDue)
+            // preempts the boss pull / door-blocked stall. Optional so a
+            // non-firing script degrades to the normal door-blocked stall.
+            // TODO(live-verify): per faction, lever opens the cell, gossip sends
+            // the prisoner, courtyard door opens within the 60s budget.
+            t.push_back(EventBuilder(33, 1, "Free Ashcrombe (Courtyard Door, Alliance)")
                             .Conditional(1)
-                            .MoveTo(-242.3f, 2118.0f, 81.26f, /*radius*/ 8.0f)
-                            .Gossip(/*creatureEntry*/ 3850, /*option*/ 0)
-                            .WaitForGOState(/*goEntry*/ 18895, /*wantState*/ 0 /*GO_STATE_ACTIVE*/,
-                                            /*timeout*/ 20000)
+                            .MoveTo(-248.0f, 2122.0f, 81.3f, /*radius*/ 6.0f)
+                            .UseGO(/*lever*/ 18901, /*searchRadius*/ 14.0f)
+                            .Gossip(/*Sorcerer Ashcrombe*/ 3850, /*option*/ 0, /*searchRadius*/ 16.0f)
+                            .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
+                                            /*timeout*/ 60000)
+                            .Optional()
+                            .Build());
+
+            t.push_back(EventBuilder(33, 2, "Free Adamant (Courtyard Door, Horde)")
+                            .Conditional(2)
+                            .MoveTo(-251.0f, 2115.0f, 81.3f, /*radius*/ 6.0f)
+                            .UseGO(/*lever*/ 18900, /*searchRadius*/ 14.0f)
+                            .Gossip(/*Deathstalker Adamant*/ 3849, /*option*/ 0, /*searchRadius*/ 16.0f)
+                            .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
+                                            /*timeout*/ 60000)
                             .Optional()
                             .Build());
 

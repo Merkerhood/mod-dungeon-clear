@@ -2686,6 +2686,16 @@ bool DcRunEventAction::Execute(Event /*event*/)
         context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
     EventDriveOutcome const outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
 
+    char const* outcomeStr =
+        outcome == EventDriveOutcome::Running   ? "running"
+        : outcome == EventDriveOutcome::Completed ? "completed"
+        : outcome == EventDriveOutcome::Stalled ? "stalled"
+                                                : "skipped";
+    LOG_DEBUG("playerbots.dungeonclear",
+              "[DC:{}] run-event '{}' step {}/{} -> {}",
+              bot->GetName(), ev->name, prog.stepIndex,
+              static_cast<uint32>(ev->steps.size()), outcomeStr);
+
     if (outcome == EventDriveOutcome::Running)
     {
         SetPhase(context, "event");

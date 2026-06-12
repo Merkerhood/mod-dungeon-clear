@@ -192,33 +192,46 @@ TEST(DungeonEventConditional, ConditionalListFiltersByActivation)
     EXPECT_TRUE(DungeonEventRegistry::Conditional(109).empty());  // anchored only
     EXPECT_TRUE(DungeonEventRegistry::Conditional(209).empty());
 
+    // SFK has two faction-specific conditional events (Alliance + Horde).
     std::vector<DungeonEvent const*> sfk = DungeonEventRegistry::Conditional(33);
-    ASSERT_EQ(sfk.size(), 1u);
+    ASSERT_EQ(sfk.size(), 2u);
     EXPECT_EQ(sfk[0]->id, 1u);
-    EXPECT_EQ(sfk[0]->activation, EventActivation::Conditional);
-    EXPECT_EQ(sfk[0]->conditionId, 1u);
+    EXPECT_EQ(sfk[0]->conditionId, 1u);  // Alliance
+    EXPECT_EQ(sfk[1]->id, 2u);
+    EXPECT_EQ(sfk[1]->conditionId, 2u);  // Horde
+    for (DungeonEvent const* e : sfk)
+        EXPECT_EQ(e->activation, EventActivation::Conditional);
 }
 
-// The SFK courtyard event: walk to the prisoner, gossip option 0, wait for the
-// Courtyard Door (18895) to open. Optional so a non-firing gossip degrades to
-// the normal door-blocked stall instead of livelocking.
+// Each SFK courtyard event: walk to the faction's cell lever, pull it (UseGO) to
+// open the prison gate, gossip the freed prisoner (option 0), then wait for the
+// Courtyard Door (18895) to open. Optional so a non-firing script degrades to the
+// normal door-blocked stall instead of livelocking. Alliance frees Ashcrombe via
+// lever 18901; Horde frees Adamant via lever 18900.
 TEST(DungeonEventConditional, ShadowfangCourtyardEventShape)
 {
-    DungeonEvent const* e = DungeonEventRegistry::Find(33, 1);
-    ASSERT_NE(e, nullptr);
-    EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_FALSE(e->required);
-    ASSERT_EQ(e->steps.size(), 3u);
+    struct Faction { uint32 id; uint32 lever; uint32 prisoner; };
+    for (Faction const& f : { Faction{1, 18901, 3850}, Faction{2, 18900, 3849} })
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(33, f.id);
+        ASSERT_NE(e, nullptr);
+        EXPECT_EQ(e->activation, EventActivation::Conditional);
+        EXPECT_FALSE(e->required);
+        ASSERT_EQ(e->steps.size(), 4u);
 
-    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
 
-    EXPECT_EQ(e->steps[1].kind, EventStepKind::Gossip);
-    EXPECT_EQ(e->steps[1].creatureEntry, 3850u);
-    EXPECT_EQ(e->steps[1].gossipOption, 0);
+        EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[1].goEntry, f.lever);
 
-    EXPECT_EQ(e->steps[2].kind, EventStepKind::WaitForGameObjectState);
-    EXPECT_EQ(e->steps[2].goEntry, 18895u);
-    EXPECT_EQ(e->steps[2].wantState, 0u);  // GO_STATE_ACTIVE (open)
+        EXPECT_EQ(e->steps[2].kind, EventStepKind::Gossip);
+        EXPECT_EQ(e->steps[2].creatureEntry, f.prisoner);
+        EXPECT_EQ(e->steps[2].gossipOption, 0);
+
+        EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForGameObjectState);
+        EXPECT_EQ(e->steps[3].goEntry, 18895u);
+        EXPECT_EQ(e->steps[3].wantState, 0u);  // GO_STATE_ACTIVE (open)
+    }
 }
 
 // The synthetic latch key is pure, injective, and lives in a high range that
@@ -239,7 +252,8 @@ TEST(DungeonEventConditionRegistry, DispatchGuards)
 {
     EXPECT_FALSE(EventConditionRegistry::Has(0));
     EXPECT_FALSE(EventConditionRegistry::Has(9999));
-    EXPECT_TRUE(EventConditionRegistry::Has(1));
+    EXPECT_TRUE(EventConditionRegistry::Has(1));   // SFK Alliance
+    EXPECT_TRUE(EventConditionRegistry::Has(2));   // SFK Horde
 
     EXPECT_FALSE(EventConditionRegistry::Evaluate(0, nullptr, nullptr));
     EXPECT_FALSE(EventConditionRegistry::Evaluate(9999, nullptr, nullptr));

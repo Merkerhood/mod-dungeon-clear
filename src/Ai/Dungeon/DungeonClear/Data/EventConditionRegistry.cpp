@@ -10,36 +10,66 @@
 #include "Creature.h"
 #include "GameObject.h"
 #include "GameObjectData.h"
+#include "Log.h"
 #include "Player.h"
+#include "SharedDefines.h"
+#include "Timer.h"
 
 namespace
 {
-    // --- Shadowfang Keep: courtyard door (condition 1) --------------------
+    // --- Shadowfang Keep: courtyard door (conditions 1 = Alliance, 2 = Horde) -
     // The Courtyard Door (GO 18895) blocks progression past the entry rooms and
-    // is opened not by the party but by a freed prisoner: the bot must talk to
-    // Sorcerer Ashcrombe (3850, Alliance) or Deathstalker Adamant (3849, Horde)
-    // and pick "Please unlock the courtyard door." The event is DUE while the
-    // door is still shut (GO_STATE_READY) AND a prisoner is alive to ask. Once a
-    // human (or the bot's gossip) opens the door this reads false and the event
-    // latches done.
+    // is opened not by the party but by a freed prisoner. The mechanic is
+    // FACTION-SPECIFIC: Alliance pulls the lever by Sorcerer Ashcrombe's cell
+    // (3850) and gossips him; Horde pulls a different lever by Deathstalker
+    // Adamant's cell (3849) and gossips him. Both NPCs spawn in AC, but each
+    // party uses its own — so the condition is gated on team so the right event
+    // (right lever + right prisoner) drives. DUE while the door is still shut
+    // (GO_STATE_READY) AND the faction's prisoner is alive to free; once the
+    // door opens this reads false and the event latches done.
     constexpr uint32 SFK_COURTYARD_DOOR = 18895;
-    constexpr uint32 SFK_PRISONER_ASHCROMBE = 3850;
-    constexpr uint32 SFK_PRISONER_ADAMANT = 3849;
+    constexpr uint32 SFK_PRISONER_ASHCROMBE = 3850;  // Alliance
+    constexpr uint32 SFK_PRISONER_ADAMANT = 3849;    // Horde
     // Door / prisoner sit near the entry; scan generously so the condition is
     // true from the moment the party is anywhere in the early keep.
     constexpr float SFK_SCAN = 200.0f;
 
-    bool SfkCourtyardDoorShut(Player* bot, AiObjectContext* /*context*/)
+    bool SfkCourtyard(Player* bot, TeamId team, uint32 prisonerEntry, char const* who)
     {
+        if (bot->GetTeamId() != team)
+            return false;
+
         GameObject* door = bot->FindNearestGameObject(SFK_COURTYARD_DOOR, SFK_SCAN);
+        Creature* prisoner = bot->FindNearestCreature(prisonerEntry, SFK_SCAN, /*alive*/ true);
+
+        // Throttled diagnostic (single-threaded world tick): one line / 5s per
+        // faction so a live run shows WHY the event is or isn't due (door
+        // missing/open, no prisoner). Lands in DungeonClear.log.
+        static uint32 lastLog = 0;
+        uint32 const now = getMSTime();
+        if (getMSTimeDiff(lastLog, now) >= 5000)
+        {
+            lastLog = now;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] SFK courtyard cond ({}): door={} state={} prisoner={}",
+                      bot->GetName(), who, door ? "found" : "MISSING",
+                      door ? static_cast<int>(door->GetGoState()) : -1,
+                      prisoner ? "alive" : "no");
+        }
+
         if (!door || door->GetGoState() != GO_STATE_READY)
             return false;  // no door found, or already open
+        return prisoner != nullptr;
+    }
 
-        // A prisoner must be alive to open it; if both are dead the gate cannot
-        // be opened by gossip and we leave it to the door-blocked fallback.
-        Creature* a = bot->FindNearestCreature(SFK_PRISONER_ASHCROMBE, SFK_SCAN, /*alive*/ true);
-        Creature* b = bot->FindNearestCreature(SFK_PRISONER_ADAMANT, SFK_SCAN, /*alive*/ true);
-        return a != nullptr || b != nullptr;
+    bool SfkCourtyardAlliance(Player* bot, AiObjectContext* /*context*/)
+    {
+        return SfkCourtyard(bot, TEAM_ALLIANCE, SFK_PRISONER_ASHCROMBE, "A");
+    }
+
+    bool SfkCourtyardHorde(Player* bot, AiObjectContext* /*context*/)
+    {
+        return SfkCourtyard(bot, TEAM_HORDE, SFK_PRISONER_ADAMANT, "H");
     }
 
     // conditionId -> predicate. Add a row and reference its id from a Conditional
@@ -47,7 +77,8 @@ namespace
     std::unordered_map<uint32, EventConditionRegistry::Condition> const& Conditions()
     {
         static std::unordered_map<uint32, EventConditionRegistry::Condition> const kConditions = {
-            { 1, &SfkCourtyardDoorShut },
+            { 1, &SfkCourtyardAlliance },
+            { 2, &SfkCourtyardHorde },
         };
         return kConditions;
     }
