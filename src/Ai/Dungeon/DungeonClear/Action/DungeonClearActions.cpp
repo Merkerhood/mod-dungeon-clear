@@ -4159,6 +4159,12 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
             pull.campPublishedMs = now;
         }
 
+        // Stamp the return-leg length and clear the plant latch: the turn-and-plant
+        // gate (below) requires at least half of THIS leg covered, and the debounce
+        // must start fresh for the new drag.
+        pull.returnLegStartDist = bot->GetExactDist(&camp);
+        pull.plantTicks = 0;
+
         DcSetPullPhase(context, DcPullPhase::Returning);
         DC_PULL_INFO("[DC:{}] advanced-pull: aggro confirmed at {:.1f}yd from camp "
                      "(from {}) -> dragging to camp", bot->GetName(),
@@ -4266,6 +4272,68 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                      "after {} ms -> fighting in place",
                      bot->GetName(), dist, legElapsed);
         return false;
+    }
+
+    // Turn-and-plant. A human tank doesn't sprint the WHOLE leg back-turned; once
+    // the pack is glued to it and chasing, it stops a few steps in, turns, and
+    // fights — the fight happens wherever it actually plants. Stopping early is the
+    // single biggest cut to the back-exposure window the daze-immunity cheat exists
+    // to paper over. Suppressed for LOS-break pulls (the whole point is reaching
+    // the corner) and gated on half the leg covered + a 2-tick debounce so a single
+    // noisy distance read can't trip it. The plant point IS the new camp — re-stamp
+    // it so the spread gate, status panel, and follower hold all follow the fight.
+    if (DcSettings::GetBool(bot, "PullPlantEnable"))
+    {
+        float const glueRadius = DcSettings::GetFloat(bot, "PullPlantGlueRadius");
+        std::vector<float> attackerDists;
+        for (Unit* a : bot->getAttackers())
+            if (a && a->IsAlive())
+                attackerDists.push_back(bot->GetExactDist(a));
+
+        if (DungeonClearMath::ShouldPlantEarly(attackerDists, glueRadius,
+                /*glueTicksNeeded*/ 2u, pull.losPull, dist,
+                pull.returnLegStartDist, pull.plantTicks))
+        {
+            // Hard-cancel the run-home exactly as the CC-abort branch does: a plain
+            // StopMoving can leave the launched MOVEMENT_COMBAT glide queued and the
+            // tank resumes sprinting to the abandoned camp instead of fighting.
+            StopActiveSplineGlide(bot);
+            bot->StopMovingOnCurrentPos();
+
+            // The camp IS wherever the fight lands. Re-stamp it (fresh publish) so
+            // the party converges on the plant point and the addon panel relocates.
+            camp = Position(bot->GetPositionX(), bot->GetPositionY(),
+                            bot->GetPositionZ());
+            pull.campPublishedMs = now;
+
+            // Turn on the nearest attacker so the tank commits the moment it stops,
+            // rather than drifting before stock combat re-acquires (mirrors the
+            // CC-abort engage block).
+            Unit* nearest = bot->GetVictim();
+            for (Unit* a : bot->getAttackers())
+            {
+                if (!a || !a->IsAlive())
+                    continue;
+                if (!nearest ||
+                    bot->GetExactDist2d(a) < bot->GetExactDist2d(nearest))
+                    nearest = a;
+            }
+            if (nearest)
+            {
+                bot->SetSelection(nearest->GetGUID());
+                if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, nearest))
+                    ServerFacade::instance().SetFacingTo(bot, nearest);
+                context->GetValue<Unit*>("current target")->Set(nearest);
+                bot->Attack(nearest, botAI->IsMelee(bot));
+            }
+
+            DcSetPullPhase(context, DcPullPhase::Engage);
+            botAI->ChangeEngine(BOT_STATE_COMBAT);
+
+            DC_PULL_INFO("[DC:{}] advanced-pull: pack gathered at {:.1f}yd from camp "
+                         "-> plant + engage", bot->GetName(), dist);
+            return false;
+        }
     }
 
     // Run to camp. Own the tick (return true even on a duplicate move) so stock

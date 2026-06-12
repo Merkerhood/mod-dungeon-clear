@@ -175,6 +175,75 @@ bool DungeonClearMath::ShouldRollInForLeeroy(std::uint32_t decision, bool target
     return tankToTarget2d <= commitRange + lead;
 }
 
+bool DungeonClearMath::ShouldPlantEarly(std::vector<float> const& attackerDists,
+                                        float glueRadius,
+                                        std::uint32_t glueTicksNeeded, bool losPull,
+                                        float distToCamp, float legStartDist,
+                                        std::uint32_t& plantTicks)
+{
+    // An LOS-break camp's whole purpose is reaching the corner; never plant short.
+    // Nothing chasing means the pull evaded/fizzled — that latch owns the outcome,
+    // not a plant. Either way the gather condition can't hold, so reset and bail.
+    if (losPull || attackerDists.empty())
+    {
+        plantTicks = 0;
+        return false;
+    }
+
+    // Require at least the first half of the return leg covered: the neighbour-pack
+    // clearance was measured against the camp, and half the drag retains most of
+    // it. A leg with no recorded start distance (legStartDist <= 0) can't qualify.
+    if (legStartDist <= 0.0f || distToCamp > legStartDist * 0.5f)
+    {
+        plantTicks = 0;
+        return false;
+    }
+
+    // Pack gathered: EVERY live attacker within the glue radius (one straggler
+    // chasing from range means the pack hasn't closed yet).
+    for (float d : attackerDists)
+    {
+        if (d > glueRadius)
+        {
+            plantTicks = 0;
+            return false;
+        }
+    }
+
+    // Gather condition holds this tick — arm/advance the debounce latch and plant
+    // once it has persisted for glueTicksNeeded consecutive ticks. glueTicksNeeded
+    // == 0 plants on the first gathered tick.
+    ++plantTicks;
+    return plantTicks >= glueTicksNeeded;
+}
+
+bool DungeonClearMath::ShouldReleaseFollower(bool isHealer,
+                                             std::uint32_t combatSinceMs,
+                                             std::uint32_t now, std::uint32_t leadMs,
+                                             float tankHealthPct, float panicHpPct)
+{
+    // Healers are never held: a withheld heal is a wipe, and a heal does not rip
+    // threat off the tank the way a DPS opener does.
+    if (isHealer)
+        return true;
+    // Feature off.
+    if (leadMs == 0)
+        return true;
+    // No combat stamp: the leader isn't (observed) in combat, so there is no lead
+    // to serve. The caller only reaches here when assist is wanted, so releasing
+    // is the safe default rather than wedging a follower out of an active fight.
+    if (combatSinceMs == 0)
+        return true;
+    // Tank is losing the fight — pile in regardless of the lead. panicHpPct <= 0
+    // disables the bypass.
+    if (panicHpPct > 0.0f && tankHealthPct < panicHpPct)
+        return true;
+    // DPS hold until the lead window since combat start has elapsed. Guard the
+    // unsigned subtraction against a combatSince stamped a tick ahead of `now`.
+    std::uint32_t const elapsed = now > combatSinceMs ? now - combatSinceMs : 0u;
+    return elapsed >= leadMs;
+}
+
 float DungeonClearMath::DistSqToSegment2D(float px, float py,
                                          float ax, float ay,
                                          float bx, float by)

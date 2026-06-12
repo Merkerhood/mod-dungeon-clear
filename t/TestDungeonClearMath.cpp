@@ -546,3 +546,135 @@ TEST(DungeonClearTrailRejoinTest, EmptyTrailAndBadRadius)
     std::vector<Position> one = MakeLine(1);
     EXPECT_EQ(FindTrailRejoin(one, cur, 0.0f), TrailRejoinNone);
 }
+
+// --- ShouldPlantEarly (turn-and-plant drag-back gate) ---------------------
+
+using DungeonClearMath::ShouldPlantEarly;
+
+// Helper: N attackers all at the same distance.
+static std::vector<float> Attackers(std::size_t n, float dist)
+{
+    return std::vector<float>(n, dist);
+}
+
+// Pack gathered (all within glue) for the required ticks past half the leg:
+// arms on tick 1, plants on tick 2 (glueTicksNeeded == 2).
+TEST(DungeonClearPlantTest, GatheredPackPlantsAfterDebounce)
+{
+    std::uint32_t ticks = 0;
+    std::vector<float> const dists = Attackers(3, 4.0f);
+    // legStartDist 40, distToCamp 10 (well past half) -> qualifies each tick.
+    EXPECT_FALSE(ShouldPlantEarly(dists, 6.0f, 2u, false, 10.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 1u);
+    EXPECT_TRUE(ShouldPlantEarly(dists, 6.0f, 2u, false, 10.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 2u);
+}
+
+// A single straggler outside the glue radius vetoes the plant and resets the
+// debounce latch.
+TEST(DungeonClearPlantTest, StragglerVetoesAndResets)
+{
+    std::uint32_t ticks = 1;  // armed from a prior gathered tick
+    std::vector<float> dists = Attackers(2, 4.0f);
+    dists.push_back(9.0f);    // one mob still 9yd back
+    EXPECT_FALSE(ShouldPlantEarly(dists, 6.0f, 2u, false, 10.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 0u);
+}
+
+// LOS-break pulls never plant short (must reach the corner); latch reset.
+TEST(DungeonClearPlantTest, LosPullNeverPlants)
+{
+    std::uint32_t ticks = 5;
+    std::vector<float> const dists = Attackers(3, 2.0f);
+    EXPECT_FALSE(ShouldPlantEarly(dists, 6.0f, 2u, true, 5.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 0u);
+}
+
+// Less than half the return leg covered vetoes (distToCamp > legStartDist/2).
+TEST(DungeonClearPlantTest, FirstHalfOfLegRequired)
+{
+    std::uint32_t ticks = 0;
+    std::vector<float> const dists = Attackers(3, 3.0f);
+    // legStartDist 40 -> half is 20; distToCamp 25 is too early.
+    EXPECT_FALSE(ShouldPlantEarly(dists, 6.0f, 2u, false, 25.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 0u);
+    // Exactly at half qualifies (inclusive).
+    EXPECT_FALSE(ShouldPlantEarly(dists, 6.0f, 2u, false, 20.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 1u);
+}
+
+// Nothing chasing (evade/fizzle): never a plant, latch cleared.
+TEST(DungeonClearPlantTest, EmptyAttackersNeverPlants)
+{
+    std::uint32_t ticks = 1;
+    std::vector<float> const none;
+    EXPECT_FALSE(ShouldPlantEarly(none, 6.0f, 2u, false, 5.0f, 40.0f, ticks));
+    EXPECT_EQ(ticks, 0u);
+}
+
+// An unstamped leg (legStartDist <= 0) can never qualify.
+TEST(DungeonClearPlantTest, NoLegStartNeverPlants)
+{
+    std::uint32_t ticks = 0;
+    std::vector<float> const dists = Attackers(2, 2.0f);
+    EXPECT_FALSE(ShouldPlantEarly(dists, 6.0f, 2u, false, 1.0f, 0.0f, ticks));
+    EXPECT_EQ(ticks, 0u);
+}
+
+// A noisy gather/break/gather sequence cannot accumulate across the break.
+TEST(DungeonClearPlantTest, FlickerDoesNotAccumulate)
+{
+    std::uint32_t ticks = 0;
+    std::vector<float> const tight = Attackers(2, 3.0f);
+    std::vector<float> loose = Attackers(1, 3.0f);
+    loose.push_back(10.0f);
+    EXPECT_FALSE(ShouldPlantEarly(tight, 6.0f, 2u, false, 10.0f, 40.0f, ticks)); // 1
+    EXPECT_FALSE(ShouldPlantEarly(loose, 6.0f, 2u, false, 10.0f, 40.0f, ticks)); // reset
+    EXPECT_EQ(ticks, 0u);
+    EXPECT_FALSE(ShouldPlantEarly(tight, 6.0f, 2u, false, 10.0f, 40.0f, ticks)); // 1 again
+    EXPECT_TRUE(ShouldPlantEarly(tight, 6.0f, 2u, false, 10.0f, 40.0f, ticks));  // 2
+}
+
+// --- ShouldReleaseFollower (threat-lead window) ---------------------------
+
+using DungeonClearMath::ShouldReleaseFollower;
+
+// Healers release immediately, regardless of an unexpired lead.
+TEST(DungeonClearReleaseTest, HealerReleasesImmediately)
+{
+    EXPECT_TRUE(ShouldReleaseFollower(true, 5000u, 5100u, 1500u, 100.0f, 60.0f));
+}
+
+// DPS held inside the lead window, released once it elapses.
+TEST(DungeonClearReleaseTest, DpsHeldThenReleased)
+{
+    // 100ms into a 1500ms lead -> held.
+    EXPECT_FALSE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 100.0f, 60.0f));
+    // Exactly at the lead boundary -> released (inclusive).
+    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 6500u, 1500u, 100.0f, 60.0f));
+    // Well past -> released.
+    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 9000u, 1500u, 100.0f, 60.0f));
+}
+
+// A tank below the panic HP releases the party early despite the lead.
+TEST(DungeonClearReleaseTest, PanicHpBypassesLead)
+{
+    // 100ms in, but tank at 55% < 60% panic -> release now.
+    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 55.0f, 60.0f));
+    // Tank healthy -> still held.
+    EXPECT_FALSE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 80.0f, 60.0f));
+    // panicHp 0 disables the bypass: a near-dead tank stays held inside the lead.
+    EXPECT_FALSE(ShouldReleaseFollower(false, 5000u, 5100u, 1500u, 1.0f, 0.0f));
+}
+
+// leadMs == 0 turns the feature off: DPS release at once.
+TEST(DungeonClearReleaseTest, ZeroLeadOff)
+{
+    EXPECT_TRUE(ShouldReleaseFollower(false, 5000u, 5000u, 0u, 100.0f, 60.0f));
+}
+
+// combatSince == 0 (leader not observed in combat): gate is moot, release.
+TEST(DungeonClearReleaseTest, NoCombatStampReleases)
+{
+    EXPECT_TRUE(ShouldReleaseFollower(false, 0u, 5100u, 1500u, 100.0f, 60.0f));
+}

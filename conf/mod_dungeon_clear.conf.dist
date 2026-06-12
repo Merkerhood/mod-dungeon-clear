@@ -577,15 +577,18 @@ DungeonClear.PullRangedSpellRangeFloor = 15.0
 
 #
 #    DungeonClear.PullPlayerReleaseDelay
-#        Advanced pull only. Seconds the party stays passive AFTER the leader
-#        commits the pull (reaches the camp and flips to Engage) before the DPS
-#        followers are freed to fight. Gives the tank a head start on threat so the
-#        party doesn't rip mobs off him the instant he tags the pack. Only the
-#        graceful pull commit is delayed: ending or pausing the run, or the
-#        camp-safety valve (a held follower taking heavy damage), release the party
-#        immediately regardless. Set to 0 to release the party at once (the old
-#        behaviour). Healers are never held passive and are unaffected. The pet
-#        delay below stacks on top of this.
+#        Seconds the DPS followers are held back AFTER the leader tank enters combat
+#        before they are freed to fight — the "threat lead" that lets the tank
+#        gather the pack and build AoE threat so the party doesn't rip mobs off him
+#        the instant he engages. This single value governs BOTH release paths: the
+#        advanced-pull camp hold (party stays passive until the lead elapses) and
+#        the assist path (Leeroy walk-ins / unplanned aggro / general combat, where
+#        the party is held out of the fight for the lead). Ending or pausing the
+#        run, or the camp-safety valve (a held follower taking heavy damage),
+#        release the party immediately regardless; a tank dropping below
+#        PullThreatLeadPanicHp releases the assist path early. Set to 0 to release
+#        at once (the old behaviour). Healers are never held and are unaffected. The
+#        pet delay below stacks on top of this.
 #
 #        Default: 1.5
 #
@@ -605,6 +608,49 @@ DungeonClear.PullPlayerReleaseDelay = 1.5
 #
 
 DungeonClear.PullPetReleaseDelay = 2.5
+
+#
+#    DungeonClear.PullThreatLeadPanicHp
+#        Assist-path threat-lead bypass. While the DPS followers are held for the
+#        PullPlayerReleaseDelay lead after the leader enters combat (on the Leeroy /
+#        walk-in / general-assist path), a tank whose health drops below this
+#        percent is LOSING the fight — the party is released to pile in at once
+#        regardless of the remaining lead. Set to 0 to disable the bypass and always
+#        honour the full lead. Healers are never held and ignore this.
+#
+#        Default: 60
+#
+
+DungeonClear.PullThreatLeadPanicHp = 60
+
+#
+#    DungeonClear.PullPlantEnable
+#        Turn-and-plant on the drag-back. A human tank dragging a pulled pack to camp
+#        doesn't sprint the WHOLE leg back-turned: once the pack is glued to it and
+#        chasing, it stops a few steps in, turns, and fights wherever it plants — and
+#        that plant point becomes the new camp (the party converges on it). This cuts
+#        the back-exposure window that the daze-immunity safeguard exists to cover.
+#        Suppressed for LOS-break (ranged) pulls, whose whole purpose is reaching the
+#        corner, and only after at least half the return leg is covered. Set to 0 to
+#        always run the full drag back to the placed camp (the old behaviour).
+#
+#        Default: 1 (enabled)
+#
+
+DungeonClear.PullPlantEnable = 1
+
+#
+#    DungeonClear.PullPlantGlueRadius
+#        Turn-and-plant arming radius (yards). The plant fires only once EVERY live
+#        attacker of the tank is within this distance — the pack is gathered and will
+#        close wherever the tank stops. Smaller = wait for a tighter ball before
+#        planting; larger = plant sooner with the pack more spread. Only used when
+#        PullPlantEnable is on.
+#
+#        Default: 6.0
+#
+
+DungeonClear.PullPlantGlueRadius = 6.0
 
 #
 #    DungeonClear.PullCcAssist
