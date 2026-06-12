@@ -141,6 +141,50 @@ float DcEngageGeometry::PullCommitRange(Player* bot, Unit* target, float staticR
         range = capYd;
     return range;
 }
+
+std::optional<Position> DcEngageGeometry::AggroSafeApproachPoint(
+    Player* bot, float bx, float by, float bz, float safeRadius, Unit* target)
+{
+    if (!bot || !target || safeRadius <= 0.0f)
+        return std::nullopt;
+
+    float const tx = bot->GetPositionX();
+    float const ty = bot->GetPositionY();
+    float const gx = target->GetPositionX();
+    float const gy = target->GetPositionY();
+
+    // Does the straight 2D approach bot->target already stay outside the boss's
+    // aggro sphere? Then no detour — engage directly. (Squared compare, no sqrt.)
+    float const clipSq =
+        DungeonClearMath::DistSqToSegment2D(bx, by, tx, ty, gx, gy);
+    if (clipSq >= safeRadius * safeRadius)
+        return std::nullopt;
+
+    // Orbit the sphere: step the bot's current bearing (measured from the boss)
+    // toward the target's bearing by a capped angular increment and place the
+    // waypoint on the safe ring there. Called each tick this walks the tank around
+    // the short arc; the early-out above ends the orbit the moment a straight shot
+    // at the target clears the sphere.
+    float const phi = std::atan2(ty - by, tx - bx);   // bot bearing from boss
+    float const angG = std::atan2(gy - by, gx - bx);  // target bearing from boss
+    // Shortest signed turn phi->angG, in (-pi, pi].
+    float const delta = std::atan2(std::sin(angG - phi), std::cos(angG - phi));
+    // ~34 degrees/tick keeps each leg short enough that it hugs the ring exterior.
+    constexpr float kOrbitStep = 0.6f;
+    float const step = std::clamp(delta, -kOrbitStep, kOrbitStep);
+    float const wpBearing = phi + step;
+
+    // A touch beyond the ring so the tank skirts the OUTSIDE of the aggro sphere.
+    float const wpR = safeRadius * 1.15f + 1.0f;
+    float const wx = bx + std::cos(wpBearing) * wpR;
+    float const wy = by + std::sin(wpBearing) * wpR;
+
+    NavmeshSnap::Result const snap = NavmeshSnap::Snap(bot, wx, wy, bz, 25.0f);
+    if (!snap.ok)
+        return std::nullopt;  // no walkable detour — fall back to a direct approach
+
+    return Position(snap.x, snap.y, snap.z, 0.0f);
+}
 bool DcEngageGeometry::IsAtBossEngage(Player* bot, AiObjectContext* ctx,
                                       DungeonBossInfo const& boss, float staticRange)
 {
