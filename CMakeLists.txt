@@ -73,4 +73,13 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Data/EventConditionRegistry.{h,cpp}
 #   (milestone 2: conditionId predicate table for off-path Conditional events —
 #    e.g. SFK "courtyard door shut & prisoner alive"; mirrors ObjectiveHookRegistry)
+# Action/DcActionShared.{h,cpp}, Action/DcAdvanceAction.cpp,
+# Action/DcEngageActions.cpp, Action/DcPullActions.cpp,
+# Action/DcFollowerActions.cpp
+#   (nav/pull review Phase C Part 2 — the 4,608-line Action/DungeonClearActions.cpp
+#    split along its four family seams: advance navigation / engage family /
+#    pull FSM + maneuver / follower behaviors, with the cross-family
+#    anon-namespace helpers + tuning constants promoted into namespace
+#    DcActionShared (DcActionShared.{h,cpp}). DungeonClearActions.cpp is REMOVED;
+#    DungeonClearActions.h stays as the umbrella class-declaration header.)
 # (this comment bumps mtime to force CMake re-glob on next build)
