@@ -97,22 +97,41 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
                            bot->GetCombatReach() + liveBoss->GetCombatReach() +
                            DcSettings::GetFloat(bot, "AggroRangeMargin");
 
+    // Per-reason exclusion tallies — logged below when the kept count changes so
+    // a premature "room clear" (set empties while trash is alive, opening the boss
+    // gate) names the exact filter that dropped the last candidates.
+    uint32 nCand = 0, exDead = 0, exHostile = 0, exTarget = 0, exBossEntry = 0,
+           exRoomPartner = 0, exSphere = 0, exReach = 0, exDoor = 0, exFar = 0;
+
     GuidVector const& candidates = AI_VALUE(GuidVector, "dungeon clear far targets");
+    nCand = static_cast<uint32>(candidates.size());
     for (ObjectGuid const guid : candidates)
     {
         Unit* u = ObjectAccessor::GetUnit(*bot, guid);
         if (!u || !u->IsAlive())
+        {
+            ++exDead;
             continue;
+        }
         if (u->GetGUID() == liveBoss->GetGUID())
             continue;
         if (!bot->IsHostileTo(u))
+        {
+            ++exHostile;
             continue;
+        }
         if (!AttackersValue::IsPossibleTarget(u, bot))
+        {
+            ++exTarget;
             continue;
+        }
         // Never treat another encounter boss as room trash — the dedicated
         // at-boss path owns bosses, and scripted bosses misbehave when pulled.
         if (DcTargeting::IsDungeonBossEntry(context, u->GetEntry()))
+        {
+            ++exBossEntry;
             continue;
+        }
         // ...nor a RoomAggroRegistry boss entry. Some encounter partners are
         // swapped OUT of the boss roster (SM Cathedral's High Inquisitor Whitemane
         // -> Mograine, inheriting the kill-bit) so IsDungeonBossEntry no longer
@@ -122,22 +141,59 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         // Mograine trying to reach Whitemane, who stands inside his aggro, and woke
         // the room). The registry lists both partners, so skip any of them.
         if (RoomAggroRegistry::Find(bot->GetMapId(), u->GetEntry()))
+        {
+            ++exRoomPartner;
             continue;
+        }
 
         float const distToBoss = liveBoss->GetExactDist(u);
         if (!RoomAggroRegistry::IsRoomTrash(*room, u->GetEntry(), distToBoss, bossSafe))
+        {
+            // Split the two IsRoomTrash rejections: outside the scripted room
+            // radius (genuinely not part of this room) vs inside the boss-aggro
+            // sphere (glued to the boss). Only the latter shrinks as the tank
+            // moves, so it's the one that can falsely "clear" the room.
+            if (distToBoss <= bossSafe)
+                ++exSphere;
+            else
+                ++exFar;
             continue;
+        }
 
         // Don't count a unit the tank can't actually reach (different floor with
         // no route) or one behind a closed door — clearing it isn't possible
         // without help, and the no-progress timeout would otherwise livelock.
         if (!DcEngageGeometry::IsLevelReachable(bot, u))
+        {
+            ++exReach;
             continue;
+        }
         if (DcEngageGeometry::ClosedDoorBetween(bot, u->GetPositionX(),
                                                 u->GetPositionY(), u->GetPositionZ()))
+        {
+            ++exDoor;
             continue;
+        }
 
         out.push_back(guid);
+    }
+
+    // Diagnostic: when the kept count changes, name the breakdown — so a premature
+    // empty (boss gate opens while trash is alive) shows the exact filter that
+    // dropped the last candidates. Leader-only and change-gated to avoid spam.
+    if (DcLeaderSignal::IsDungeonClearLeader(bot) &&
+        out.size() != lastLoggedKept)
+    {
+        lastLoggedKept = out.size();
+        bool const atBossNow =
+            DcEngageGeometry::IsAtBossEngage(bot, context, *next, DC_ENGAGE_RANGE);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] room-trash {}: kept={} of cand={} (boss {} r={:.1f} "
+                 "sphere={:.1f} atBoss={}) excl: far={} sphere={} door={} reach={} "
+                 "partner={} bossEntry={} dead={} hostile={} target={}",
+                 bot->GetName(), next->name, out.size(), nCand, room->bossEntry,
+                 room->radius, bossSafe, atBossNow ? 1 : 0, exFar, exSphere, exDoor,
+                 exReach, exRoomPartner, exBossEntry, exDead, exHostile, exTarget);
     }
 
     // No-progress give-up valve: if the remaining count hasn't DROPPED within

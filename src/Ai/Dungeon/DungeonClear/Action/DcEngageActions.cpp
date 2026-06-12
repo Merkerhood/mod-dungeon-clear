@@ -775,10 +775,25 @@ bool DcRunEventAction::Execute(Event /*event*/)
     if (DungeonEventRegistry::IsRoomAggroPreClear(*ev))
     {
         if (!IsBetweenPullsReady(bot, context))
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] room-clear stand-down: not between-pulls ready "
+                      "(loot/rest/catch-up) -> yielding (boss gate stays shut)",
+                      bot->GetName());
             return false;
+        }
         Unit* trash = DcTargeting::NearestRoomTrash(bot, context);
         if (!trash)
+        {
+            // The set is empty -> the room is considered clear and the at-boss
+            // gate opens. If this fires while Scarlet trash is still alive, the
+            // room-trash VALUE pruned them (see its exclusion-breakdown log) and
+            // the boss is about to be pulled prematurely.
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] room-clear stand-down: NearestRoomTrash null -> room "
+                     "deemed CLEAR, boss gate opening", bot->GetName());
             return false;  // room clear / nothing reachable — let the boss gate open
+        }
         DcMovement::ResolveEscortConflict(bot);
         SetPhase(context, "room clear");
 
