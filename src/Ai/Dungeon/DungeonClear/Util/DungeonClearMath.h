@@ -119,6 +119,41 @@ namespace DungeonClearMath
     bool ShouldRollInForLeeroy(std::uint32_t decision, bool targetAlive,
                                float tankToTarget2d, float commitRange, float lead);
 
+    // Turn-and-plant gate (pure). A human tank dragging a pack back to camp turns
+    // and fights the moment the pack is glued to it, rather than sprinting the
+    // whole leg back-turned (the single biggest visual bot-tell, and why the
+    // daze-immunity cheat exists). True when the drag-back should stop early and
+    // the tank turn to fight: the pack is gathered (EVERY live attacker distance
+    // <= `glueRadius`) for >= `glueTicksNeeded` consecutive maneuver ticks, this
+    // is not an LOS-break pull (`losPull` — those must reach the corner), there is
+    // something chasing (empty `attackerDists` => evade/fizzle, never a plant),
+    // and at least the first HALF of the return leg is covered
+    // (`distToCamp <= legStartDist / 2`, keeping the neighbour-pack clearance the
+    // camp was measured for). `plantTicks` is the per-pull debounce latch: it is
+    // incremented while the gather condition holds and reset to 0 the moment it
+    // breaks, mirroring ShouldAbortPullForCc's by-reference latch contract — so a
+    // single-tick noise spike can never trip an early plant. The game-state read
+    // (attacker distances, leg progress) stays in DungeonClearPullManeuverAction;
+    // this carries only the decision so it is unit-testable.
+    bool ShouldPlantEarly(std::vector<float> const& attackerDists, float glueRadius,
+                          std::uint32_t glueTicksNeeded, bool losPull,
+                          float distToCamp, float legStartDist,
+                          std::uint32_t& plantTicks);
+
+    // Threat-lead follower-release gate (pure). After the leader tank enters
+    // combat a real group gives it a beat to gather and establish AoE threat
+    // before DPS pile in; this holds a follower's fight assist for `leadMs` after
+    // the leader's CURRENT combat began (`combatSinceMs`; 0 = leader not in
+    // combat). Healers release immediately (`isHealer` — a withheld heal is a
+    // wipe and heals don't rip threat the way DPS openers do). DPS release once
+    // the lead has elapsed, with two bypasses: the tank's HP below `panicHpPct`
+    // (it is LOSING the fight — pile in; <= 0 disables the bypass) and `leadMs`
+    // == 0 (feature off). The game-state read (leader combat stamp, healer role,
+    // tank HP) stays in DcLeaderSignal::IsLeaderFightAssistWanted.
+    bool ShouldReleaseFollower(bool isHealer, std::uint32_t combatSinceMs,
+                               std::uint32_t now, std::uint32_t leadMs,
+                               float tankHealthPct, float panicHpPct);
+
     // Squared 2D distance from point P to segment (A,B).
     float DistSqToSegment2D(float px, float py,
                             float ax, float ay,

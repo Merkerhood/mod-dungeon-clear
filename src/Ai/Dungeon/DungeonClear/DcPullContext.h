@@ -46,6 +46,17 @@ struct DcPullContext
                                                  // (0,0,0) = unset
     std::vector<Position> breadcrumbs;           // recently-walked trail used to
                                                  // place the camp behind the tank
+    float       returnLegStartDist = 0.0f;       // bot->camp distance stamped when
+                                                 // the drag-back (Returning) begins;
+                                                 // the turn-and-plant gate requires
+                                                 // at least half of it covered before
+                                                 // the tank may stop and fight. 0 =
+                                                 // no leg in progress.
+    uint32      plantTicks = 0;                   // consecutive maneuver ticks the
+                                                 // pack has been gathered at the
+                                                 // tank during the drag-back; the
+                                                 // debounce latch for
+                                                 // DungeonClearMath::ShouldPlantEarly.
     bool        losPull    = false;              // this pull targets a RANGED pack
                                                  // and the camp was placed to break
                                                  // line of sight to it (rangers must

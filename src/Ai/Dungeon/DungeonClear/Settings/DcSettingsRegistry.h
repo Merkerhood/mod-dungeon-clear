@@ -164,6 +164,14 @@ inline constexpr DcSettingDef kDcSettings[] =
     // camp-safety valve release at once. 0 = release the party immediately.
     { "PullPlayerReleaseDelay", DcType::Float, 1.5,  0,  10,  true  },
 
+    // Threat-lead panic bypass (DungeonClearMath::ShouldReleaseFollower). On the
+    // assist path (Leeroy walk-ins / unplanned aggro / general combat), DPS are
+    // held for the PullPlayerReleaseDelay lead after the leader enters combat to
+    // give the tank a threat head start. If the tank's HP drops below this percent
+    // it is LOSING the fight — release the party at once regardless of the lead.
+    // 0 disables the bypass (always honour the full lead). Healers always bypass.
+    { "PullThreatLeadPanicHp",  DcType::Float, 60,   0, 100,  true  },
+
     // Seconds a follower's pet stays passive AFTER its owner is released (on top
     // of PullPlayerReleaseDelay). Releasing pet and owner in lockstep lets the
     // pet charge in and pull aggro off the tank before he's settled, botching the
@@ -181,6 +189,17 @@ inline constexpr DcSettingDef kDcSettings[] =
     // CC (the pull IS failing) releases the party. Daze is already immunized for
     // the pull, so a slow detected here is a real debuff (Hamstring, web, frost).
     // See DungeonClearPullManeuverAction + DungeonClearMath::ShouldAbortPullForCc.
+    // Turn-and-plant on the drag-back (DungeonClearPullManeuverAction +
+    // DungeonClearMath::ShouldPlantEarly). A human tank dragging a pack to camp
+    // doesn't sprint the WHOLE leg back-turned — once the pack is glued and chasing
+    // it stops a few steps in, turns, and fights wherever it plants. PullPlantEnable
+    // is the master toggle. PullPlantGlueRadius is the all-attackers-within radius
+    // that arms the plant: the pack is gathered and will close wherever the tank
+    // stops. Suppressed for LOS-break pulls (those must reach the corner) and gated
+    // on at least half the return leg covered. The plant point becomes the new camp.
+    { "PullPlantEnable",       DcType::Bool,   1,   0,    1,  true  },
+    { "PullPlantGlueRadius",   DcType::Float, 6.0,  2,   20,  true  },
+
     { "PullCcAssist",          DcType::Bool,   1,   0,    1,  true  },
     { "PullCcAssistGrace",     DcType::Float, 1.0,  0,   10,  true  },
     { "PullCcSlowFloor",       DcType::Float, 0.6,  0.1,  1,  true  },

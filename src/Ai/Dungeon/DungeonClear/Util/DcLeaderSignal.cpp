@@ -123,6 +123,66 @@ namespace
         return leader;
     }
 
+    // Leader combat-start stamp. Maps a leader's GUID -> getMSTime() at which its
+    // CURRENT continuous combat began (absent / 0 = not in combat). Maintained
+    // lazily on read: a read observing IsInCombat() with no live stamp records
+    // `now`; a read observing out-of-combat clears it. This lets the threat-lead
+    // window (DungeonClearMath::ShouldReleaseFollower) measure from a FRESH combat
+    // start on the Leeroy / walk-in / general-assist path, which — unlike the
+    // advanced-pull camp — has no pull-phase transition to mark fight start. Same
+    // mutex + lazy-sweep discipline as g_leaderCache; all callers run on the
+    // world/map thread today, but the lock keeps it correct if bot updates ever
+    // move off-thread.
+    constexpr size_t LEADER_COMBAT_SWEEP_SIZE = 256;
+    std::map<ObjectGuid, uint32> g_leaderCombatSince;
+    std::mutex g_leaderCombatMutex;
+
+    // Return (and maintain) the leader's combat-start stamp. 0 while the leader is
+    // out of combat; the millisecond its current combat was first observed once it
+    // is in combat (stable across the fight). MUST be called every tick a leader is
+    // resolved — including ticks where no assist is wanted — so an out-of-combat
+    // window clears the stamp instead of leaving a stale one that would zero the
+    // next fight's lead.
+    uint32 LeaderCombatSince(Player* leader)
+    {
+        if (!leader)
+            return 0;
+        ObjectGuid const guid = leader->GetGUID();
+        bool const inCombat = leader->IsInCombat();
+        uint32 const now = getMSTime();
+
+        std::lock_guard<std::mutex> lock(g_leaderCombatMutex);
+        auto it = g_leaderCombatSince.find(guid);
+        if (!inCombat)
+        {
+            if (it != g_leaderCombatSince.end())
+                g_leaderCombatSince.erase(it);
+            return 0;
+        }
+        if (it != g_leaderCombatSince.end())
+            return it->second;
+
+        // First in-combat tick: stamp it. Sweep dead / out-of-combat leaders when
+        // the table grows past the bound (leaders that left combat without a read,
+        // disbanded groups), the same lazy janitor g_leaderCache uses.
+        if (g_leaderCombatSince.size() > LEADER_COMBAT_SWEEP_SIZE)
+        {
+            for (auto i = g_leaderCombatSince.begin(); i != g_leaderCombatSince.end();)
+            {
+                Player* p = ObjectAccessor::FindPlayer(i->first);
+                if (!p || !p->IsInCombat())
+                    i = g_leaderCombatSince.erase(i);
+                else
+                    ++i;
+            }
+        }
+        // Never store 0 (it reads as "out of combat"); a leader whose combat began
+        // at getMSTime()==0 latches to 1.
+        uint32 const stamp = now != 0 ? now : 1u;
+        g_leaderCombatSince[guid] = stamp;
+        return stamp;
+    }
+
     // True if ANY living, same-map member of `bot`'s group (the bot itself
     // included) is currently in combat. Used to release the dynamic scout-lag
     // trail and arm the leader-fight assist off "someone in the party is
@@ -360,66 +420,101 @@ bool DcLeaderSignal::IsLeaderCampFightActive(Player* bot)
 }
 bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
 {
-    // Advanced-pull camp fight: the existing Engage-phase gate.
-    if (IsLeaderCampFightActive(bot))
-        return true;
-
     if (!bot || bot->isDead())
         return false;
 
-    // Defer to the pull machinery ONLY while a holding phase actually pins the
-    // party passive at camp (Forming/Advancing/Returning — the drag must not
-    // be broken by followers charging out after the tank). A camp that is
-    // merely MARKED (GetLeaderCampHold returns true for ANY phase while pull
-    // mode is on) must NOT mute the assist: at phase Idle/Engage with the
-    // leader in combat — a walk-in on an aborted pack, the tank chasing a
-    // caster/straggler out of the camp fight, scout aggro the maneuver hasn't
-    // picked up yet — an unconditional defer left the followers parked at camp
-    // watching the tank solo, and an out-of-LOS follower never entered combat
-    // at all. The brief Idle+combat window before the maneuver's first combat
-    // tick flips the phase to Returning is harmless: the moment the phase
-    // turns holding this defers again and stay-at-camp re-pins the party.
-    Position camp;
-    bool passive = false;
-    if (GetLeaderCampHold(bot, camp, passive) && passive)
-        return false;
-
-    // General case — no camp in effect (pull mode off, a Leeroy verdict in
-    // dynamic mode, boss walk-ins): the leader tank fighting ANYTHING on an
-    // active run means the whole party assists. This covers tank aggro around
-    // a corner or beyond a follower's natural engage range, where group combat
-    // never propagates and the (multiplier-suppressed) stock pickers would
-    // leave the party idling behind.
     Player* leader = FindLeaderTank(bot);
     if (!leader || leader == bot)
         return false;
 
-    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
-    if (!leaderAI)
+    // Maintain the leader's combat-start stamp on EVERY tick a leader is resolved
+    // — before any wanted/not-wanted decision below — so the threat-lead window
+    // always measures from a fresh combat start and an out-of-combat window can
+    // never leave a stale stamp. (On the advanced-pull camp path the real lead is
+    // enforced by the passive-strategy release delay in ReapStrandedPassives; this
+    // stamp's lead matters for the Leeroy / walk-in / general-assist paths, which
+    // have no passive hold and no pull-phase transition to mark fight start.)
+    uint32 const combatSince = LeaderCombatSince(leader);
+
+    bool wanted = false;
+    if (IsLeaderCampFightActive(bot))
+    {
+        // Advanced-pull camp fight: the existing Engage-phase gate.
+        wanted = true;
+    }
+    else
+    {
+        // Defer to the pull machinery ONLY while a holding phase actually pins the
+        // party passive at camp (Forming/Advancing/Returning — the drag must not
+        // be broken by followers charging out after the tank). A camp that is
+        // merely MARKED (GetLeaderCampHold returns true for ANY phase while pull
+        // mode is on) must NOT mute the assist: at phase Idle/Engage with the
+        // leader in combat — a walk-in on an aborted pack, the tank chasing a
+        // caster/straggler out of the camp fight, scout aggro the maneuver hasn't
+        // picked up yet — an unconditional defer left the followers parked at camp
+        // watching the tank solo, and an out-of-LOS follower never entered combat
+        // at all. The brief Idle+combat window before the maneuver's first combat
+        // tick flips the phase to Returning is harmless: the moment the phase
+        // turns holding this defers again and stay-at-camp re-pins the party.
+        Position camp;
+        bool passive = false;
+        if (GetLeaderCampHold(bot, camp, passive) && passive)
+            return false;
+
+        PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+        if (!leaderAI)
+            return false;
+
+        AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+        if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
+            ctx->GetValue<bool>("dungeon clear paused")->Get())
+            return false;
+
+        // General case — no camp in effect (pull mode off, a Leeroy verdict in
+        // dynamic mode, boss walk-ins): the leader tank fighting ANYTHING on an
+        // active run means the whole party assists. This covers tank aggro around
+        // a corner or beyond a follower's natural engage range, where group combat
+        // never propagates and the (multiplier-suppressed) stock pickers would
+        // leave the party idling behind.
+        //
+        // Assist off ANY party member's combat, not just the elected leader's own
+        // flag: when the tank takes a pack before a verdict commits (dynamic Idle +
+        // surprise aggro — "in combat, no pull state"), the leader's IsInCombat()
+        // read flickers as it tags/leashes, and on a tight spiral that left the
+        // suppressed party parked at lag range watching the tank die. If anyone in
+        // the group is fighting, drive the out-of-combat members in.
+        bool const leaderInCombat = leader->IsInCombat();
+        bool const groupInCombat = AnyGroupMemberInCombat(leader);
+        // Diagnostic for the spiral death: fires only in the exact divergence we
+        // are fixing — a party fight is live but the elected leader's own flag reads
+        // out of combat. With the old leader-only gate this returned false here and
+        // the party stayed passive; this line proves the new path now engages.
+        if (groupInCombat && !leaderInCombat)
+            DC_PULL_DEBUG("[DC:{}] assist: groupmate in combat while leader reads "
+                          "out-of-combat -> assisting (was the no-pull-state stall)",
+                          bot->GetName());
+        wanted = groupInCombat;
+    }
+
+    if (!wanted)
         return false;
 
-    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>("dungeon clear enabled")->Get() ||
-        ctx->GetValue<bool>("dungeon clear paused")->Get())
-        return false;
-
-    // Assist off ANY party member's combat, not just the elected leader's own
-    // flag: when the tank takes a pack before a verdict commits (dynamic Idle +
-    // surprise aggro — "in combat, no pull state"), the leader's IsInCombat()
-    // read flickers as it tags/leashes, and on a tight spiral that left the
-    // suppressed party parked at lag range watching the tank die. If anyone in
-    // the group is fighting, drive the out-of-combat members in.
-    bool const leaderInCombat = leader->IsInCombat();
-    bool const groupInCombat = AnyGroupMemberInCombat(leader);
-    // Diagnostic for the spiral death: fires only in the exact divergence we
-    // are fixing — a party fight is live but the elected leader's own flag reads
-    // out of combat. With the old leader-only gate this returned false here and
-    // the party stayed passive; this line proves the new path now engages.
-    if (groupInCombat && !leaderInCombat)
-        DC_PULL_DEBUG("[DC:{}] assist: groupmate in combat while leader reads "
-                      "out-of-combat -> assisting (was the no-pull-state stall)",
-                      bot->GetName());
-    return groupInCombat;
+    // Threat lead. A real group gives the tank a beat to gather the pack and build
+    // AoE threat before DPS pile in; piling in instantly is both a bot-tell and a
+    // direct contributor to follower/healer over-aggro. Hold this follower for the
+    // lead window after the leader's combat began. The lead DURATION reuses
+    // PullPlayerReleaseDelay — the same knob that delays DPS release on the
+    // advanced-pull camp path — so both follower-release paths share one "threat
+    // lead" value. Healers bypass (a withheld heal is a wipe), as does a tank below
+    // PullThreatLeadPanicHp (it is losing the fight — pile in). Regroup is NOT
+    // gated here: it is positioning, not damage, and a healer running for LOS
+    // during the lead is desirable.
+    uint32 const leadMs =
+        uint32(DcSettings::GetFloat(leader, "PullPlayerReleaseDelay") * 1000.0f);
+    float const panicHp = DcSettings::GetFloat(leader, "PullThreatLeadPanicHp");
+    return DungeonClearMath::ShouldReleaseFollower(
+        PlayerbotAI::IsHeal(bot), combatSince, getMSTime(), leadMs,
+        leader->GetHealthPct(), panicHp);
 }
 bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
 {
