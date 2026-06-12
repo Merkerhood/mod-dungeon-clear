@@ -2262,9 +2262,19 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // carried bool) or falls through to the next. The pre-route rungs come
     // first; the counter-coupled tail (stuck recovery / direct pursuit /
     // long-path drive / hop cluster) follows after the boss-change bookkeeping.
-    if (Step s = TryEngageHold(st); s != Step::Continue)
-        return s == Step::ReturnTrue;
+    // Loot yield runs BEFORE engage-hold. Both hold identically (StopBot(Hold)),
+    // but TryLootYield also runs the loot give-up cutoffs (StripSkippedLoot /
+    // MaybeSkipUnworthyLoot / MaybeGiveUpCampedLoot + the yield-timeout give-up).
+    // If engage-hold ran first it would short-circuit those the moment the tank
+    // reached the boss — and the at-boss TRIGGER gates on the STRICT
+    // IsBetweenPullsReady (requireNoLoot), so a pending-but-unfinishable corpse
+    // by the boss would block the pull forever while the give-up that clears
+    // `has available loot` never got a tick: the tank parked at the boss jittering
+    // (loot-walk vs hold) until the boss died by other means. Loot first lets the
+    // cutoffs clear the corpse and reopen the pull.
     if (Step s = TryLootYield(st); s != Step::Continue)
+        return s == Step::ReturnTrue;
+    if (Step s = TryEngageHold(st); s != Step::Continue)
         return s == Step::ReturnTrue;
     if (Step s = TryBetweenPullsRest(st); s != Step::Continue)
         return s == Step::ReturnTrue;
