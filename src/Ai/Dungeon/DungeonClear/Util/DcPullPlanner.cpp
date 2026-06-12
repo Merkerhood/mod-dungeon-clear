@@ -715,6 +715,37 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
         return best;
     }
 
+    // --- Route-anchored fallback: walk back along the actual escort route -----
+    // The breadcrumb trail above is starved (a doubling-back, crowded entrance
+    // keeps tripping RecordBreadcrumb's jump-guard via short resnap hops, so it
+    // resets to a crumb or two). Before any blind geometric projection, ask the
+    // long-path follower for a point `setback` yards BACK ALONG THE CLEARED
+    // ROUTE behind the cursor. Crucially this can NEVER point forward onto
+    // un-walked ground — PointBehind only ever walks the already-travelled
+    // polyline behind the cursor — so it is the correct "behind" even when the
+    // trail tells us nothing, and it does not depend on a door check that a door
+    // up a ramp (a different Z to the chord) can defeat. (PointBehind can come up
+    // short once a drag-back has reset the cursor, which is exactly why the
+    // breadcrumb trail is preferred ABOVE; at plan time the cursor is still on
+    // the forward route, so it reads true here.)
+    {
+        ChunkedPathfinder::Result const& path =
+            ctx->GetValue<ChunkedPathfinder::Result&>("dungeon clear long path")->Get();
+        DungeonFollowerState const& follower =
+            ctx->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
+        if (std::optional<G3D::Vector3> back =
+                DungeonPathFollower::PointBehind(bot, path, follower, setback))
+        {
+            Position cand(back->x, back->y, back->z);
+            if (IsNavReachable(bot, cand) && !CampBlockedByDoor(bot, cand))
+            {
+                clearanceOut = clearanceAt(cand);
+                dragOut = tankPos.GetExactDist(&cand);
+                return cand;
+            }
+        }
+    }
+
     // --- Fallback: cleared route behind is too short (e.g. first pull) ------
     // Back the party off the pack, snapped to the navmesh, trying the full
     // setback first and shrinking until a walkable point is found.
