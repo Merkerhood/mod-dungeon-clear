@@ -44,6 +44,9 @@ private:
     uint32 lastProgressMs = 0;
     bool   gaveUp = false;
     bool   noteSent = false;
+    // Last kept-count we emitted the exclusion-breakdown diagnostic for; the log
+    // fires only on a change. SIZE_MAX so the first computation always logs.
+    size_t lastLoggedKept = static_cast<size_t>(-1);
 };
 
 #endif
