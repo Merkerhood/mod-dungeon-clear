@@ -46,6 +46,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -2676,6 +2677,29 @@ bool DcRunEventAction::Execute(Event /*event*/)
         DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId());
     if (!ev)
         return false;  // condition went false between trigger and action — stand down
+
+    // Milestone 3: a room-aggro PRE-CLEAR event drives the engage pipeline
+    // directly. The condition (room trash remains) gated us here; engage the
+    // NEAREST room trash so the leader works the room from its edge inward (the
+    // value already excludes the boss, its aggro sphere, and unreachable/door-
+    // blocked units). Combat then takes over — the event trigger stands down once
+    // the leader is in combat, the stock combat engine fights, and the assist-camp
+    // rungs bring the followers in. When the room is clear NearestRoomTrash is
+    // null and the condition reads false next tick, reopening the at-boss gate.
+    // The event is never latched (repeatable per boss). IsBetweenPullsReady keeps
+    // it to one careful pull at a time (loot / party catch-up / rest), matching
+    // the legacy room-clear path this supersedes.
+    if (DungeonEventRegistry::IsRoomAggroPreClear(*ev))
+    {
+        if (!IsBetweenPullsReady(bot, context))
+            return false;
+        Unit* trash = DcTargeting::NearestRoomTrash(bot, context);
+        if (!trash)
+            return false;  // room clear / nothing reachable — let the boss gate open
+        StopActiveSplineGlide(bot);
+        SetPhase(context, "room clear");
+        return EngageDirect(trash);
+    }
 
     // Hold position while driving the event. StopActiveSplineGlide only cancels a
     // launched escort glide (the coast-past from the advance ladder) — it leaves a

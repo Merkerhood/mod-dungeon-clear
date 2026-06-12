@@ -256,8 +256,53 @@ TEST(DungeonEventConditionRegistry, DispatchGuards)
     EXPECT_FALSE(EventConditionRegistry::Has(9999));
     EXPECT_TRUE(EventConditionRegistry::Has(1));   // SFK Alliance
     EXPECT_TRUE(EventConditionRegistry::Has(2));   // SFK Horde
+    EXPECT_TRUE(EventConditionRegistry::Has(3));   // room-aggro pre-clear (M3)
 
     EXPECT_FALSE(EventConditionRegistry::Evaluate(0, nullptr, nullptr));
     EXPECT_FALSE(EventConditionRegistry::Evaluate(9999, nullptr, nullptr));
     EXPECT_FALSE(EventConditionRegistry::Evaluate(1, nullptr, nullptr));  // null bot
+}
+
+// --- Milestone 3: room-aggro pre-clear -----------------------------------
+
+// The SM Cathedral (189) room-aggro pre-clear is a Conditional gate (condition 3)
+// with a single KillCreature step in "room-trash mode" (creatureEntry 0). It is
+// required (hold the boss pull until the room is clear).
+TEST(DungeonEventRoomAggro, ScarletCathedralEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(189, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Conditional);
+    EXPECT_EQ(e->conditionId, 3u);
+    EXPECT_TRUE(e->required);
+    ASSERT_EQ(e->steps.size(), 1u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[0].creatureEntry, 0u);  // room-trash mode
+}
+
+// IsRoomAggroPreClear distinguishes the room-trash gate from the step-driven
+// SFK gossip events and from anchored objectives — only the lone-KillCreature(0)
+// Conditional shape qualifies, so HasRoomAggroEvent flags only those maps.
+TEST(DungeonEventRoomAggro, PredicateAndHasRoomAggroEvent)
+{
+    DungeonEvent const* cath = DungeonEventRegistry::Find(189, 1);
+    DungeonEvent const* sfk = DungeonEventRegistry::Find(33, 1);   // gossip event
+    DungeonEvent const* st = DungeonEventRegistry::Find(109, 1);   // anchored wait
+    ASSERT_NE(cath, nullptr);
+    ASSERT_NE(sfk, nullptr);
+    ASSERT_NE(st, nullptr);
+
+    EXPECT_TRUE(DungeonEventRegistry::IsRoomAggroPreClear(*cath));
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*sfk));
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*st));
+
+    EXPECT_TRUE(DungeonEventRegistry::HasRoomAggroEvent(189));
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(33));   // gossip only
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(109));  // anchored only
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(0));
+
+    // A non-Conditional KillCreature(0) (e.g. a hypothetical anchored row) is NOT
+    // a room-aggro pre-clear — the activation guard matters.
+    DungeonEvent anchored = EventBuilder(1, 1, "x").Anchored(0).KillCreature(0).Build();
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(anchored));
 }
