@@ -6,7 +6,10 @@
 #ifndef _DC_ENGAGE_GEOMETRY_H
 #define _DC_ENGAGE_GEOMETRY_H
 
+#include <optional>
+
 #include "MoveSplineInitArgs.h"
+#include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 
 class Player;
@@ -54,6 +57,29 @@ public:
     // Falls back to `staticRange` for a non-creature target or when the
     // DynamicAggroRange config is off. Cheap — no allocation, no pathfinding.
     static float PullCommitRange(Player* bot, Unit* target, float staticRange);
+
+    // --- Room-aggro clear: skirt the boss's aggro sphere -------------------
+    // When clearing a room before a boss whose engage drags the WHOLE room into
+    // combat (RoomAggroRegistry), the tank must reach each trash pack WITHOUT its
+    // approach path crossing the boss's aggro sphere — otherwise it wakes the boss
+    // mid-clear and the room piles on (the SM Cathedral / Mograine failure mode:
+    // Mograine sits in the room centre, so the straight line to a pack on the far
+    // side cuts right through his aggro range). The room-trash VALUE already
+    // excludes mobs INSIDE the sphere, but it does nothing about the PATH to a
+    // pack outside it.
+    //
+    // Given the boss centre (bx,by,bz) and a `safeRadius` (its aggro range + the
+    // reaches + margin — the same sizing as the value's exclusion sphere), returns
+    // a navmesh-snapped DETOUR waypoint to move to FIRST when the straight 2D line
+    // from the bot to `target` passes within `safeRadius` of the boss: a point on
+    // the safe ring, stepped from the bot's current bearing toward the target's
+    // bearing (both measured from the boss), so calling it each tick walks the tank
+    // AROUND the sphere on the short arc instead of through it. Returns nullopt
+    // once the direct approach is clear (engage the target straight) or when no
+    // walkable detour can be snapped (fall back to the direct approach rather than
+    // freeze the clear).
+    static std::optional<Position> AggroSafeApproachPoint(
+        Player* bot, float bx, float by, float bz, float safeRadius, Unit* target);
 
     // True when the tank is close enough AND on a navigable level with the boss
     // to hand off from route-following to the decisive engage pull. The 3D

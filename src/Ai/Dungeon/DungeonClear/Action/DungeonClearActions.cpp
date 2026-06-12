@@ -2698,6 +2698,48 @@ bool DcRunEventAction::Execute(Event /*event*/)
             return false;  // room clear / nothing reachable — let the boss gate open
         StopActiveSplineGlide(bot);
         SetPhase(context, "room clear");
+
+        // Skirt the boss's aggro sphere. A straight approach to a pack on the far
+        // side of a centre-of-room boss (Mograine) cuts through his aggro range
+        // and wakes the whole room mid-clear. The room-trash value excludes mobs
+        // INSIDE the sphere, but not the PATH across it — so before engaging,
+        // detour AROUND the sphere if the direct line to the target clips it.
+        // Walk to the detour waypoint and consume the tick; engage directly once
+        // the line is clear (AggroSafeApproachPoint returns nullopt). The boss is
+        // the next dungeon boss (the room-aggro condition only fires for one).
+        std::optional<DungeonBossInfo> next =
+            AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
+        if (next.has_value())
+        {
+            if (Creature* boss = DcTargeting::GetLiveBoss(bot, context, next->entry))
+            {
+                float const safeRadius = boss->GetAggroRange(bot) +
+                                         bot->GetCombatReach() + boss->GetCombatReach() +
+                                         DcSettings::GetFloat(bot, "AggroRangeMargin");
+                if (std::optional<Position> wp = DcEngageGeometry::AggroSafeApproachPoint(
+                        bot, boss->GetPositionX(), boss->GetPositionY(),
+                        boss->GetPositionZ(), safeRadius, trash))
+                {
+                    LOG_DEBUG("playerbots.dungeonclear",
+                              "[DC:{}] room-clear: skirting {}'s aggro sphere "
+                              "(r={:.1f}) -> detour ({:.1f}, {:.1f}) before pulling {}",
+                              bot->GetName(), boss->GetName(), safeRadius,
+                              wp->GetPositionX(), wp->GetPositionY(), trash->GetName());
+                    bool const moved = MoveTo(bot->GetMapId(), wp->GetPositionX(),
+                                              wp->GetPositionY(), wp->GetPositionZ(),
+                                              /*idle*/ false, /*react*/ false,
+                                              /*normal_only*/ false, /*exact_waypoint*/ false,
+                                              MovementPriority::MOVEMENT_NORMAL);
+                    // Consume the tick while the detour glide is in flight (a
+                    // duplicate-move returns false but the bot is still moving). Only
+                    // a genuine "couldn't path the detour AND not moving" falls
+                    // through to the direct engage as a last resort.
+                    if (moved || bot->isMoving())
+                        return true;
+                }
+            }
+        }
+
         return EngageDirect(trash);
     }
 
