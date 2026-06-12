@@ -217,9 +217,9 @@ TEST(DungeonEventConditional, ShadowfangCourtyardEventShape)
         ASSERT_NE(e, nullptr);
         EXPECT_EQ(e->activation, EventActivation::Conditional);
         EXPECT_FALSE(e->required);
-        ASSERT_EQ(e->steps.size(), 4u);
+        ASSERT_EQ(e->steps.size(), 5u);
 
-        EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);  // to the lever
 
         EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
         EXPECT_EQ(e->steps[1].goEntry, f.lever);
@@ -228,9 +228,11 @@ TEST(DungeonEventConditional, ShadowfangCourtyardEventShape)
         EXPECT_EQ(e->steps[2].creatureEntry, f.prisoner);
         EXPECT_EQ(e->steps[2].gossipOption, 0);
 
-        EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForGameObjectState);
-        EXPECT_EQ(e->steps[3].goEntry, 18895u);
-        EXPECT_EQ(e->steps[3].wantState, 0u);  // GO_STATE_ACTIVE (open)
+        EXPECT_EQ(e->steps[3].kind, EventStepKind::MoveTo);  // to the courtyard door
+
+        EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForGameObjectState);
+        EXPECT_EQ(e->steps[4].goEntry, 18895u);
+        EXPECT_EQ(e->steps[4].wantState, 0u);  // GO_STATE_ACTIVE (open)
     }
 }
 

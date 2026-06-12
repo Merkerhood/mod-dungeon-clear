@@ -179,11 +179,16 @@ namespace
             // non-firing script degrades to the normal door-blocked stall.
             // TODO(live-verify): per faction, lever opens the cell, gossip sends
             // the prisoner, courtyard door opens within the 60s budget.
+            // After freeing the prisoner, walk up to the courtyard door and wait
+            // THERE (not in the cell) for it to open — the closed door stops the
+            // approach a few yards short, so the tank is parked ready to walk
+            // through the instant the prisoner opens it.
             t.push_back(EventBuilder(33, 1, "Free Ashcrombe (Courtyard Door, Alliance)")
                             .Conditional(1)
                             .MoveTo(-248.0f, 2122.0f, 81.3f, /*radius*/ 6.0f)
                             .UseGO(/*lever*/ 18901, /*searchRadius*/ 14.0f)
                             .Gossip(/*Sorcerer Ashcrombe*/ 3850, /*option*/ 0, /*searchRadius*/ 16.0f)
+                            .MoveTo(/*courtyard door*/ -242.58f, 2159.05f, 90.62f, /*radius*/ 9.0f)
                             .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
                                             /*timeout*/ 60000)
                             .Optional()
@@ -194,6 +199,7 @@ namespace
                             .MoveTo(-251.0f, 2115.0f, 81.3f, /*radius*/ 6.0f)
                             .UseGO(/*lever*/ 18900, /*searchRadius*/ 14.0f)
                             .Gossip(/*Deathstalker Adamant*/ 3849, /*option*/ 0, /*searchRadius*/ 16.0f)
+                            .MoveTo(/*courtyard door*/ -242.58f, 2159.05f, 90.62f, /*radius*/ 9.0f)
                             .WaitForGOState(/*courtyard door*/ 18895, /*GO_STATE_ACTIVE*/ 0,
                                             /*timeout*/ 60000)
                             .Optional()
