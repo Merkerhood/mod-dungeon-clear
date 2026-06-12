@@ -334,6 +334,14 @@ bool DungeonClearRoomTrashTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
+    // Milestone 3: room-aggro is migrating onto the conditional-event path
+    // (DungeonClearEventDueTrigger / DcRunEventAction at relevance 31). For a map
+    // that already has a room-aggro pre-clear event authored, stand this legacy
+    // rel-26 driver down so the two never both drive — the event path owns it.
+    // Maps without an event row keep this path until they get one.
+    if (DungeonEventRegistry::HasRoomAggroEvent(map->GetId()))
+        return false;
+
     // Only at a flagged boss with room trash still up.
     if (!DcTargeting::IsRoomClearActive(bot, context))
         return false;

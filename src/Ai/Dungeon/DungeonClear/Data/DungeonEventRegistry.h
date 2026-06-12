@@ -145,6 +145,23 @@ public:
     // Empty for maps with only Anchored events. Used by the conditional-event
     // trigger/action to find a due off-path event each tick (milestone 2).
     static std::vector<DungeonEvent const*> Conditional(uint32 mapId);
+
+    // --- Room-aggro pre-clear (milestone 3) ------------------------------
+
+    // True if `ev` is a room-aggro PRE-CLEAR event: a Conditional gate whose lone
+    // KillCreature step uses creatureEntry 0 ("room-trash" mode — the target set
+    // is resolved live through DungeonClearRoomTrashValue / the room-trash
+    // targeting seam, not a fixed entry). These re-express the RoomAggroRegistry
+    // bosses on the events framework: the condition (room trash remains) gates the
+    // boss pull and DcRunEventAction drives the engage (nearest room trash first).
+    // They are NEVER latched — the gate re-fires for each room-aggro boss on the
+    // map (the condition simply reads false once a room is clear).
+    static bool IsRoomAggroPreClear(DungeonEvent const& ev);
+
+    // True if `mapId` has a room-aggro pre-clear event authored. The legacy
+    // standalone room-clear trigger (relevance 26) stands down for such maps so
+    // the conditional-event path (relevance 31) is the single room-clear driver.
+    static bool HasRoomAggroEvent(uint32 mapId);
 };
 
 #endif

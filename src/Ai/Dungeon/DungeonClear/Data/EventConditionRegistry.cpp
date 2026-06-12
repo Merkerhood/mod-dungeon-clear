@@ -12,6 +12,7 @@
 #include "GameObjectData.h"
 #include "Log.h"
 #include "Player.h"
+#include "Playerbots.h"
 #include "SharedDefines.h"
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -84,6 +85,22 @@ namespace
         return SfkCourtyard(bot, TEAM_HORDE, SFK_PRISONER_ADAMANT, "H");
     }
 
+    // --- Room-aggro pre-clear (condition 3, milestone 3) ------------------
+    // Generic across EVERY RoomAggroRegistry boss: DUE while the room-trash value
+    // still has anything to clear. That value already encodes all the spatial
+    // logic — next boss is a room-aggro boss, the room radius around the LIVE
+    // boss, the boss-aggro-sphere / unreachable / door-blocked exclusions, and the
+    // RoomClearTimeout give-up valve — so the condition is a thin "is the room
+    // not yet clear?" read and the event only orchestrates "clear before the
+    // pull". Reads false (event not due, boss pull proceeds) the moment the room
+    // is clear or the value gives up. See DungeonClearRoomTrashValue.
+    bool RoomAggroPreClear(Player* /*bot*/, AiObjectContext* context)
+    {
+        if (!context)
+            return false;
+        return !context->GetValue<GuidVector>("dungeon clear room trash remaining")->Get().empty();
+    }
+
     // conditionId -> predicate. Add a row and reference its id from a Conditional
     // event's .Conditional(id) in DungeonEventRegistry.
     std::unordered_map<uint32, EventConditionRegistry::Condition> const& Conditions()
@@ -91,6 +108,7 @@ namespace
         static std::unordered_map<uint32, EventConditionRegistry::Condition> const kConditions = {
             { 1, &SfkCourtyardAlliance },
             { 2, &SfkCourtyardHorde },
+            { 3, &RoomAggroPreClear },
         };
         return kConditions;
     }

@@ -162,10 +162,20 @@ public:
 // run. Running holds; a required step that Blocks/times out stalls for the human;
 // an optional one Skips (latches) and the clear proceeds. Sits at relevance 31,
 // above the at-boss pull, so a due pre-boss gate is handled first.
-class DcRunEventAction : public MovementAction
+//
+// Milestone 3: a room-aggro PRE-CLEAR event (DungeonEventRegistry::
+// IsRoomAggroPreClear — a Conditional gate with a lone KillCreature(0) step) is
+// special-cased to drive the engage pipeline directly (EngageDirect on the
+// nearest room trash) instead of the step executor, since the KillCreature step
+// only GATES. That is why this derives from DungeonClearEngageActionBase rather
+// than plain MovementAction.
+class DcRunEventAction : public DungeonClearEngageActionBase
 {
 public:
-    DcRunEventAction(PlayerbotAI* botAI) : MovementAction(botAI, "dungeon clear run event") {}
+    DcRunEventAction(PlayerbotAI* botAI)
+        : DungeonClearEngageActionBase(botAI, "dungeon clear run event")
+    {
+    }
     bool Execute(Event event) override;
 };
 
