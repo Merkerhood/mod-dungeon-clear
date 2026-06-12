@@ -93,6 +93,16 @@ namespace
     // to the getMSTime() deadline at which its pet flips back to REACT_DEFENSIVE.
     // Guarded by g_dcPassiveMutex (same lifecycle as g_dcPassivePlayers).
     std::map<ObjectGuid, uint32> g_dcPetReleaseAt;
+
+    // Healers held at camp are pinned with the "stay" strategy (not "+passive" —
+    // they must keep casting heals) so playerbots' reach-to-heal MOVEMENT
+    // (ReachTargetAction early-outs on HasStrategy("stay")) is suppressed and the
+    // healer tops the tank off IN PLACE instead of running forward to chase heal
+    // range. Maps a healer GUID to the bitmask of states DC added the strategy in
+    // (bit0 = BOT_STATE_COMBAT, bit1 = BOT_STATE_NON_COMBAT) so release strips
+    // exactly what we applied and leaves a player's own manual "stay" alone.
+    // Guarded by g_dcPassiveMutex (same lifecycle as g_dcPassivePlayers).
+    std::map<ObjectGuid, uint8> g_dcHealerStayStates;
 }
 
 // Flip any pets whose post-owner-release grace window has elapsed back to
@@ -209,17 +219,48 @@ void DcFollowerLifecycle::ApplyFollowerPassive(Player* follower)
     if (!botAI)
         return;
 
-    // Healers are deliberately NOT held passive: they keep the camp hold (stay)
-    // but stay free to heal the tank through the drag-back. Any aggro a heal
-    // pulls is the tank's to taunt off. Their pet stays defensive too.
-    if (PlayerbotAI::IsHeal(follower))
-        return;
-
     {
         std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
         // Already DC-managed — nothing to do (idempotent across hold ticks).
         if (g_dcPassivePlayers.count(follower->GetGUID()))
             return;
+    }
+
+    // Healers are deliberately NOT made fully passive: they must keep casting
+    // heals on the tank through the drag-back. But they ARE pinned with the
+    // "stay" strategy so they heal IN PLACE — playerbots' reach-to-heal movement
+    // (ReachTargetAction::isUseful early-outs on HasStrategy("stay")) is the only
+    // thing that would walk a healer forward to close heal range, and that is
+    // exactly the "healer runs ahead during the pull" the player saw. With "stay"
+    // the cast-heal action still fires when the tank is in range/LOS; out of range
+    // the healer simply waits at camp until the party (and it) is released. We
+    // join g_dcPassivePlayers so ReapStrandedPassives releases the healer on the
+    // SAME schedule as the held DPS — it only advances once they do. Any aggro a
+    // heal pulls is the tank's to taunt off; the pet stays defensive (untouched).
+    if (PlayerbotAI::IsHeal(follower))
+    {
+        uint8 added = 0;
+        if (!botAI->HasStrategy("stay", BOT_STATE_COMBAT))
+        {
+            botAI->ChangeStrategy("+stay", BOT_STATE_COMBAT);
+            added |= 0x1;
+        }
+        if (!botAI->HasStrategy("stay", BOT_STATE_NON_COMBAT))
+        {
+            botAI->ChangeStrategy("+stay", BOT_STATE_NON_COMBAT);
+            added |= 0x2;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
+            g_dcPassivePlayers.insert(follower->GetGUID());
+            g_dcHealerStayStates[follower->GetGUID()] = added;
+            // Re-holding within the post-release grace window: cancel any pending
+            // pet release so a defensive pet isn't flipped unexpectedly.
+            g_dcPetReleaseAt.erase(follower->GetGUID());
+        }
+        DC_PULL_DEBUG("[DC:{}] advanced-pull: healer pinned at camp (stay, heals only)",
+                      follower->GetName());
+        return;
     }
 
     // A passive the player set themselves is left entirely alone: don't add a
@@ -246,6 +287,8 @@ void DcFollowerLifecycle::RemoveFollowerPassive(Player* follower)
     if (!follower)
         return;
 
+    uint8 healerStay = 0;
+    bool isHealerStay = false;
     {
         std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
         // Only strip passive we applied; a manual passive was never recorded.
@@ -253,10 +296,34 @@ void DcFollowerLifecycle::RemoveFollowerPassive(Player* follower)
             return;
         // The release is happening now — drop any armed graceful-release timer.
         g_dcPlayerReleaseAt.erase(follower->GetGUID());
+        // A held healer carries the "stay" pin instead of "+passive": remember
+        // which states WE added so we strip exactly those (and leave a player's
+        // own manual stay alone).
+        auto it = g_dcHealerStayStates.find(follower->GetGUID());
+        if (it != g_dcHealerStayStates.end())
+        {
+            isHealerStay = true;
+            healerStay = it->second;
+            g_dcHealerStayStates.erase(it);
+        }
     }
 
     if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(follower))
     {
+        // Healer release: drop the movement pin so it can rejoin the party, then
+        // fall through (a held healer was never made passive, so the passive
+        // strip below is a harmless no-op and the pet was never touched).
+        if (isHealerStay)
+        {
+            if ((healerStay & 0x1) && botAI->HasStrategy("stay", BOT_STATE_COMBAT))
+                botAI->ChangeStrategy("-stay", BOT_STATE_COMBAT);
+            if ((healerStay & 0x2) && botAI->HasStrategy("stay", BOT_STATE_NON_COMBAT))
+                botAI->ChangeStrategy("-stay", BOT_STATE_NON_COMBAT);
+            DC_PULL_DEBUG("[DC:{}] advanced-pull: healer released (stay cleared)",
+                          follower->GetName());
+            return;
+        }
+
         if (botAI->HasStrategy("passive", BOT_STATE_COMBAT))
             botAI->ChangeStrategy("-passive", BOT_STATE_COMBAT);
 
@@ -308,6 +375,7 @@ void DcFollowerLifecycle::ReapStrandedPassives()
             std::lock_guard<std::mutex> lock(g_dcPassiveMutex);
             g_dcPassivePlayers.erase(guid);
             g_dcPlayerReleaseAt.erase(guid);
+            g_dcHealerStayStates.erase(guid);
             continue;
         }
 

@@ -912,14 +912,14 @@ bool DcPullPlanner::IsPartySetAtCamp(Player* leader, Position const& camp, float
             continue;  // real player — never gate the pull on them
         if (member->GetExactDist2d(&camp) > setRadius)
             return false;
-        // Healers are deliberately never held passive (ApplyFollowerPassive
-        // exempts them so they can heal the tank through the drag-back), so
-        // requiring the passive strategy from them here would wait out the full
-        // Forming timeout on EVERY pull with a healer in the group — the gate
-        // would block on a flag the camp-hold code is designed never to set.
-        // Mirror that exemption: a healer counts as "set" on position alone;
-        // every other member must also carry the passive strategy (parked AND
-        // holding fire) before the party is ready to tag.
+        // Healers are deliberately never made fully passive (ApplyFollowerPassive
+        // pins them with "stay" instead so they can heal the tank through the
+        // drag-back), so requiring the passive strategy from them here would wait
+        // out the full Forming timeout on EVERY pull with a healer in the group —
+        // the gate would block on a flag the camp-hold code is designed never to
+        // set on a healer. Mirror that: a healer counts as "set" on position
+        // alone; every other member must also carry the passive strategy (parked
+        // AND holding fire) before the party is ready to tag.
         if (!PlayerbotAI::IsHeal(member) &&
             !memberAI->HasStrategy("passive", BOT_STATE_COMBAT))
             return false;
