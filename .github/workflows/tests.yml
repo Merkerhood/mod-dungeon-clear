@@ -40,21 +40,21 @@ jobs:
     steps:
       # 1. Assemble the tree: core at the workspace root, modules underneath.
       - name: Checkout core (${{ env.CORE_REPO }}@${{ env.CORE_REF }})
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.CORE_REPO }}
           ref: ${{ env.CORE_REF }}
           path: .
 
       - name: Checkout mod-playerbots
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.PLAYERBOTS_REPO }}
           ref: ${{ env.PLAYERBOTS_REF }}
           path: modules/mod-playerbots
 
       - name: Checkout this module (PR ref)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: modules/mod-dungeon-clear
 
@@ -75,7 +75,7 @@ jobs:
       # this branch, then any branch. This is what keeps the cache fresh as code
       # changes instead of freezing after the first save.
       - name: ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: dc-tests-ccache:${{ env.CORE_REF }}:${{ github.ref_name }}:${{ github.run_id }}
@@ -88,7 +88,7 @@ jobs:
       # runs instead of skipping. Populate this cache key from your own data; absent
       # it, the nav suite GTEST_SKIPs and Tier 1 still runs.
       - name: Restore map-data slice (optional)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         continue-on-error: true
         with:
           path: modules/mod-dungeon-clear/t/fixtures/mapdata
@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dc-tests-results
           path: build/dc_tests.xml
