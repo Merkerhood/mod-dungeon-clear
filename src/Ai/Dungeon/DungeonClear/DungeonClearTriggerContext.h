@@ -37,6 +37,7 @@ public:
         creators["dungeon clear stay at camp"] = &DungeonClearTriggerContext::stay_at_camp;
         creators["dungeon clear assist camp"] = &DungeonClearTriggerContext::assist_camp;
         creators["dungeon clear assist camp combat"] = &DungeonClearTriggerContext::assist_camp_combat;
+        creators["dungeon clear leader assist"] = &DungeonClearTriggerContext::leader_assist;
         creators["dungeon clear regroup combat"] = &DungeonClearTriggerContext::regroup_combat;
         creators["dungeon clear loot roll pending"] = &DungeonClearTriggerContext::loot_roll_pending;
 
@@ -76,6 +77,7 @@ private:
     static Trigger* stay_at_camp(PlayerbotAI* ai) { return new DungeonClearHoldAtCampCombatTrigger(ai); }
     static Trigger* assist_camp(PlayerbotAI* ai) { return new DungeonClearAssistCampTrigger(ai); }
     static Trigger* assist_camp_combat(PlayerbotAI* ai) { return new DungeonClearAssistCampCombatTrigger(ai); }
+    static Trigger* leader_assist(PlayerbotAI* ai) { return new DungeonClearLeaderAssistTrigger(ai); }
     static Trigger* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatTrigger(ai); }
     static Trigger* loot_roll_pending(PlayerbotAI* ai) { return new DungeonClearLootRollPendingTrigger(ai); }
 

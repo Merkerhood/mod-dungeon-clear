@@ -768,6 +768,13 @@ bool DungeonClearAssistCampCombatTrigger::IsActive()
     return ShouldAssistCampFight(botAI, bot);
 }
 
+bool DungeonClearLeaderAssistTrigger::IsActive()
+{
+    // Leader-side assist. All the gating (leader-only, out of combat, no own
+    // target, a groupmate latched in combat, not mid-drag) lives in the predicate.
+    return DcLeaderSignal::IsLeaderShouldAssistFight(bot);
+}
+
 bool DungeonClearRegroupCombatTrigger::IsActive()
 {
     if (!bot || bot->isDead() || !bot->IsInCombat())

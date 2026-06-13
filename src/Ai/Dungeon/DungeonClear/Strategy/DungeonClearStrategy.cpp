@@ -84,6 +84,21 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear door blocked",
         { NextAction("dungeon clear door blocked", 22.0f) }));
 
+    // LEADER-only: a groupmate is fighting a pack the tank never saw (a follower
+    // aggroed around a sharp corner, or the tank called the pull done and walked
+    // off toward the next objective) — so rather than freezing on the Advance rest
+    // gate ("party not ready / resting") while the DPS fight without it, the tank
+    // goes back and takes threat. Relevance 24: above advance (15), the stalled
+    // fallback (20) and door-blocked (22) — all of which would otherwise leave the
+    // tank stranded while the party fights — but BELOW the tank's own engage scans
+    // (engage trash 25, room trash 26, engage boss 30), so a deliberate visible
+    // pull always wins and this only fills the out-of-sight gap. Inert for
+    // followers (their IsLeaderFightAssistWanted path owns them) and the instant
+    // the tank sees a target of its own. See DcLeaderSignal::IsLeaderShouldAssistFight.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear leader assist",
+        { NextAction("dungeon clear leader assist", 24.0f) }));
+
     // Auto-resume once a player opens the door we auto-paused at. Fires only
     // while paused for that specific door (see DungeonClearDoorReopenedTrigger),
     // when the rest of the driving ladder is inert, so its relevance only has to
