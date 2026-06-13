@@ -100,6 +100,22 @@ public:
     // DungeonClearAssistCamp{,Combat}Trigger.
     static bool IsLeaderFightAssistWanted(Player* bot);
 
+    // The MIRROR of IsLeaderFightAssistWanted for the LEADER itself: true when
+    // `bot` IS the elected leader tank, is OUT of combat on an active (enabled,
+    // unpaused) run, has no engage target of its own in sight, yet a groupmate is
+    // (latched) in combat. This is the case the followers' assist gate can't cover
+    // because it bails for the leader: the tank declared the pull done and started
+    // advancing — or a follower aggroed a pack around a sharp corner the tank
+    // never saw — so the tank stands frozen on the Advance rest gate ("party not
+    // ready / resting") while the DPS fight without it. Drives the tank back onto
+    // the party's fight to take threat. Defers (false) while a pull maneuver is
+    // holding the party at camp (the drag owns the tank's positioning) and while
+    // the tank already has its own visible attacker (its engage scan handles
+    // that). Uses the same PartyCombatLatch hysteresis as the followers' gate so
+    // both sides ride out the combat-flicker TOCTOU consistently. Drives
+    // DungeonClearLeaderAssistTrigger.
+    static bool IsLeaderShouldAssistFight(Player* bot);
+
     // True when `bot`'s elected leader is running DYNAMIC pull (pull setting == 2)
     // and is still scouting/deciding the next pack — i.e. out of combat with the
     // pull phase Idle, before it has committed to a Leeroy or an Advanced camp.

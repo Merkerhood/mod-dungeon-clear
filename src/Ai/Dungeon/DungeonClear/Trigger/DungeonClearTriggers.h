@@ -279,6 +279,24 @@ public:
     bool IsActive() override;
 };
 
+// LEADER-only, non-combat engine. The mirror of the follower assist above for the
+// tank itself: a groupmate is fighting a pack the tank never saw (a follower
+// aggroed around a sharp corner, or the tank called the pull done and walked off),
+// so the tank stands frozen on the Advance rest gate instead of rejoining. Drives
+// DungeonClearLeaderAssistAction, which moves the tank onto the party's fight and
+// forces it into combat so it takes threat. Goes inert the instant the tank sees a
+// target of its own (its engage scan owns it) or the party drops combat. See
+// DcLeaderSignal::IsLeaderShouldAssistFight.
+class DungeonClearLeaderAssistTrigger : public Trigger
+{
+public:
+    DungeonClearLeaderAssistTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear leader assist", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 // Follower-only, COMBAT engine. Keeps the party grouped on the leader tank during
 // ANY fight (not just an advanced-pull camp) once the leash has loosened. Fires
 // while DC is active on the group, this bot is a non-leader follower in combat,

@@ -398,4 +398,20 @@ public:
     bool Execute(Event event) override;
 };
 
+// Leader-only, non-combat engine. The tank's mirror of the follower assist: a
+// groupmate is fighting a pack the tank never saw, so rather than stalling on the
+// Advance rest gate, find what the party is fighting, force the tank into combat
+// with it, and move onto it to take threat. Once in sight / in combat the tank
+// flips to its own combat engine (pull-maneuver/rotation) and this stands down.
+// Driven by DungeonClearLeaderAssistTrigger.
+class DungeonClearLeaderAssistAction : public DcMovementAction
+{
+public:
+    DungeonClearLeaderAssistAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear leader assist")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 #endif

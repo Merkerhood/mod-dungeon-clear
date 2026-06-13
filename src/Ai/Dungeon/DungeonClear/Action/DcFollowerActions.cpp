@@ -668,3 +668,114 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
 }
+
+bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
+{
+    // Leader-side assist. The trigger guarantees: this bot IS the leader, it is out
+    // of combat with no visible target of its own, and a groupmate is (latched) in
+    // combat with a pack the tank never saw. Find what the party is fighting, take
+    // threat, and move onto it. The inverse of the follower assist, which finds
+    // what the LEADER is fighting and drives the follower to it.
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    // Nearest hostile attacking an in-combat groupmate (the pack a follower pulled
+    // around the corner), plus the nearest in-combat member as a fallback move-to
+    // so the tank at least rounds the corner back into sight when no concrete
+    // attacker resolves (brief threat-table gap). LOS-blind on purpose: the whole
+    // point is the fight the tank's own sight-gated picker can't reach.
+    Unit* target = nullptr;
+    float bestTargetDist = 0.0f;
+    Player* nearestFighter = nullptr;
+    float bestFighterDist = 0.0f;
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || member == bot || !member->IsAlive())
+            continue;
+        if (member->GetMapId() != bot->GetMapId() || !member->IsInCombat())
+            continue;
+
+        float const md = bot->GetExactDist2d(member);
+        if (!nearestFighter || md < bestFighterDist)
+        {
+            nearestFighter = member;
+            bestFighterDist = md;
+        }
+
+        // Everything meleeing this groupmate, plus its own victim — the pack we
+        // must peel onto the tank.
+        for (Unit* a : member->getAttackers())
+        {
+            if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
+                continue;
+            if (!bot->IsValidAttackTarget(a))
+                continue;
+            float const d = bot->GetExactDist2d(a);
+            if (!target || d < bestTargetDist)
+            {
+                target = a;
+                bestTargetDist = d;
+            }
+        }
+        if (!target)
+        {
+            Unit* const victim = member->GetVictim();
+            if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId() &&
+                bot->IsValidAttackTarget(victim))
+            {
+                target = victim;
+                bestTargetDist = bot->GetExactDist2d(victim);
+            }
+        }
+    }
+
+    // No concrete target and nobody resolvable to walk toward — let the rest of the
+    // driving ladder (advance / stall) run.
+    if (!target && !nearestFighter)
+        return false;
+
+    Unit* const moveTo = target ? target : static_cast<Unit*>(nearestFighter);
+
+    // Take threat ONLY once the pack is in sight. Force-combating while still out of
+    // LOS would flip the tank into its combat engine next tick — where THIS
+    // (non-combat) trigger goes inert and the approach would stall mid-corner — and
+    // stock combat can't reliably chase a target it can't see. So while out of LOS
+    // we just keep walking toward the fight (the trigger re-fires every tick and
+    // drives us on); the instant we round the corner into sight we commit, and stock
+    // combat / the tank rotation close the final gap and hold the pack.
+    if (target && bot->IsWithinLOSInMap(target))
+    {
+        bot->SetSelection(target->GetGUID());
+        context->GetValue<Unit*>("current target")->Set(target);
+        if (!bot->IsInCombat())
+            bot->SetInCombatWith(target);
+        DC_PULL_TRACE("[DC:{}] leader assist: in sight of party fight ({:.1f}yd) "
+                      "-> took threat, combat engine takes over",
+                      bot->GetName(), bot->GetExactDist(target));
+        return true;
+    }
+
+    // Band the approach exactly as the follower assist / regroup do: COMBAT only on
+    // the final close leg, NORMAL beyond, so on a long run back the tank stops and
+    // fights anything it pulls en route instead of plowing a mob train to the fight.
+    float const distance = bot->GetExactDist(moveTo);
+    float const attackRange = botAI->IsMelee(bot)
+        ? (bot->GetCombatReach() + moveTo->GetCombatReach() + 1.0f)
+        : (botAI->GetRange("spell") - CONTACT_DISTANCE);
+    MovementPriority const prio =
+        (distance <= attackRange + DC_COMBAT_APPROACH_RANGE)
+            ? MovementPriority::MOVEMENT_COMBAT
+            : MovementPriority::MOVEMENT_NORMAL;
+
+    DC_PULL_TRACE("[DC:{}] leader assist: closing on party fight ({:.1f}yd, "
+                  "target={}, prio={})", bot->GetName(), distance,
+                  target ? target->GetGUID().ToString() : "groupmate",
+                  prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
+
+    DcMoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
+           moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
+           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    return true;
+}
