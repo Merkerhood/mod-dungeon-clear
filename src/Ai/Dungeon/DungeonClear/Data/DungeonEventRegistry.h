@@ -29,7 +29,11 @@
 
 enum class EventStepKind : uint8
 {
-    MoveTo,                  // walk the leader to (x,y,z) within `radius`
+    MoveTo,                  // walk the leader to (x,y,z) within `radius` — a SHORT
+                             // intra-room hop only (plain MovePoint). A far haul
+                             // must be done by a BOSS/OBJECTIVE anchor so the boss
+                             // navigation + dynamic-pull machinery drives it (an
+                             // event step driving a long move fights the pull camp).
     UseGameObject,           // approach + GameObject::Use(bot) the nearest goEntry
     Gossip,                  // talk creatureEntry + select gossipOption (milestone 2)
     WaitForSpawn,            // hold until creatureEntry is alive (wantAlive) / gone
@@ -94,6 +98,25 @@ struct DungeonEvent
     // Optional => such a step is skipped and the clear advances anyway (used for
     // best-effort events whose scripted trigger may not fire for bots).
     bool required{true};
+
+    // Conditional events only. A normal conditional event latches DONE the moment
+    // its step list completes (DcRunEventAction inserts its ConditionalLatchKey),
+    // so it never fires again that run. A Repeatable event is NOT latched on
+    // completion — it re-fires every time its condition reads true again. Use it
+    // for an action the party must repeat an unknown number of times, where some
+    // OTHER live signal (not a one-shot latch) gates each repeat and ends the
+    // loop. Example: Razorfen Downs' gong, which must be rung once per wave until
+    // the boss spawns — the gong's own selectable flag gates each ring and the
+    // boss going live ends the loop, so a fixed latch would stop it after ring 1.
+    bool repeatable{false};
+
+    // Conditional events only, panel cosmetics. By default an off-path
+    // conditional event renders last in the `dc bosses` panel (index 99). When
+    // this names a boss entry, the event instead sorts just BEFORE that boss —
+    // for a prerequisite the party performs before the boss is reachable (e.g.
+    // the gong before Tuten'kash). 0 => default (sort last). Does not affect
+    // engine ordering, only the status panel.
+    uint32 panelGatesBossEntry{0};
 };
 
 // Fluent builder for readable registry rows, mirroring MakeBoss/MakeObjective.
@@ -111,6 +134,8 @@ public:
     EventBuilder& Anchored(uint32 orderIndex);
     EventBuilder& Conditional(uint32 conditionId);
     EventBuilder& Optional();
+    EventBuilder& Repeatable();
+    EventBuilder& PanelBeforeBoss(uint32 bossEntry);
 
     EventBuilder& MoveTo(float x, float y, float z, float radius = 0.0f);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,

@@ -839,8 +839,20 @@ bool DcRunEventAction::Execute(Event /*event*/)
         return true;
     }
 
-    // Completed or Skipped: latch the event under its synthetic key so the
-    // trigger stops re-firing it and the clear proceeds.
+    // Completed or Skipped. A REPEATABLE event is never latched — it must fire
+    // again the next time its condition reads true (e.g. the RFD gong, rung once
+    // per wave). Its loop is ended by the condition itself going false for good
+    // (Tuten'kash spawns), not by a one-shot latch. Clear any stall and let the
+    // run proceed; the next due-check decides whether to repeat.
+    if (ev->repeatable)
+    {
+        ClearStall(context);
+        SetPhase(context, "");
+        return true;
+    }
+
+    // Otherwise latch the event under its synthetic key so the trigger stops
+    // re-firing it and the clear proceeds.
     auto& cleared =
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
     if (cleared.insert(DungeonEventExecutor::ConditionalLatchKey(ev->id)).second)

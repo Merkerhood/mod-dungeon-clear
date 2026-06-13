@@ -122,6 +122,34 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- Razorfen Downs (map 129) --------------------------------
+            // Tuten'kash is the first encounter (DungeonEncounter bit 0) but he has
+            // NO static creature spawn — he is summoned only after the party rings
+            // the entrance gong three times (see the "Ring the Gong" conditional
+            // event + condition 4). With no spawn, BossSpawnIndex never emits him,
+            // so without this he would never head the list, be travelled to, or be
+            // tracked. Add him with his real encounterIndex 0 (default) so his kill
+            // flips bit 0 the moment he spawns.
+            //
+            // The anchor sits ON THE GONG (148917 @ 2552,857), NOT his summon spot.
+            // This is deliberate: it makes the boss navigation drive the tank to
+            // the gong exactly as to any boss — long-range pathfinder, dynamic-pull
+            // camps, combat — which is the robust travel an event step cannot do.
+            // The gong event then rings in place. While he is absent the tank
+            // arrives at the gong and the event (relevance 31) rings, preempting the
+            // boss-not-present stall (relevance 20); once the third ring summons him
+            // at his real spot (~80yd off) live-boss tracking retargets the engage
+            // to his actual position.
+            {
+                BossRosterPatch p;
+                p.mapId = 129;
+                p.add = {
+                    MakeBoss(7355, 129, "Tuten'kash",
+                             /*on the gong*/ 2552.44f, 856.984f, 51.495f, /*completionFrom*/ 0),
+                };
+                t.push_back(std::move(p));
+            }
+
             // --- ZulFarrak (map 209) -------------------------------------
             // The temple-summit (Sandfury prisoner) event fires when the party
             // reaches the top of the great staircase, and completing it opens

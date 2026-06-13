@@ -670,6 +670,20 @@ bool DcBossesAction::Execute(Event event)
             idxField = roomAggroBossIndex == 0
                            ? "-0.5"
                            : std::to_string(roomAggroBossIndex - 1) + ".5";
+        else if (ev->panelGatesBossEntry)
+        {
+            // A prerequisite event (e.g. the gong before Tuten'kash) sorts just
+            // ahead of the boss it gates, using the same fractional-index trick
+            // as the room-aggro pre-clear so the panel renumbers cleanly.
+            for (DungeonBossInfo const& info : bosses)
+                if (info.entry == ev->panelGatesBossEntry)
+                {
+                    idxField = info.encounterIndex == 0
+                                   ? "-0.5"
+                                   : std::to_string(info.encounterIndex - 1) + ".5";
+                    break;
+                }
+        }
 
         std::ostringstream evMsg;
         evMsg << "BOSS\t" << latchKey << "\t" << idxField << "\t" << evName << "\t"

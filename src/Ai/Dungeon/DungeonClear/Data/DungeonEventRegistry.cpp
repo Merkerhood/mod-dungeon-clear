@@ -44,6 +44,18 @@ EventBuilder& EventBuilder::Optional()
     return *this;
 }
 
+EventBuilder& EventBuilder::Repeatable()
+{
+    _ev.repeatable = true;
+    return *this;
+}
+
+EventBuilder& EventBuilder::PanelBeforeBoss(uint32 bossEntry)
+{
+    _ev.panelGatesBossEntry = bossEntry;
+    return *this;
+}
+
 EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
 {
     EventStep& s = Add(EventStepKind::MoveTo);
@@ -225,6 +237,47 @@ namespace
             t.push_back(EventBuilder(189, 1, "Clear the Cathedral (room-aggro pre-clear)")
                             .Conditional(3)
                             .KillCreature(/*room trash*/ 0)
+                            .Build());
+
+            // --- Razorfen Downs (map 129) — the GONG, CONDITIONAL+REPEATABLE --
+            // The first thing a party does in RFD: ring the gong (GO 148917) by
+            // the entrance to summon Tuten'kash. The encounter is staged — each
+            // ring summons a wave (Tomb Fiends, then Tomb Reavers) and after the
+            // THIRD ring Tuten'kash himself spawns. The gong's SmartAI disables
+            // it (GO_FLAG_NOT_SELECTABLE) the instant it is rung and re-enables it
+            // only once the wave's deaths tick its kill-counter — so the gong is
+            // self-pacing: a bot just rings it whenever it is selectable again,
+            // and the server decides when the next wave (or the boss) appears.
+            //
+            // Navigation is done by Tuten'kash's BOSS anchor, which sits ON the
+            // gong (BossRosterRegistry): the tank travels to the gong exactly as it
+            // would to any boss — the long-range pathfinder, the dynamic-pull
+            // camps and the combat handling all drive it, which a bespoke event
+            // move cannot (an event-driven long haul fights the pull camp and never
+            // resets it — the live failure that sank the earlier LongMoveTo). The
+            // event therefore needs NO movement of its own; it only rings.
+            //
+            // The gong is rung in place. Condition 4 gates the ring on the tank
+            // being AT the gong (within range), the gong being selectable, and
+            // Tuten'kash absent — so it fires only once boss-nav has delivered the
+            // tank, preempting the boss-not-present stall (relevance 31 > 20). The
+            // anchor and the ring target are the SAME point (the gong), so there is
+            // no tug-of-war between boss-nav and the event.
+            //
+            // REPEATABLE so it re-fires for each of the three rings instead of
+            // latching after the first; the gong's own selectable flag (condition
+            // 4) paces the rings and Tuten'kash going live ends the loop. When he
+            // spawns (at his summon spot ~80yd off) the condition goes false and
+            // the normal boss flow engages him via live-boss tracking. Rendered
+            // first in the panel (PanelBeforeBoss 7355) since it precedes boss #0.
+            t.push_back(EventBuilder(129, 1, "Ring the Gong")
+                            .Conditional(4)
+                            .Repeatable()
+                            .PanelBeforeBoss(/*Tuten'kash*/ 7355)
+                            // searchRadius must cover condition 4's ring range
+                            // (30yd) so a tank parked at the far edge still finds
+                            // the gong and HopTos the last yards to Use() it.
+                            .UseGO(/*gong*/ 148917, /*searchRadius*/ 35.0f)
                             .Build());
 
             return t;
