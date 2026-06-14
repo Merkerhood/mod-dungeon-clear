@@ -58,13 +58,17 @@ namespace
     constexpr uint32 ZF_WEEGLI = 7607;   // goblin — blows the door to Ukorz
     constexpr uint32 ZF_BLY = 7604;      // human — final fight ends the event
 
-    // Ramp head — where Bly's crew stage (initBlyCrewMember targets ~y1263,
-    // z41.5) and where the waves arrive coming up the stairs. We hold just in
-    // front of the crew line (slightly lower y, toward the waves) so the tank is
-    // the forwardmost target and intercepts each wave before it reaches the NPCs.
+    // Where to hold during the waves: PARTWAY DOWN the ramp, clearly IN FRONT of
+    // Bly's crew (they stage at the head, ~y1263 z41.5), facing the waves coming
+    // up the stairs. This is essential — the party does NOT auto-assist the NPCs,
+    // so unless a party member takes the first aggro nobody engages and the crew
+    // dies. Sitting down-ramp of the crew puts the tank in the waves' path so it
+    // grabs them first. Coords interpolate the staircase (head y1263/z41.5 ->
+    // bottom y1228/z~10, verified from initBlyCrewMember + the PRE_WAVE_3 NPC
+    // moves); a generous arrive radius tolerates the per-step z of the stairs.
     constexpr float ZF_RAMP_X = 1886.0f;
-    constexpr float ZF_RAMP_Y = 1260.0f;
-    constexpr float ZF_RAMP_Z = 41.5f;
+    constexpr float ZF_RAMP_Y = 1250.0f;
+    constexpr float ZF_RAMP_Z = 30.0f;
 
     // The wave sequence (cages open -> wave 3 / bosses spawn) runs several
     // minutes; a generous timeout keeps the long survive-the-waves wait from
@@ -84,10 +88,11 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       // 1. Clear the summit guard, then crack a cage to begin.
                       .KillCreatureEngage(ZF_EXECUTIONER)
                       .UseGO(ZF_TROLL_CAGE, /*searchRadius*/ 25.0f)
-                      // 2. Move forward onto the ramp head (with the NPC crew) so
-                      //    the tank intercepts the waves, then hold there until
-                      //    Sezz'ziz spawning signals wave 3 has begun at the bottom.
-                      .MoveTo(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 8.0f)
+                      // 2. Move down the ramp, IN FRONT of the NPC crew, so the
+                      //    tank takes the waves' first aggro (the party doesn't
+                      //    auto-assist the NPCs), then hold there until Sezz'ziz
+                      //    spawning signals wave 3 has begun at the bottom.
+                      .MoveTo(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 10.0f)
                       .WaitForSpawn(ZF_SEZZIZ, /*wantAlive*/ true).Timeout(ZF_WAVES_TIMEOUT)
                       // 3. Descend and help the crew kill the temple bosses.
                       .KillCreatureEngage(ZF_NEKRUM, /*count*/ 1, /*searchRadius*/ 250.0f)
