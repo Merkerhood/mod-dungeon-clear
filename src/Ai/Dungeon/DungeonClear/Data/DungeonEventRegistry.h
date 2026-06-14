@@ -194,6 +194,14 @@ public:
     EventBuilder& WaitTargetStill();
 
     EventBuilder& MoveTo(float x, float y, float z, float radius = 0.0f);
+    // MoveTo that GARRISONS: walk to (x,y,z) and HOLD there — re-moving back if a
+    // later tick finds the bot displaced (combat pushed it off the spot) — until
+    // `creatureEntry` matches `wantAlive`. Keeps the tank anchored at a staging
+    // point between waves (ZulFarrak's ramp head) instead of holding wherever the
+    // last fight ended (down on the wave spawn). Internally a MoveTo step with a
+    // spawn gate; creatureEntry 0 would be a plain one-shot MoveTo.
+    EventBuilder& MoveToHoldUntilSpawn(float x, float y, float z, float radius,
+                                       uint32 creatureEntry, bool wantAlive = true);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,
                         float x = 0.0f, float y = 0.0f, float z = 0.0f);
     EventBuilder& Gossip(uint32 creatureEntry, int32 option, float searchRadius = 0.0f);

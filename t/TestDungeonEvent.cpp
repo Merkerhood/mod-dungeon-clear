@@ -185,7 +185,7 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_TRUE(e->persistent);
     EXPECT_TRUE(e->required);
 
-    ASSERT_EQ(e->steps.size(), 10u);
+    ASSERT_EQ(e->steps.size(), 9u);
 
     // 1. kill the executioner (engage-driven), then crack a cage to start it.
     EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
@@ -194,38 +194,54 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
     EXPECT_EQ(e->steps[1].goEntry, 141073u);
 
-    // 2. move onto the ramp head, then survive the waves — wait for Sezz'ziz
-    //    (wave 3) to spawn.
+    // 2. GARRISON the ramp head (MoveTo with a spawn gate): hold there — re-moving
+    //    if combat displaced the tank — until Sezz'ziz (wave 3) spawns.
     EXPECT_EQ(e->steps[2].kind, EventStepKind::MoveTo);
-    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[3].creatureEntry, 7275u);
-    EXPECT_TRUE(e->steps[3].wantAlive);
+    EXPECT_EQ(e->steps[2].creatureEntry, 7275u);  // garrison gate: Sezz'ziz
+    EXPECT_TRUE(e->steps[2].wantAlive);
 
     // 3. descend and kill the two temple bosses (engage-driven).
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[3].creatureEntry, 7796u);  // Nekrum
+    EXPECT_TRUE(e->steps[3].engage);
     EXPECT_EQ(e->steps[4].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[4].creatureEntry, 7796u);  // Nekrum
+    EXPECT_EQ(e->steps[4].creatureEntry, 7275u);  // Sezz'ziz
     EXPECT_TRUE(e->steps[4].engage);
-    EXPECT_EQ(e->steps[5].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[5].creatureEntry, 7275u);  // Sezz'ziz
-    EXPECT_TRUE(e->steps[5].engage);
 
     // 4. goblin FIRST (opens the door), then a short dwell before provoking Bly.
-    //    Both gossips skip if the NPC is dead so a lost helper can't deadlock.
-    EXPECT_EQ(e->steps[6].kind, EventStepKind::Gossip);
-    EXPECT_EQ(e->steps[6].creatureEntry, 7607u);  // Weegli
-    EXPECT_TRUE(e->steps[6].skipIfMissing);
-    EXPECT_TRUE(e->steps[6].waitForStill);  // wait out the walk down
-    EXPECT_EQ(e->steps[7].kind, EventStepKind::Wait);
-    EXPECT_GT(e->steps[7].durationMs, 0u);
+    //    Both gossips skip if the NPC is dead so a lost helper can't deadlock, and
+    //    wait for the crew to finish walking down before talking.
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::Gossip);
+    EXPECT_EQ(e->steps[5].creatureEntry, 7607u);  // Weegli
+    EXPECT_TRUE(e->steps[5].skipIfMissing);
+    EXPECT_TRUE(e->steps[5].waitForStill);
+    EXPECT_EQ(e->steps[6].kind, EventStepKind::Wait);
+    EXPECT_GT(e->steps[6].durationMs, 0u);
 
     // 5. human starts the fight; killing Bly ends the event.
-    EXPECT_EQ(e->steps[8].kind, EventStepKind::Gossip);
-    EXPECT_EQ(e->steps[8].creatureEntry, 7604u);  // Bly
-    EXPECT_TRUE(e->steps[8].skipIfMissing);
-    EXPECT_TRUE(e->steps[8].waitForStill);
-    EXPECT_EQ(e->steps[9].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[9].creatureEntry, 7604u);
-    EXPECT_TRUE(e->steps[9].engage);
+    EXPECT_EQ(e->steps[7].kind, EventStepKind::Gossip);
+    EXPECT_EQ(e->steps[7].creatureEntry, 7604u);  // Bly
+    EXPECT_TRUE(e->steps[7].skipIfMissing);
+    EXPECT_TRUE(e->steps[7].waitForStill);
+    EXPECT_EQ(e->steps[8].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[8].creatureEntry, 7604u);
+    EXPECT_TRUE(e->steps[8].engage);
+}
+
+// Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate
+// creature, so the executor holds at the point until that creature is up.
+TEST(DungeonEventBuilderTest, MoveToHoldUntilSpawn)
+{
+    DungeonEvent e = EventBuilder(1, 1, "e")
+                         .MoveTo(1.0f, 2.0f, 3.0f, 5.0f)
+                         .MoveToHoldUntilSpawn(4.0f, 5.0f, 6.0f, 8.0f, /*until*/ 7275)
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 2u);
+    EXPECT_EQ(e.steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e.steps[0].creatureEntry, 0u);  // plain MoveTo, no gate
+    EXPECT_EQ(e.steps[1].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e.steps[1].creatureEntry, 7275u);  // garrison gate
+    EXPECT_TRUE(e.steps[1].wantAlive);
 }
 
 // The builder's KillCreatureEngage marks the engage flag (vs plain KillCreature

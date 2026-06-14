@@ -95,6 +95,19 @@ EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
     return *this;
 }
 
+EventBuilder& EventBuilder::MoveToHoldUntilSpawn(float x, float y, float z, float radius,
+                                                 uint32 creatureEntry, bool wantAlive)
+{
+    EventStep& s = Add(EventStepKind::MoveTo);
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    s.creatureEntry = creatureEntry;  // non-zero => garrison-until-spawn gate
+    s.wantAlive = wantAlive;
+    return *this;
+}
+
 EventBuilder& EventBuilder::UseGO(uint32 goEntry, float searchRadius,
                                   float x, float y, float z)
 {

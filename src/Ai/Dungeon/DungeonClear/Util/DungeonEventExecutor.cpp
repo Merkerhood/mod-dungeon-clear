@@ -66,10 +66,25 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
         case EventStepKind::MoveTo:
         {
             float const radius = step.radius > 0.0f ? step.radius : DC_EVENT_MOVE_RADIUS;
-            if (bot->GetExactDist(step.x, step.y, step.z) <= radius)
-                return StepResult::Done;
-            HopTo(bot, step.x, step.y, step.z);
-            return StepResult::Running;
+            if (bot->GetExactDist(step.x, step.y, step.z) > radius)
+            {
+                HopTo(bot, step.x, step.y, step.z);
+                return StepResult::Running;
+            }
+            // Arrived. A plain MoveTo (no gate) is done. A GARRISON MoveTo
+            // (creatureEntry set) instead HOLDS here until the gate creature
+            // matches wantAlive — and because this re-checks distance every tick,
+            // a later tick that finds the bot displaced (combat pushed the tank
+            // off the spot, e.g. chasing a wave down the ramp) re-moves it back.
+            if (step.creatureEntry != 0)
+            {
+                Creature* c = bot->FindNearestCreature(step.creatureEntry,
+                                                       DC_EVENT_CREATURE_SCAN,
+                                                       /*alive*/ step.wantAlive);
+                return ((c != nullptr) == step.wantAlive) ? StepResult::Done
+                                                          : StepResult::Running;
+            }
+            return StepResult::Done;
         }
 
         case EventStepKind::UseGameObject:
