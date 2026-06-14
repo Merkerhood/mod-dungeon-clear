@@ -108,6 +108,19 @@ EventBuilder& EventBuilder::MoveToHoldUntilSpawn(float x, float y, float z, floa
     return *this;
 }
 
+EventBuilder& EventBuilder::MoveToHoldUntilInstanceData(float x, float y, float z, float radius,
+                                                        uint32 dataId, uint32 minValue)
+{
+    EventStep& s = Add(EventStepKind::MoveTo);
+    s.x = x;
+    s.y = y;
+    s.z = z;
+    s.radius = radius;
+    s.instanceDataId = static_cast<int32>(dataId);  // >= 0 => instance-data gate
+    s.instanceDataMin = minValue;
+    return *this;
+}
+
 EventBuilder& EventBuilder::UseGO(uint32 goEntry, float searchRadius,
                                   float x, float y, float z)
 {

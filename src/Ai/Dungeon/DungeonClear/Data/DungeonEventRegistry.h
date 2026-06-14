@@ -99,6 +99,16 @@ struct EventStep
     uint32 durationMs{0};    // Wait: dwell length
     uint32 timeoutMs{0};     // 0 => EventStepTimeout config default; else per-step
     uint32 hookId{0};        // Custom -> ObjectiveHookRegistry
+
+    // MoveTo garrison gate, instance-data variant. When instanceDataId >= 0 the
+    // step holds at (x,y,z) until the map's InstanceScript GetData(instanceDataId)
+    // reaches instanceDataMin. Preferred over the creatureEntry "until alive" gate
+    // for a value that the party kills DURING continuous combat (the event engine
+    // is dormant in combat, so a transient "boss alive" window can be missed and
+    // never recovers once the boss dies): a scripted phase counter only ever
+    // climbs, so a >= gate is safe to observe late. -1 => no instance-data gate.
+    int32  instanceDataId{-1};
+    uint32 instanceDataMin{0};
 };
 
 // How an event enters the clear. Milestone 1 only uses Anchored; Conditional is
@@ -202,6 +212,13 @@ public:
     // spawn gate; creatureEntry 0 would be a plain one-shot MoveTo.
     EventBuilder& MoveToHoldUntilSpawn(float x, float y, float z, float radius,
                                        uint32 creatureEntry, bool wantAlive = true);
+    // Garrison variant gated on a monotonic InstanceScript phase counter: hold at
+    // (x,y,z) until GetData(dataId) >= minValue. Robust where the party fights
+    // through the gate during continuous combat (ZulFarrak's temple — hold the
+    // ramp until DATA_PYRAMID reaches WAVE_3, then descend; works even if the
+    // bosses are already dead by the time the party drops combat).
+    EventBuilder& MoveToHoldUntilInstanceData(float x, float y, float z, float radius,
+                                              uint32 dataId, uint32 minValue);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,
                         float x = 0.0f, float y = 0.0f, float z = 0.0f);
     EventBuilder& Gossip(uint32 creatureEntry, int32 option, float searchRadius = 0.0f);

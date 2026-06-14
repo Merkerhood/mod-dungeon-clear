@@ -12,6 +12,8 @@
 #include "GameObject.h"
 #include "GameObjectData.h"
 #include "GossipDef.h"
+#include "InstanceScript.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
 #include "MoveSplineInitArgs.h"
@@ -71,11 +73,24 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 HopTo(bot, step.x, step.y, step.z);
                 return StepResult::Running;
             }
-            // Arrived. A plain MoveTo (no gate) is done. A GARRISON MoveTo
-            // (creatureEntry set) instead HOLDS here until the gate creature
-            // matches wantAlive — and because this re-checks distance every tick,
-            // a later tick that finds the bot displaced (combat pushed the tank
-            // off the spot, e.g. chasing a wave down the ramp) re-moves it back.
+            // Arrived. A plain MoveTo (no gate) is done. A GARRISON MoveTo holds
+            // here until its gate clears — and because distance is re-checked every
+            // tick, a later tick that finds the bot displaced (combat pushed the
+            // tank off the spot, e.g. chasing a wave down the ramp) re-moves it back.
+            //
+            // Instance-data gate (preferred for a value killed mid-combat): hold
+            // until the map's scripted phase counter reaches the threshold. This is
+            // MONOTONIC, so unlike "boss alive" it can't be missed while the event
+            // engine is dormant in combat — once the phase climbs past the gate it
+            // stays past it, so the step clears the moment the party next ticks
+            // out of combat (even if the gated content is already done).
+            if (step.instanceDataId >= 0)
+            {
+                InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+                uint32 const v = inst ? inst->GetData(static_cast<uint32>(step.instanceDataId)) : 0;
+                return (v >= step.instanceDataMin) ? StepResult::Done : StepResult::Running;
+            }
+            // Creature gate: hold until the gate creature matches wantAlive.
             if (step.creatureEntry != 0)
             {
                 Creature* c = bot->FindNearestCreature(step.creatureEntry,

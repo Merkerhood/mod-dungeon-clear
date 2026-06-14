@@ -75,6 +75,18 @@ namespace
     // escalating to a stall. The NPC gossips / door-blow likewise take a while.
     constexpr uint32 ZF_WAVES_TIMEOUT = 900000;  // 15 min
     constexpr uint32 ZF_NPC_TIMEOUT = 180000;    // 3 min
+
+    // Instance phase gate for the ramp garrison. DATA_PYRAMID (instance GetData
+    // type 0) climbs NOT_STARTED(0) -> CAGES_OPEN(1) -> ... -> WAVE_3(7) ->
+    // KILLED_ALL_TROLLS(8) -> MOVED_DOWNSTAIRS(9) -> ... -> DONE(12). We garrison
+    // the ramp until it reaches WAVE_3 (bosses spawned at the bottom), then
+    // descend. Monotonic, so even if the party fights straight through wave 3 in
+    // continuous combat (the event engine is dormant in combat) and the bosses are
+    // already dead by the time it drops combat, the gate still reads "past WAVE_3"
+    // and releases — the kill steps then no-op and the run reaches the gossips.
+    // (Mirrors enums ZFPyramidData::DATA_PYRAMID / ZFPyramidPhases in zulfarrak.h.)
+    constexpr uint32 ZF_DATA_PYRAMID = 0;
+    constexpr uint32 ZF_PHASE_WAVE_3 = 7;
     // Lead time between gossiping Weegli (door) and Bly (fight) — enough that
     // Bly's faction-flip of the crew can't catch Weegli mid-walk (live-verified).
     constexpr uint32 ZF_WEEGLI_LEAD_MS = 10000;  // 10 s
@@ -93,10 +105,13 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       //    auto-assist the NPCs) AND returns to this spot between
                       //    waves instead of resting wherever the last fight ended —
                       //    down on the wave spawn, where the next wave spawns on top
-                      //    of the party. Holds here until Sezz'ziz spawning signals
-                      //    wave 3 has begun at the bottom.
-                      .MoveToHoldUntilSpawn(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 10.0f,
-                                            /*until alive*/ ZF_SEZZIZ).Timeout(ZF_WAVES_TIMEOUT)
+                      //    of the party. Holds here until the instance reaches
+                      //    WAVE_3 (bosses spawned); gated on the monotonic phase
+                      //    rather than "boss alive" so a fight straight through
+                      //    wave 3 can't leave it waiting on an already-dead boss.
+                      .MoveToHoldUntilInstanceData(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 10.0f,
+                                                   ZF_DATA_PYRAMID, ZF_PHASE_WAVE_3)
+                          .Timeout(ZF_WAVES_TIMEOUT)
                       // 3. Descend and help the crew kill the temple bosses.
                       .KillCreatureEngage(ZF_NEKRUM, /*count*/ 1, /*searchRadius*/ 250.0f)
                       .KillCreatureEngage(ZF_SEZZIZ, /*count*/ 1, /*searchRadius*/ 250.0f)
