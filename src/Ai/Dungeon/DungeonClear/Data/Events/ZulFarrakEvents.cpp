@@ -88,12 +88,15 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       // 1. Clear the summit guard, then crack a cage to begin.
                       .KillCreatureEngage(ZF_EXECUTIONER)
                       .UseGO(ZF_TROLL_CAGE, /*searchRadius*/ 25.0f)
-                      // 2. Move down the ramp, IN FRONT of the NPC crew, so the
+                      // 2. GARRISON down the ramp, IN FRONT of the NPC crew, so the
                       //    tank takes the waves' first aggro (the party doesn't
-                      //    auto-assist the NPCs), then hold there until Sezz'ziz
-                      //    spawning signals wave 3 has begun at the bottom.
-                      .MoveTo(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 10.0f)
-                      .WaitForSpawn(ZF_SEZZIZ, /*wantAlive*/ true).Timeout(ZF_WAVES_TIMEOUT)
+                      //    auto-assist the NPCs) AND returns to this spot between
+                      //    waves instead of resting wherever the last fight ended —
+                      //    down on the wave spawn, where the next wave spawns on top
+                      //    of the party. Holds here until Sezz'ziz spawning signals
+                      //    wave 3 has begun at the bottom.
+                      .MoveToHoldUntilSpawn(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 10.0f,
+                                            /*until alive*/ ZF_SEZZIZ).Timeout(ZF_WAVES_TIMEOUT)
                       // 3. Descend and help the crew kill the temple bosses.
                       .KillCreatureEngage(ZF_NEKRUM, /*count*/ 1, /*searchRadius*/ 250.0f)
                       .KillCreatureEngage(ZF_SEZZIZ, /*count*/ 1, /*searchRadius*/ 250.0f)

@@ -36,6 +36,11 @@ namespace
     // trigger ladder and the action layer cannot drift. See that header for the
     // unit/why annotations.
 
+    // How close a follower must be to the tank to rest during a persistent event
+    // (otherwise it regroups to the tank's garrison spot first). See
+    // RestTargetIfActive.
+    constexpr float DC_EVENT_REST_REGROUP_DIST = 12.0f;
+
     // DC must be enabled AND not paused for the driving ladder to fire. Pause
     // is a soft stop: `enabled` (and all boss progress) stays set, but every
     // trigger here goes inert so the tank holds exactly as it would under
@@ -545,8 +550,26 @@ namespace
     {
         if (!bot || bot->isDead() || bot->IsInCombat())
             return 0;
-        if (!AI_VALUE(Player*, "dungeon clear party tank"))
+        Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+        if (!tank)
             return 0;
+
+        // During a PERSISTENT anchored event (ZulFarrak's temple), don't rest
+        // until regrouped near the tank: a member that dropped low at the bottom
+        // would otherwise drink ON the wave spawn and the next wave spawns on top
+        // of it. Deferring (return 0) lets follow-tank (rel 25) win, so the member
+        // first runs up to the tank's garrison spot on the ramp, THEN rests there.
+        // The tank itself (tank == bot) reads distance 0 and rests at its garrison.
+        if (tank != bot)
+        {
+            PlayerbotAI* tankAI = GET_PLAYERBOT_AI(tank);
+            if (tankAI &&
+                DungeonEventExecutor::IsPersistentAnchoredEventActive(
+                    tankAI->GetAiObjectContext()) &&
+                bot->GetExactDist(tank) > DC_EVENT_REST_REGROUP_DIST)
+                return 0;
+        }
+
         return DcSettings::GetUInt(bot, key);
     }
 }
