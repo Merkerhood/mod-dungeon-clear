@@ -185,7 +185,7 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_TRUE(e->persistent);
     EXPECT_TRUE(e->required);
 
-    ASSERT_EQ(e->steps.size(), 9u);
+    ASSERT_EQ(e->steps.size(), 10u);
 
     // 1. kill the executioner (engage-driven), then crack a cage to start it.
     EXPECT_EQ(e->steps[0].kind, EventStepKind::KillCreature);
@@ -194,31 +194,33 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
     EXPECT_EQ(e->steps[1].goEntry, 141073u);
 
-    // 2. survive the waves — wait for Sezz'ziz to spawn (wave 3).
-    EXPECT_EQ(e->steps[2].kind, EventStepKind::WaitForSpawn);
-    EXPECT_EQ(e->steps[2].creatureEntry, 7275u);
-    EXPECT_TRUE(e->steps[2].wantAlive);
+    // 2. move onto the ramp head, then survive the waves — wait for Sezz'ziz
+    //    (wave 3) to spawn.
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[3].creatureEntry, 7275u);
+    EXPECT_TRUE(e->steps[3].wantAlive);
 
     // 3. descend and kill the two temple bosses (engage-driven).
-    EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[3].creatureEntry, 7796u);  // Nekrum
-    EXPECT_TRUE(e->steps[3].engage);
     EXPECT_EQ(e->steps[4].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[4].creatureEntry, 7275u);  // Sezz'ziz
+    EXPECT_EQ(e->steps[4].creatureEntry, 7796u);  // Nekrum
     EXPECT_TRUE(e->steps[4].engage);
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[5].creatureEntry, 7275u);  // Sezz'ziz
+    EXPECT_TRUE(e->steps[5].engage);
 
     // 4. goblin FIRST (opens the door), then a short dwell before provoking Bly.
-    EXPECT_EQ(e->steps[5].kind, EventStepKind::Gossip);
-    EXPECT_EQ(e->steps[5].creatureEntry, 7607u);  // Weegli
-    EXPECT_EQ(e->steps[6].kind, EventStepKind::Wait);
-    EXPECT_GT(e->steps[6].durationMs, 0u);
+    EXPECT_EQ(e->steps[6].kind, EventStepKind::Gossip);
+    EXPECT_EQ(e->steps[6].creatureEntry, 7607u);  // Weegli
+    EXPECT_EQ(e->steps[7].kind, EventStepKind::Wait);
+    EXPECT_GT(e->steps[7].durationMs, 0u);
 
     // 5. human starts the fight; killing Bly ends the event.
-    EXPECT_EQ(e->steps[7].kind, EventStepKind::Gossip);
-    EXPECT_EQ(e->steps[7].creatureEntry, 7604u);  // Bly
-    EXPECT_EQ(e->steps[8].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[8].creatureEntry, 7604u);
-    EXPECT_TRUE(e->steps[8].engage);
+    EXPECT_EQ(e->steps[8].kind, EventStepKind::Gossip);
+    EXPECT_EQ(e->steps[8].creatureEntry, 7604u);  // Bly
+    EXPECT_EQ(e->steps[9].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[9].creatureEntry, 7604u);
+    EXPECT_TRUE(e->steps[9].engage);
 }
 
 // The builder's KillCreatureEngage marks the engage flag (vs plain KillCreature
