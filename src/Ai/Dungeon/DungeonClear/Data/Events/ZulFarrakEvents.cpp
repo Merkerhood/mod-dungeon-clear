@@ -24,8 +24,12 @@
 //      Troll Cage (GO 141070-141074). Using one cage (go->Use cheats the lock —
 //      no key needed) fires go_troll_cageAI::GossipHello, which frees Bly's band
 //      (passive in cages) and starts the assault.
-//   2. Waves 1 & 2 of Sandfury trolls charge UP the stairs to the party; we hold
-//      near the freed NPC helpers at the summit and fight them off.
+//   2. The cages / executioner sit BACK from the staircase, but the waves charge
+//      UP the ramp and hit the freed NPC crew (who stage at the ramp head) first —
+//      if the party loiters at the summit it never aggros the waves and the NPCs
+//      die. So we move forward onto the ramp head (the crew's staging line,
+//      verified from initBlyCrewMember) and hold there to tank the waves off the
+//      NPCs.
 //   3. Wave 3 spawns at the BOTTOM of the stairs together with the temple bosses
 //      Nekrum Gutchewer (7796) and Shadowpriest Sezz'ziz (7275); the NPC crew
 //      moves down to engage. We descend (engage steps drive the long walk-in) and
@@ -54,6 +58,14 @@ namespace
     constexpr uint32 ZF_WEEGLI = 7607;   // goblin — blows the door to Ukorz
     constexpr uint32 ZF_BLY = 7604;      // human — final fight ends the event
 
+    // Ramp head — where Bly's crew stage (initBlyCrewMember targets ~y1263,
+    // z41.5) and where the waves arrive coming up the stairs. We hold just in
+    // front of the crew line (slightly lower y, toward the waves) so the tank is
+    // the forwardmost target and intercepts each wave before it reaches the NPCs.
+    constexpr float ZF_RAMP_X = 1886.0f;
+    constexpr float ZF_RAMP_Y = 1260.0f;
+    constexpr float ZF_RAMP_Z = 41.5f;
+
     // The wave sequence (cages open -> wave 3 / bosses spawn) runs several
     // minutes; a generous timeout keeps the long survive-the-waves wait from
     // escalating to a stall. The NPC gossips / door-blow likewise take a while.
@@ -72,8 +84,10 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       // 1. Clear the summit guard, then crack a cage to begin.
                       .KillCreatureEngage(ZF_EXECUTIONER)
                       .UseGO(ZF_TROLL_CAGE, /*searchRadius*/ 25.0f)
-                      // 2. Survive waves 1 & 2 (they run up to us); Sezz'ziz going
-                      //    live signals wave 3 has begun at the bottom.
+                      // 2. Move forward onto the ramp head (with the NPC crew) so
+                      //    the tank intercepts the waves, then hold there until
+                      //    Sezz'ziz spawning signals wave 3 has begun at the bottom.
+                      .MoveTo(ZF_RAMP_X, ZF_RAMP_Y, ZF_RAMP_Z, /*radius*/ 8.0f)
                       .WaitForSpawn(ZF_SEZZIZ, /*wantAlive*/ true).Timeout(ZF_WAVES_TIMEOUT)
                       // 3. Descend and help the crew kill the temple bosses.
                       .KillCreatureEngage(ZF_NEKRUM, /*count*/ 1, /*searchRadius*/ 250.0f)
