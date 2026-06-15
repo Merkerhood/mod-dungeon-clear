@@ -41,10 +41,16 @@
 
 #include "ScriptMgr.h"
 #include "AllCreatureScript.h"
+#include "Cell.h"
+#include "CellImpl.h"
 #include "Creature.h"
+#include "CreatureAI.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 #include "Log.h"
 #include "Player.h"
 #include "PlayerScript.h"
+#include "UnitScript.h"
 
 #include "Playerbots.h"
 #include "PlayerbotAI.h"
@@ -403,6 +409,73 @@ public:
     }
 };
 
+// WORKAROUND for the Sunken Temple (map 109) Shade of Eranikus event holding the
+// party in combat forever — the same class of bug as the Zul'Farrak stray-summon
+// hook above, and likewise unfixable for us in core. instance_sunken_temple.cpp's
+// SetData(DATA_ERANIKUS_FIGHT) throws EVERY loaded dragonkin in the temple into
+// combat with the whole zone via Creature::SetInCombatWithZone(). The scattered
+// ones that can't path to the party never reach it and never trip their home
+// leash, so once the Shade is dead they keep a combat reference on every party
+// member indefinitely — killing the adds that DID reach the party never clears the
+// stranded ones, and the DungeonClear run then freezes on its "party not ready /
+// resting" gate. The core instance script never resets these minions on the
+// Shade's own death (its OnUnitDeath handles only Jammal'an), and we can't patch
+// core, so do that cleanup here: when the Shade of Eranikus dies, evade every
+// still-stranded awakened dragonkin so the party drops combat and the run
+// continues. Scoped strictly to the Shade's death on map 109; universal (helps
+// real players too), not gated on DungeonClear.
+class DungeonClearEranikusCombatReleaseScript : public UnitScript
+{
+public:
+    DungeonClearEranikusCombatReleaseScript()
+        : UnitScript("DungeonClearEranikusCombatReleaseScript", true, {
+            UNITHOOK_ON_UNIT_DEATH
+        }) {}
+
+    void OnUnitDeath(Unit* unit, Unit* /*killer*/) override
+    {
+        constexpr uint32 NPC_SHADE_OF_ERANIKUS = 5709;
+        constexpr uint32 MAP_SUNKEN_TEMPLE = 109;
+        if (!unit || !unit->IsCreature() || unit->GetEntry() != NPC_SHADE_OF_ERANIKUS)
+            return;
+        if (unit->GetMapId() != MAP_SUNKEN_TEMPLE)
+            return;
+
+        // Sweep the temple around the Shade's corpse for the awakened dragonkin.
+        // The radius spans the inner sanctum plus the surrounding ring where the
+        // SetInCombatWithZone'd dragonkin patrol or strand; the grid visitor is
+        // 2D-cell based so it returns them across the event's vertical levels too.
+        // One-shot on a boss death, so the broad sweep is cheap.
+        constexpr float SWEEP = 400.0f;
+        std::list<Creature*> nearby;
+        Acore::AnyUnitInObjectRangeCheck check(unit, SWEEP);
+        Acore::CreatureListSearcher<Acore::AnyUnitInObjectRangeCheck> searcher(unit, nearby, check);
+        Cell::VisitObjects(unit, searcher, SWEEP);
+
+        uint32 released = 0;
+        for (Creature* c : nearby)
+        {
+            if (!c || c == unit || !c->IsAlive() || !c->IsInCombat())
+                continue;
+            if (c->GetCreatureType() != CREATURE_TYPE_DRAGONKIN)
+                continue;
+            if (c->GetEntry() == NPC_SHADE_OF_ERANIKUS)
+                continue;  // the Shade itself / any second copy — never our target
+            if (CreatureAI* ai = c->AI())
+            {
+                ai->EnterEvadeMode();
+                ++released;
+            }
+        }
+
+        if (released)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC] Shade of Eranikus died — evaded {} stranded awakened "
+                     "dragonkin to release the party from combat "
+                     "(SetInCombatWithZone workaround).", released);
+    }
+};
+
 void AddSC_dungeon_clear_module()
 {
     new DungeonClearRegistrarWorldScript();
@@ -414,4 +487,5 @@ void AddSC_dungeon_clear_module()
     new DungeonClearSpectatorDeathGuardScript();
     new DungeonClearReaperScript();
     new DungeonClearZfStraySummonScript();
+    new DungeonClearEranikusCombatReleaseScript();
 }
