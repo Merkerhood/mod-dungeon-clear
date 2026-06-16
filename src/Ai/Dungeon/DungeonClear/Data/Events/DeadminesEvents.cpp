@@ -21,9 +21,12 @@
 // Cookie 4, Greenskin 5, VanCleef 6). Boss-nav drives the tank to the cannon
 // exactly as to any boss; the event then fires it in place.
 //
-// A bot never loots the chest or uses the gunpowder, so the FireDefiasCannon
-// hook replays the authentic spell hit directly (CastSpell at the cannon GO).
-// See ObjectiveHookRegistry.
+// The cannon's lock (83) is an ITEM lock requiring the Defias Gunpowder (item
+// 5397) as the key, so spell 6250 only fires the cannon when cast FROM that
+// item. A bot never loots the chest, so the FireDefiasCannon hook grants the
+// gunpowder and uses it on the cannon (the item-use path supplies the cast-item
+// the OPEN_LOCK needs). The gunpowder has a 2s "Opening" cast. See
+// ObjectiveHookRegistry.
 //
 // PERSISTENT: firing the cannon summons two Squallshapers that immediately
 // engage, so the event sees a >1s Drive gap on the combat engine right after the
