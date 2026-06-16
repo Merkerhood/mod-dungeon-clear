@@ -293,6 +293,21 @@ namespace
                                   1886.8f, 1289.9f, 46.0f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1),
+                    // The optional Gahz'rilla gong, ordered LAST: orderIndex 8 is
+                    // strictly above Chief Ukorz's bit 7 (the map's highest real
+                    // DungeonEncounter bit), so the strictly-ordinal picker only
+                    // routes the tank to the sacred pool once every real boss is
+                    // dead. Anchor sits ON the gong (GO 141832 spawn coords) so
+                    // boss-nav delivers the tank right to it; eventId 2 (see
+                    // ZulFarrakEvents.cpp) rings it and kills the summoned boss.
+                    // gateEntry 0: the event owns completion (Gahz'rilla dead),
+                    // not "boss alive". The objective carries no real kill-bit, so
+                    // index 8 can't collide with a set encounter bit.
+                    MakeObjective(OBJ(2), /*orderIndex*/ 8, 209,
+                                  "Sacred Pool (Gahz'rilla gong)",
+                                  1650.91f, 1171.88f, 10.901f,
+                                  /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 2),
                 };
                 t.push_back(std::move(p));
             }

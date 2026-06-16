@@ -151,6 +151,7 @@ TEST(DungeonEventRegistryTest, FindAndHasEvents)
 {
     EXPECT_NE(DungeonEventRegistry::Find(109, 1), nullptr);  // Sunken Temple forcefield
     EXPECT_NE(DungeonEventRegistry::Find(209, 1), nullptr);  // ZulFarrak summit
+    EXPECT_NE(DungeonEventRegistry::Find(209, 2), nullptr);  // ZulFarrak Gahz'rilla
     EXPECT_NE(DungeonEventRegistry::Find(230, 1), nullptr);  // BRD Ring of Law
     EXPECT_NE(DungeonEventRegistry::Find(109, 11), nullptr);  // ST Atal'alarion
     EXPECT_EQ(DungeonEventRegistry::Find(109, 99), nullptr);  // no such event
@@ -356,6 +357,36 @@ TEST(DungeonEventRegistryTest, ZulFarrakTempleEventShape)
     EXPECT_EQ(e->steps[8].kind, EventStepKind::KillCreature);
     EXPECT_EQ(e->steps[8].creatureEntry, 7604u);
     EXPECT_TRUE(e->steps[8].engage);
+}
+
+// ZulFarrak Sacred Pool (Gahz'rilla) event (map 209, id 2): a PERSISTENT anchored
+// step list ordered LAST (anchor at encounterIndex 8). Ring the gong (UseGO 141832)
+// to summon Gahz'rilla, WAIT for it to emerge, then engage and kill it. The
+// WaitForSpawn between the ring and the kill is essential — without it the kill
+// step would read "no live boss" before the summon and false-complete.
+TEST(DungeonEventRegistryTest, ZulFarrakGahzrillaEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(209, 2);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 3u);
+
+    // 1. ring the gong -> summons Gahz'rilla (go->Use cheats the lock, no mallet).
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
+    EXPECT_EQ(e->steps[0].goEntry, 141832u);
+
+    // 2. hold until the summoned boss has materialised.
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[1].creatureEntry, 7273u);
+    EXPECT_TRUE(e->steps[1].wantAlive);
+
+    // 3. engage and kill it (the pool boss does not auto-aggro).
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[2].creatureEntry, 7273u);
+    EXPECT_TRUE(e->steps[2].engage);
 }
 
 // Blackrock Depths Ring of Law (map 230): a PERSISTENT anchored event that walks
