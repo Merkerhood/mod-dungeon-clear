@@ -40,6 +40,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(209));   // ZulFarrak
     EXPECT_TRUE(BossRosterRegistry::HasPatch(230));   // Blackrock Depths
     EXPECT_TRUE(BossRosterRegistry::HasPatch(36));    // Deadmines
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(329));   // Stratholme
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -93,6 +94,47 @@ TEST(BossRosterRegistryTest, ZfGahzrillaObjectiveSortsAfterUkorz)
     ASSERT_GE(ukorzIdx, 0);
     EXPECT_GT(gahzIdx, ukorzIdx) << "Gahz'rilla must come after Ukorz (ordered last)";
     EXPECT_EQ(out[gahzIdx].eventId, 2u);
+}
+
+// Stratholme dead side: the DBC puts the ziggurats (Baroness 7, Nerub'enkan 8,
+// Maleki 9) before Magistrate Barthilas (10), but the path runs Barthilas FIRST.
+// The patch re-adds Barthilas with orderOverride 6 (keeping kill-bit 10) so the
+// clear order becomes Barthilas -> ziggurats -> Slaughterhouse (11) -> Baron (12).
+TEST(BossRosterRegistryTest, StratholmeBarthilasReorderedBeforeZiggurats)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(10813, 6, "Balnazzar", 329),         // live side, stays put
+        Boss(10436, 7, "Baroness Anastari", 329),
+        Boss(10437, 8, "Nerub'enkan", 329),
+        Boss(10438, 9, "Maleki the Pallid", 329),
+        Boss(10435, 10, "Magistrate Barthilas", 329),
+        Boss(10440, 12, "Baron Rivendare", 329),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(329, base);
+
+    int barthIdx = -1, baronessIdx = -1, malekiIdx = -1, slaughterIdx = -1, baronIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 10435) barthIdx = i;
+        if (out[i].entry == 10436) baronessIdx = i;
+        if (out[i].entry == 10438) malekiIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 4u) slaughterIdx = i;
+        if (out[i].entry == 10440) baronIdx = i;
+    }
+    ASSERT_GE(barthIdx, 0);
+    ASSERT_GE(baronessIdx, 0);
+    ASSERT_GE(slaughterIdx, 0) << "slaughterhouse objective missing";
+    ASSERT_GE(baronIdx, 0);
+
+    // Barthilas first, then the ziggurats, then slaughterhouse, then Baron.
+    EXPECT_LT(barthIdx, baronessIdx) << "Barthilas must precede the ziggurats";
+    EXPECT_LT(malekiIdx, slaughterIdx) << "ziggurats before the slaughterhouse";
+    EXPECT_LT(slaughterIdx, baronIdx) << "slaughterhouse before Baron";
+
+    // Reordering must NOT disturb his real kill-bit: completion still keys on 10.
+    EXPECT_EQ(out[barthIdx].encounterIndex, 10u);
+    EXPECT_EQ(out[barthIdx].orderOverride, 6);
+    EXPECT_EQ(BossOrderKey(out[barthIdx]), 6u);
 }
 
 // Blackrock Depths: the Ring of Law objective (its own DungeonEncounter bit 3,

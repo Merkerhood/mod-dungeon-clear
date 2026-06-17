@@ -137,13 +137,13 @@ namespace
             // sharing its slot with the Weaver & Dreamscythe objective): the
             // boss is now picked right after its objective instead of last.
             for (DungeonBossInfo const& info : cands)
-                if (info.encounterIndex == stickyEncounterIndex)
+                if (BossOrderKey(info) == stickyEncounterIndex)
                     return info;
 
             // Commit released and the shared slot is done: head to the
             // lowest-index boss strictly after the one we just left.
             for (DungeonBossInfo const& info : cands)
-                if (info.encounterIndex > stickyEncounterIndex)
+                if (BossOrderKey(info) > stickyEncounterIndex)
                     return info;
         }
 
@@ -289,17 +289,18 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
 
     uint32 const stickyEntry = AI_VALUE(uint32, "dungeon clear sticky boss");
 
-    // Resolve the committed boss's encounter index from the full boss list (it
-    // stays here even after the boss dies and drops out of the candidate
-    // list), so PickTarget can advance to the next boss after it rather than
-    // snapping back to the lowest-index survivor when the commit releases.
+    // Resolve the committed boss's ORDER KEY from the full boss list (it stays
+    // here even after the boss dies and drops out of the candidate list), so
+    // PickTarget can advance to the next boss after it rather than snapping back
+    // to the lowest survivor when the commit releases. Uses BossOrderKey (not the
+    // raw encounterIndex) so a reordered boss advances along its path slot.
     uint32 stickyEncounterIndex = 0;
     bool haveStickyIndex = false;
     if (stickyEntry)
         for (DungeonBossInfo const& info : bosses)
             if (info.entry == stickyEntry)
             {
-                stickyEncounterIndex = info.encounterIndex;
+                stickyEncounterIndex = BossOrderKey(info);
                 haveStickyIndex = true;
                 break;
             }

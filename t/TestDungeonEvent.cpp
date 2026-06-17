@@ -7,6 +7,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/EventConditionRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 namespace
@@ -504,6 +505,87 @@ TEST(DungeonEventRegistryTest, WailingCavernsSerpentisDropEventShape)
     EXPECT_FLOAT_EQ(e->steps[1].y, 4.021016f);
     EXPECT_FLOAT_EQ(e->steps[1].z, -63.919395f);
     EXPECT_FLOAT_EQ(e->steps[1].radius, 5.0f);
+}
+
+// Stratholme (329) dead-side "Baron run": the persistent Slaughterhouse chain
+// (eventId 4), anchored at Ramstein's DBC bit 11 (after the ziggurats + Barthilas,
+// before Baron 12). Abominations+Ramstein (one ClearRadius) -> wait+clear undead
+// wave -> wait+clear guard wave -> gate on the Baron door opening. Slaughter
+// progress isn't exposed via GetData, so the phase barriers are the monotonic
+// doors (combat-gap proof), not transient creature checks; the waves are cleared
+// by ClearRadius (a hall centre well south of the closed Baron door).
+TEST(DungeonEventRegistryTest, StratholmeSlaughterhouseEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(329, 4);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 11u);  // Ramstein's bit, between Barthilas (10) and Baron (12)
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 6u);
+
+    // 1. clear the hall: abominations + the synchronously-summoned Ramstein.
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+    EXPECT_TRUE(e->steps[0].engage);
+    EXPECT_FLOAT_EQ(e->steps[0].x, 4032.0f);
+    EXPECT_FLOAT_EQ(e->steps[0].y, -3415.0f);
+
+    // 2. wave 1: wait for the mindless undead, then ClearRadius them.
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[1].creatureEntry, 11030u);
+    EXPECT_TRUE(e->steps[1].wantAlive);
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::ClearRadius);
+
+    // 3. wave 2: wait for the black guards, then ClearRadius them.
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForSpawn);
+    EXPECT_EQ(e->steps[3].creatureEntry, 10394u);
+    EXPECT_EQ(e->steps[4].kind, EventStepKind::ClearRadius);
+
+    // 4. monotonic completion gate: the Baron door (175796) opens when the guards
+    //    die. GO_STATE_ACTIVE (0) = open.
+    EXPECT_EQ(e->steps[5].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[5].goEntry, 175796u);
+    EXPECT_EQ(e->steps[5].wantState, 0u);
+    EXPECT_GT(e->steps[5].radius, 100.0f);  // reaches the door from across the hall
+}
+
+// The three ziggurat acolyte clears (eventIds 1/2/3) are conditional events
+// (conditions 5/6/7) that fire when a ziggurat door is open but the chamber not
+// yet cleared, each a single ClearRadius of its acolyte chamber.
+TEST(DungeonEventConditional, StratholmeZigguratAcolyteEvents)
+{
+    std::vector<DungeonEvent const*> str = DungeonEventRegistry::Conditional(329);
+    ASSERT_EQ(str.size(), 3u);  // the 3 ziggurats; the Slaughterhouse is anchored
+    for (DungeonEvent const* e : str)
+    {
+        EXPECT_EQ(e->activation, EventActivation::Conditional);
+        EXPECT_TRUE(e->required);
+        ASSERT_EQ(e->steps.size(), 1u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+        EXPECT_TRUE(e->steps[0].engage);
+    }
+
+    // event id N maps to condition N+4 (1->5, 2->6, 3->7).
+    for (uint32 id : {1u, 2u, 3u})
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(329, id);
+        ASSERT_NE(e, nullptr);
+        EXPECT_EQ(e->conditionId, id + 4u);
+        EXPECT_TRUE(EventConditionRegistry::Has(id + 4u));
+    }
+
+    // Each acolyte clear sorts in the panel just before the next anchor (so it
+    // renders right after the boss whose door it follows, not dumped at the end):
+    // zig1 -> before Nerub'enkan, zig2 -> before Maleki, zig3 -> before the
+    // Slaughterhouse objective.
+    EXPECT_EQ(DungeonEventRegistry::Find(329, 1)->panelGatesBossEntry, 10437u);
+    EXPECT_EQ(DungeonEventRegistry::Find(329, 2)->panelGatesBossEntry, 10438u);
+    EXPECT_EQ(DungeonEventRegistry::Find(329, 3)->panelGatesBossEntry,
+              BossRosterRegistry::ObjectiveEntry(1));
+
+    // These are NOT room-aggro pre-clears (ClearRadius, not KillCreature(0)).
+    EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(329));
 }
 
 // Garrison MoveTo (MoveToHoldUntilSpawn): a MoveTo step carrying a spawn-gate

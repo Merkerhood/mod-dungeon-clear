@@ -8,20 +8,27 @@
 #include <algorithm>
 #include <unordered_set>
 
+static_assert(BossRosterRegistry::ObjectiveEntry(0) == 0x4F000000u,
+              "objective entry base must stay in the synthetic range");
+
 namespace
 {
-    // Synthetic entry base for non-creature objectives. Real creature entries
-    // never reach this range, so objective anchors get a unique nonzero entry
-    // that flows through the existing entry-keyed machinery (skip / sticky /
-    // cleared-anchor latch) without colliding with any spawn.
-    constexpr uint32 OBJECTIVE_ENTRY_BASE = 0x4F000000u;
-    constexpr uint32 OBJ(uint32 seq) { return OBJECTIVE_ENTRY_BASE | seq; }
+    // Synthetic entry for the seq-th non-creature objective on a map. The shared
+    // definition lives in the header (BossRosterRegistry::ObjectiveEntry) so an
+    // event file can name the objective it sorts relative to in the status panel
+    // (panelGatesBossEntry); OBJ is the local shorthand used by the table below.
+    constexpr uint32 OBJ(uint32 seq) { return BossRosterRegistry::ObjectiveEntry(seq); }
 
     // Build a boss anchor with an inherited completion bit. `completionFrom` is
     // the auto-derived entry whose encounterIndex (kill-bit) this boss borrows
     // — used when the real boss has no DungeonEncounter row of its own.
+    // `orderOverride` (default -1) reorders the boss in the clear sequence
+    // independently of its kill-bit — see DungeonBossInfo::orderOverride. Use it
+    // when re-adding a real boss whose DBC bit doesn't match the desired path
+    // (pass completionFrom = the boss's own entry to keep its real kill-bit).
     DungeonBossInfo MakeBoss(uint32 entry, uint32 mapId, char const* name,
-                             float x, float y, float z, uint32 completionFrom)
+                             float x, float y, float z, uint32 completionFrom,
+                             int32 orderOverride = -1)
     {
         DungeonBossInfo b;
         b.entry = entry;
@@ -32,6 +39,7 @@ namespace
         b.z = z;
         b.kind = DungeonAnchorKind::Boss;
         b.inheritCompletionFrom = completionFrom;
+        b.orderOverride = orderOverride;
         return b;
     }
 
@@ -382,6 +390,59 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- Stratholme (map 329) — the Slaughterhouse / Baron run --------
+            // Ramstein the Gorger (DBC bit 11) is SUMMONED once the Slaughter
+            // Square abominations die — he has no creature.sql spawn, so
+            // BossSpawnIndex (which walks spawns) never lists him and the tank
+            // can't anchor on him. Add ONE objective at the Slaughter Square
+            // (SlaughterPos from instance_stratholme.cpp), ordered at Ramstein's
+            // bit 11 (after the ziggurats 7/8/9 + Barthilas 10, before Baron 12),
+            // carrying the persistent slaughter event (eventId 4): clear the
+            // abominations -> Ramstein -> 33 Mindless Undead -> 5 Black Guards,
+            // which opens Baron's door. The event's KillCreatureEngage(Ramstein)
+            // flips his real bit when he dies (objectives skip the completion-mask
+            // check, so the orderIndex is a pure ordering hint that can't collide).
+            //
+            // The three ziggurat bosses and Baron need NO roster change — they
+            // have static spawns and real bits and are pulled normally; their
+            // in-ziggurat acolyte follow-ups are conditional events (5/6/7).
+            //
+            // ORDER FIX. The DBC bits put the ziggurats (Baroness 7, Nerub'enkan
+            // 8, Maleki 9) BEFORE Magistrate Barthilas (10), but the dead-side
+            // path runs Barthilas FIRST (he flees the entrance to warn the Baron),
+            // then the ziggurats, then the slaughterhouse, then Baron. So re-add
+            // Barthilas with orderOverride 6 — just after the live side (Balnazzar
+            // 6) and before Baroness 7 — while keeping his real kill-bit 10
+            // (completionFrom = his own entry). Net dead-side order: Barthilas ->
+            // ziggurats 7/8/9 -> Slaughterhouse 11 -> Baron 12.
+            //
+            // Both the live (Scarlet) and dead (Undead) sides stay in the list so
+            // one run does both; only Barthilas's slot moves. Barthilas's spawn
+            // coords are his static creature.sql spawn (he relocates at run-time,
+            // but the auto-list anchored on this spawn and the engage pipeline
+            // handles his flee). See StratholmeEvents.
+            {
+                BossRosterPatch p;
+                p.mapId = 329;
+                p.remove = { 10435 };  // Barthilas — re-added below, reordered
+                p.add = {
+                    MakeBoss(10435, 329, "Magistrate Barthilas",
+                             3663.23f, -3619.14f, 137.98f,
+                             /*completionFrom*/ 10435, /*orderOverride*/ 6),
+                    // Anchor pulled ~37yd SOUTH of SlaughterPos into the abomination
+                    // hall: SlaughterPos (4032,-3378) sits at the still-closed Baron
+                    // door (175796 @ -3364), so the approach hit the door and stalled
+                    // ("closed door blocking path"). This spot is in the open hall,
+                    // reachable from the south entrance gate without crossing a closed
+                    // door; the event's ClearRadius (r70) covers the whole hall.
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 11, 329,
+                                  "Slaughterhouse (Baron run)",
+                                  4032.0f, -3415.0f, 118.0f, /*arriveRadius*/ 30.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 4),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;
@@ -433,23 +494,27 @@ std::vector<DungeonBossInfo> BossRosterRegistry::Apply(uint32 mapId, std::vector
         if (!remove.count(b.entry))
             result.push_back(b);
 
-    // 2. Append the added anchors and re-sort by encounter index so objectives
-    //    and replacement bosses slot into the clear order.
+    // 2. Append the added anchors and re-sort into clear order so objectives
+    //    and replacement bosses slot in. Ordering keys on BossOrderKey (the
+    //    explicit orderOverride when set, else encounterIndex) so a reordered
+    //    real boss lands in its path slot without disturbing its kill-bit.
     for (DungeonBossInfo& a : adds)
         result.push_back(std::move(a));
 
-    // Sort by encounter index. Tie-break: at an equal index an Objective sorts
-    // BEFORE a Boss, so an objective sharing a boss's bit is reached first. The
-    // candidate picker (NextDungeonBossValue::PickTarget) advances to the
-    // lowest index STRICTLY greater than the one just finished, so an objective
-    // tied with the boss it must precede (e.g. ZulFarrak's summit event at bit 7,
-    // the same bit as Chief Ukorz) would otherwise be skipped past; ordering it
-    // first makes the picker hand it over before the boss.
+    // Sort by order key. Tie-break: at an equal key an Objective sorts BEFORE a
+    // Boss, so an objective sharing a boss's bit is reached first. The candidate
+    // picker (NextDungeonBossValue::PickTarget) advances to the lowest key
+    // STRICTLY greater than the one just finished, so an objective tied with the
+    // boss it must precede (e.g. ZulFarrak's summit event at bit 7, the same bit
+    // as Chief Ukorz) would otherwise be skipped past; ordering it first makes
+    // the picker hand it over before the boss.
     std::stable_sort(result.begin(), result.end(),
                      [](DungeonBossInfo const& l, DungeonBossInfo const& r)
                      {
-                         if (l.encounterIndex != r.encounterIndex)
-                             return l.encounterIndex < r.encounterIndex;
+                         uint32 const lk = BossOrderKey(l);
+                         uint32 const rk = BossOrderKey(r);
+                         if (lk != rk)
+                             return lk < rk;
                          return l.kind == DungeonAnchorKind::Objective &&
                                 r.kind == DungeonAnchorKind::Boss;
                      });
