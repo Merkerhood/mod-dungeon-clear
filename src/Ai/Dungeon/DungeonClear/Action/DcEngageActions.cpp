@@ -938,14 +938,56 @@ bool DcRunEventAction::Execute(Event /*event*/)
         return EngageDirect(trash);
     }
 
+    auto& prog =
+        context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
+
+    // A conditional-event step that must SEEK its target — ClearRadius (clear an
+    // area, e.g. the Stratholme ziggurat acolyte chambers) or KillCreature with
+    // .engage — needs the engage pipeline to WALK the leader in. Unlike an
+    // anchored event, where boss-nav delivers the tank to its objective before
+    // the gate is even evaluated, a conditional event has nothing to navigate the
+    // bot to the spot: without this it holds in place, the gate never satisfies,
+    // and the step times out to Blocked. Mirror the anchored walk-in
+    // (DcObjectiveArriveAction): while a target exists EngageDirect it; combat
+    // owns the tick once aggroed, and Drive's gate (below) advances the step once
+    // none remain.
+    {
+        uint32 const idx = (prog.eventId == ev->id) ? prog.stepIndex : 0;
+        if (idx < ev->steps.size())
+        {
+            EventStep const& step = ev->steps[idx];
+            if (step.kind == EventStepKind::ClearRadius)
+            {
+                float const r = step.radius > 0.0f ? step.radius : 50.0f;
+                if (Unit* target = DcTargeting::NearestHostileNearPoint(
+                        bot, context, step.x, step.y, step.z, r, step.zBand))
+                {
+                    DcMovement::ResolveEscortConflict(bot);
+                    SetPhase(context, "event");
+                    return EngageDirect(target);
+                }
+            }
+            else if (step.kind == EventStepKind::KillCreature && step.engage &&
+                     step.creatureEntry)
+            {
+                float const search = step.radius > 0.0f ? step.radius : 250.0f;
+                if (Creature* target = bot->FindNearestCreature(
+                        step.creatureEntry, search, /*alive*/ true))
+                {
+                    DcMovement::ResolveEscortConflict(bot);
+                    SetPhase(context, "event");
+                    return EngageDirect(target);
+                }
+            }
+        }
+    }
+
     // Hold position while driving the event. ResolveEscortConflict only cancels a
     // launched escort glide (the coast-past from the advance ladder) — it leaves a
     // step's own intra-room MovePoint (HopTo) alone, so MoveTo/Gossip walk-ins
     // still work, unlike the StopMovingOnCurrentPos in StopBot(Hold).
     DcMovement::ResolveEscortConflict(bot);
 
-    auto& prog =
-        context->GetValue<DungeonEventProgress&>("dungeon clear conditional event progress")->Get();
     EventDriveOutcome const outcome = DungeonEventExecutor::Drive(bot, context, *ev, prog);
 
     char const* outcomeStr =
