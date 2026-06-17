@@ -35,6 +35,46 @@ namespace DcEventDoorRegistry
                 return false;
         }
     }
+
+    // The MIRROR-IMAGE special case: door gameobjects carrying NO lock at all
+    // (template lockId 0) that a player nonetheless opens by simply clicking
+    // them — ordinary traversal gates the dungeon expects you to walk through.
+    //
+    // BotCanOpenDoorLikePlayer otherwise refuses every lock-free door, because
+    // lockId 0 is ALSO the shape of script/event seals the bot must not pop
+    // (Uldaman's Seal of Khaz'Mul, lock-free and only opened by the keystone
+    // event, isn't flagged GO_FLAG_NOT_SELECTABLE until its encounter is done,
+    // so the generic flag screen can't tell them apart). We can't relax the
+    // lock-free rule wholesale; instead we allowlist the entries verified in
+    // the world DB to be plain clickable doors — no ScriptName, no AIName, no
+    // instance-script GO-state control, no SmartAI.
+    //
+    // Scholomance's Iron Gates (175611-175618, 175620) and plain interior Doors
+    // (175610, 175619) are exactly this: lock-free, scriptless room-to-room
+    // gates the player clicks open. (The dungeon's *event* gates — Kirtonos
+    // 175570 and the seven Gandling gates 177371-177377 — are deliberately
+    // EXCLUDED; the instance script drives their state.)
+    inline bool IsLockFreeClickable(uint32 goEntry)
+    {
+        switch (goEntry)
+        {
+            // Scholomance — interior traversal gates/doors (map 289)
+            case 175610:  // Door
+            case 175611:  // Iron Gate
+            case 175612:  // Iron Gate
+            case 175613:  // Iron Gate
+            case 175614:  // Iron Gate
+            case 175615:  // Iron Gate
+            case 175616:  // Iron Gate
+            case 175617:  // Iron Gate
+            case 175618:  // Iron Gate
+            case 175619:  // Door
+            case 175620:  // Iron Gate
+                return true;
+            default:
+                return false;
+        }
+    }
 }
 
 #endif

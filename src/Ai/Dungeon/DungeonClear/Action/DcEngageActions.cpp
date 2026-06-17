@@ -176,7 +176,13 @@ namespace
 
         uint32 const lockId = info->GetLockId();
         if (!lockId)
-            return false;           // lock-free: script/encounter door
+        {
+            // Lock-free is the shape of BOTH plain clickable traversal gates and
+            // script/event seals (Uldaman's Seal of Khaz'Mul) the bot must not
+            // pop. Default to refusing; open only entries the registry verifies
+            // are ordinary player-clickable doors (Scholomance's Iron Gates).
+            return DcEventDoorRegistry::IsLockFreeClickable(go->GetEntry());
+        }
 
         LockEntry const* lock = sLockStore.LookupEntry(lockId);
         if (!lock)
@@ -1325,6 +1331,43 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     DungeonFollowerState& follower =
         context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
 
+    // Progress-aware wedge detection, mirroring Advance's TryPosStuckRecovery and
+    // sampled BEFORE NextHop so a recovery re-anchor lands before the hop below is
+    // computed. The narrow, descending entrance walkways (Scholomance's Iron Gate
+    // approach) micro-stop the glide; the old `escort && isMoving()` ride-guard
+    // saw isMoving()==false on each flicker and relaunched MoveSplinePath, which
+    // resets the spline to its first point — so the bot crawled a few yards over
+    // many seconds (the "door walk-in" stutter dance) and, unlike Advance, never
+    // recovered because the walk-in had no stuck detection at all. Count only
+    // genuine no-progress-WHILE-MOVING ticks; a momentary isMoving()==false (now
+    // tolerated by the ride-guard below) resets the counter.
+    {
+        Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        bool const lastPosValid =
+            appr.lastPos.m_positionX != 0.0f || appr.lastPos.m_positionY != 0.0f ||
+            appr.lastPos.m_positionZ != 0.0f;
+        if (lastPosValid && bot->isMoving() &&
+            cur.GetExactDist(appr.lastPos) < DC_STUCK_DISPLACEMENT)
+            ++appr.doorWalkInStuckTicks;
+        else
+            appr.doorWalkInStuckTicks = 0;
+        appr.lastPos = cur;
+
+        if (appr.doorWalkInStuckTicks >= DC_STUCK_TICK_LIMIT)
+        {
+            // Wedged against geometry. Halt the stuck spline and re-anchor the
+            // cursor onto the nearest forward route point; the fresh NextHop +
+            // spline issue below then restart the glide from a standstill.
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] door walk-in wedged ({} ticks, {:.1f}yd to door) "
+                      "-> halt + re-anchor",
+                      bot->GetName(), appr.doorWalkInStuckTicks, distToDoor);
+            appr.doorWalkInStuckTicks = 0;
+            DcMovement::ResolveEscortConflict(bot);
+            DungeonPathFollower::Resnap(bot, path, follower);
+        }
+    }
+
     // Off-path recovery (knockback / follower bump while walking in), mirrors
     // Advance: re-anchor onto the existing polyline, or rebuild + hold.
     if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
@@ -1351,14 +1394,17 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         return parkAndStall();
     }
 
-    // Leave a healthy in-flight spline alone, but ONLY while it is genuinely
-    // gliding (same splineRunning-only guard as Advance — gating on
-    // IsWaitingForLastMove froze the walk-in for the remainder of the
-    // window-sized delay whenever the spline finalized early).
+    // Leave an in-flight escort glide alone — INCLUDING across a momentary
+    // isMoving()==false flicker on rough/narrow geometry. The generator type
+    // alone is the "spline in flight" signal: the core pops the escort generator
+    // the instant the spline finishes, so an ACTIVE escort means it is still
+    // travelling, and the wedge detector above (not isMoving) is what catches a
+    // spline that has genuinely stalled. The old `&& bot->isMoving()` here was
+    // the thrash source — every micro-stop relaunched the spline from its start,
+    // the "door walk-in" dance. Read fresh: a wedge recovery just above may have
+    // halted the escort, in which case we fall through and re-issue.
     MotionMaster* mm = bot->GetMotionMaster();
-    bool const splineRunning =
-        mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
-    if (splineRunning)
+    if (mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE)
         return true;
     if (!IsMovingAllowed())
         return parkAndStall();

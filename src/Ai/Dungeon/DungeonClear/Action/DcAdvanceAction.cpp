@@ -71,23 +71,10 @@ namespace
     // the case where the bot is stationary AND MoveTo keeps refusing.
     constexpr uint32 DC_STUCK_LIMIT = 8;
 
-    // Position-based stuck detection. If the bot is supposed to be moving
-    // but its world position barely shifts for DC_STUCK_TICK_LIMIT
-    // consecutive Advance ticks, treat as stuck. Catches the "ran into
-    // wall / shortcut path / stuck in mmap seam" case that the MoveTo-
-    // returned-false counter misses.
-    //
-    // This threshold is PER TICK and must stay well below the distance a
-    // HEALTHY escort glide covers in one Advance tick, or normal movement is
-    // misread as stuck. With run speed ~7 yd/s and the Advance cadence of
-    // ~0.2 s, a gliding bot moves ~1.4-1.5 yd/tick — so the old 1.5 yd value
-    // flagged EVERY healthy tick, tripped the limit in 5 ticks, and killed the
-    // bot's own good spline (the stutter-step through hallways/doors: glide a
-    // few yards, false-stuck, stop, idle, re-issue, repeat). A genuinely
-    // wedged bot moves ~0 yd/tick, so 0.5 yd cleanly separates the two: it is
-    // 3x above the wedge floor yet ~1 yd below the slowest healthy glide.
-    constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
-    constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
+    // Position-based stuck detection (DC_STUCK_DISPLACEMENT / DC_STUCK_TICK_LIMIT)
+    // now lives in DungeonClearTuning.h — it is shared with the door-blocked
+    // walk-in, which glides the same escort spline and needs the same wedge
+    // recovery. See that header for the per-tick threshold rationale.
 
     // Distance from the bot to its next polyline hop above which the follower
     // cursor is treated as stale and force-re-anchored (Resnap). During clean
