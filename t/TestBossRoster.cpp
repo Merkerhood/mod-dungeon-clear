@@ -57,7 +57,9 @@ TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
     int objIdx = -1, ukorzIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
     {
-        if (out[i].kind == DungeonAnchorKind::Objective)
+        // The summit objective shares bit 7 with Ukorz; the Gahz'rilla objective
+        // sits at bit 8, so key off the index to pick the summit one.
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].encounterIndex == 7u)
             objIdx = i;
         if (out[i].entry == 7267)
             ukorzIdx = i;
@@ -66,6 +68,31 @@ TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
     ASSERT_GE(ukorzIdx, 0);
     EXPECT_LT(objIdx, ukorzIdx) << "objective must precede Ukorz despite equal bit";
     EXPECT_EQ(out[objIdx].encounterIndex, 7u);
+}
+
+// ZulFarrak: the optional Gahz'rilla gong objective (bit 8, above Chief Ukorz's
+// bit 7) MUST sort AFTER him so the strictly-ordinal picker only routes the tank
+// to the sacred pool once every real boss is dead — the "very last" stop.
+TEST(BossRosterRegistryTest, ZfGahzrillaObjectiveSortsAfterUkorz)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(7795, 6, "Shadowpriest Sezz'ziz", 209),
+        Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
+
+    int gahzIdx = -1, ukorzIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].encounterIndex == 8u)
+            gahzIdx = i;
+        if (out[i].entry == 7267)
+            ukorzIdx = i;
+    }
+    ASSERT_GE(gahzIdx, 0) << "Gahz'rilla objective missing";
+    ASSERT_GE(ukorzIdx, 0);
+    EXPECT_GT(gahzIdx, ukorzIdx) << "Gahz'rilla must come after Ukorz (ordered last)";
+    EXPECT_EQ(out[gahzIdx].eventId, 2u);
 }
 
 // Blackrock Depths: the Ring of Law objective (its own DungeonEncounter bit 3,

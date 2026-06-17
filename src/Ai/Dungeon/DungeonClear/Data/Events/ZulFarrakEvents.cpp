@@ -90,6 +90,29 @@ namespace
     // Lead time between gossiping Weegli (door) and Bly (fight) — enough that
     // Bly's faction-flip of the crew can't catch Weegli mid-walk (live-verified).
     constexpr uint32 ZF_WEEGLI_LEAD_MS = 10000;  // 10 s
+
+    // --- The Sacred Pool (Gahz'rilla gong) — the OPTIONAL final boss --------
+    // The Gong of Zul'Farrak (GO 141832) sits by the sacred pool near the
+    // entrance. USING it (GameObject::Use -> SmartGameObjectAI GOSSIP_HELLO with
+    // reportUse=false, which the gong's filter==1 passes) summons Gahz'rilla
+    // (7273) from the pool, gated by the smart event's condition instance
+    // GetData(1)==0 and its NOT_REPEATABLE flag — so it fires exactly once on a
+    // fresh instance. No Mallet of Zul'Farrak is needed: go->Use() runs the
+    // GossipHello BEFORE the GOOBER lock check (lock 99 / LockType 14), exactly
+    // as the troll cage above and the Razorfen Downs gong cheat their locks.
+    //
+    // Gahz'rilla emerges (a brief non-attackable scripted walk via its own
+    // SmartAI) but does NOT auto-aggro the party, so we must PULL it. On its
+    // death its SmartAI sets instance GetData(1)=3 (DONE). We summon, wait for it
+    // to materialise, then engage and kill it via the normal engage pipeline.
+    constexpr uint32 ZF_GONG = 141832;        // Gong of Zul'Farrak — summons Gahz'rilla
+    constexpr uint32 ZF_GAHZRILLA = 7273;     // the summoned pool boss
+    // Comfortably covers the objective anchor's arrive radius so a tank parked at
+    // the edge of the pool still finds the gong and HopTos the last yards.
+    constexpr float ZF_GONG_SEARCH = 30.0f;
+    // Gahz'rilla's emerge-from-pool walk takes a few seconds; a generous wait
+    // bridges the summon delay without escalating to a stall.
+    constexpr uint32 ZF_GAHZRILLA_SPAWN_TIMEOUT = 60000;  // 1 min
 }
 
 void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
@@ -134,5 +157,21 @@ void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out)
                       .Gossip(ZF_BLY, /*option*/ 0, /*searchRadius*/ 40.0f)
                           .Timeout(ZF_NPC_TIMEOUT).WaitTargetStill().SkipIfTargetMissing()
                       .KillCreatureEngage(ZF_BLY, /*count*/ 1, /*searchRadius*/ 80.0f)
+                      .Build());
+
+    // The Sacred Pool (Gahz'rilla), ordered LAST (objective at encounterIndex 8,
+    // after Chief Ukorz's bit 7 — see BossRosterRegistry). Boss-nav travels the
+    // tank to the gong anchor, then this anchored event rings the gong and kills
+    // the summoned boss. Persistent so the kill (a >1s combat tick-gap on the
+    // engine) doesn't rewind the step list; WaitForSpawn is essential between the
+    // ring and the kill, or KillCreatureEngage would read "no live Gahz'rilla"
+    // before the summon and false-complete.
+    out.push_back(EventBuilder(209, 2, "Sacred Pool (Gahz'rilla)")
+                      .Anchored(8)
+                      .Persistent()
+                      .UseGO(ZF_GONG, ZF_GONG_SEARCH)
+                      .WaitForSpawn(ZF_GAHZRILLA, /*alive*/ true)
+                          .Timeout(ZF_GAHZRILLA_SPAWN_TIMEOUT)
+                      .KillCreatureEngage(ZF_GAHZRILLA, /*count*/ 1, /*searchRadius*/ 100.0f)
                       .Build());
 }
