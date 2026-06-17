@@ -95,16 +95,25 @@ namespace
     // grid is certainly resident by the time we'd declare the boss truly missing.
     constexpr float DC_BOSS_GRID_LOADED_RANGE = 150.0f;
 
-    // Once the boss creature is loaded and visible within this range, pursue its
-    // LIVE position directly (per-tick re-path) instead of walking the long-path
-    // to its static DB spawn anchor. A wandering/patrolling boss is rarely at
-    // its spawn point; without this the tank walked to the anchor, parked
-    // ~DC_ENGAGE_RANGE short of it, and idled until the boss patrolled back into
-    // range on its own (it aggroed the tank rather than the reverse). LOS-gated
-    // so a boss around a corner still routes through the wall-screened
-    // long-path. Generous because it is only a final-approach shortcut for an
-    // already-visible boss.
-    constexpr float DC_DIRECT_PURSUIT_RANGE = 80.0f;
+    // FINAL-approach shortcut: once the boss is loaded, visible, and this close,
+    // walk straight at its LIVE position (per-tick re-path) instead of riding the
+    // corridor glide the last few yards — snappier on a boss that steps around
+    // near engage range.
+    //
+    // This is DELIBERATELY short. The long-path itself now targets the boss's
+    // EFFECTIVE (live) coords (see EnsureLongPath below), so the corridor already
+    // tracks a wandering/patrolling boss the whole way in — the old "tank parks at
+    // the static spawn anchor and idles" failure this branch was widened to 80yd
+    // for no longer exists. A wide pursuit range was actively harmful: from far
+    // out the straight-line MoveTo follows a DIFFERENT route than the LOS-screened,
+    // centered corridor, so as boss-LOS flickered behind room pillars the bot
+    // oscillated between the two routes — pursuit dragging it off the corridor,
+    // TryOffLineRejoin yanking it back (the Scholomance "boss-approach dance" on
+    // the way to Jandice Barov). Kept to a true final-approach range, the straight
+    // shot is in the boss's own open room where it ~matches the corridor end, so
+    // the two no longer fight. LOS-gated either way; out of range / LOS the
+    // wall-screened long-path drives.
+    constexpr float DC_DIRECT_PURSUIT_RANGE = 35.0f;
 
     // The long-path can complete (cursor reaches the polyline end) while the bot
     // is still outside DC_ENGAGE_RANGE of the boss: the navmesh route dead-ends
