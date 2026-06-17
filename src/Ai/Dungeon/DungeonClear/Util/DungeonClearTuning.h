@@ -157,4 +157,19 @@ constexpr float DC_CORRIDOR_Z_BAND = 8.0f;
 constexpr float DC_TRASH_DETOUR_RATIO = 2.0f;
 constexpr float DC_TRASH_DETOUR_SLACK = 20.0f;
 
+// Position-based stuck detection, shared by the Advance drive and the
+// door-blocked walk-in (both glide the same escort spline). If the bot is
+// supposed to be moving but its world position barely shifts for
+// DC_STUCK_TICK_LIMIT consecutive ticks, treat it as wedged and recover
+// (halt the spline + re-anchor the cursor) rather than blindly relaunching.
+//
+// DC_STUCK_DISPLACEMENT is PER TICK and must stay well below the distance a
+// HEALTHY escort glide covers in one tick, or normal movement reads as stuck.
+// With run speed ~7 yd/s and the ~0.2s tick cadence a gliding bot moves
+// ~1.4-1.5 yd/tick — so an old 1.5yd value flagged every healthy tick. A
+// genuinely wedged bot moves ~0 yd/tick, so 0.5yd cleanly separates the two:
+// 3x above the wedge floor yet ~1yd below the slowest healthy glide.
+constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
+constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
+
 #endif  // _DUNGEON_CLEAR_TUNING_H

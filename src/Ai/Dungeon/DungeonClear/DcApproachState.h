@@ -32,6 +32,7 @@ struct DcApproachState
 {
     // --- per-approach stuck / recovery counters ---------------------------
     uint32 posStuckTicks       = 0;  // no-displacement ticks (was "stuck ticks")
+    uint32 doorWalkInStuckTicks = 0; // door-blocked walk-in's own wedge counter
     uint32 stuckCount          = 0;  // MoveTo-returned-false backup (was "stuck count")
     uint32 rebuildAttempts     = 0;  // consecutive rebuilds w/o progress ("stride rebuild attempts")
     uint32 pursuitFailTicks    = 0;  // direct-pursuit give-up latch ("pursuit fail ticks")
@@ -107,6 +108,7 @@ struct DcApproachState
         lastTargetEntry     = newEntry;
         stuckCount          = 0;
         posStuckTicks       = 0;
+        doorWalkInStuckTicks = 0;
         rebuildAttempts     = 0;
         doneNotEngagedTicks = 0;
         pursuitFailTicks    = 0;

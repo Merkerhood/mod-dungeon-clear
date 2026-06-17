@@ -71,23 +71,10 @@ namespace
     // the case where the bot is stationary AND MoveTo keeps refusing.
     constexpr uint32 DC_STUCK_LIMIT = 8;
 
-    // Position-based stuck detection. If the bot is supposed to be moving
-    // but its world position barely shifts for DC_STUCK_TICK_LIMIT
-    // consecutive Advance ticks, treat as stuck. Catches the "ran into
-    // wall / shortcut path / stuck in mmap seam" case that the MoveTo-
-    // returned-false counter misses.
-    //
-    // This threshold is PER TICK and must stay well below the distance a
-    // HEALTHY escort glide covers in one Advance tick, or normal movement is
-    // misread as stuck. With run speed ~7 yd/s and the Advance cadence of
-    // ~0.2 s, a gliding bot moves ~1.4-1.5 yd/tick — so the old 1.5 yd value
-    // flagged EVERY healthy tick, tripped the limit in 5 ticks, and killed the
-    // bot's own good spline (the stutter-step through hallways/doors: glide a
-    // few yards, false-stuck, stop, idle, re-issue, repeat). A genuinely
-    // wedged bot moves ~0 yd/tick, so 0.5 yd cleanly separates the two: it is
-    // 3x above the wedge floor yet ~1 yd below the slowest healthy glide.
-    constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
-    constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
+    // Position-based stuck detection (DC_STUCK_DISPLACEMENT / DC_STUCK_TICK_LIMIT)
+    // now lives in DungeonClearTuning.h — it is shared with the door-blocked
+    // walk-in, which glides the same escort spline and needs the same wedge
+    // recovery. See that header for the per-tick threshold rationale.
 
     // Distance from the bot to its next polyline hop above which the follower
     // cursor is treated as stale and force-re-anchored (Resnap). During clean
@@ -108,16 +95,25 @@ namespace
     // grid is certainly resident by the time we'd declare the boss truly missing.
     constexpr float DC_BOSS_GRID_LOADED_RANGE = 150.0f;
 
-    // Once the boss creature is loaded and visible within this range, pursue its
-    // LIVE position directly (per-tick re-path) instead of walking the long-path
-    // to its static DB spawn anchor. A wandering/patrolling boss is rarely at
-    // its spawn point; without this the tank walked to the anchor, parked
-    // ~DC_ENGAGE_RANGE short of it, and idled until the boss patrolled back into
-    // range on its own (it aggroed the tank rather than the reverse). LOS-gated
-    // so a boss around a corner still routes through the wall-screened
-    // long-path. Generous because it is only a final-approach shortcut for an
-    // already-visible boss.
-    constexpr float DC_DIRECT_PURSUIT_RANGE = 80.0f;
+    // FINAL-approach shortcut: once the boss is loaded, visible, and this close,
+    // walk straight at its LIVE position (per-tick re-path) instead of riding the
+    // corridor glide the last few yards — snappier on a boss that steps around
+    // near engage range.
+    //
+    // This is DELIBERATELY short. The long-path itself now targets the boss's
+    // EFFECTIVE (live) coords (see EnsureLongPath below), so the corridor already
+    // tracks a wandering/patrolling boss the whole way in — the old "tank parks at
+    // the static spawn anchor and idles" failure this branch was widened to 80yd
+    // for no longer exists. A wide pursuit range was actively harmful: from far
+    // out the straight-line MoveTo follows a DIFFERENT route than the LOS-screened,
+    // centered corridor, so as boss-LOS flickered behind room pillars the bot
+    // oscillated between the two routes — pursuit dragging it off the corridor,
+    // TryOffLineRejoin yanking it back (the Scholomance "boss-approach dance" on
+    // the way to Jandice Barov). Kept to a true final-approach range, the straight
+    // shot is in the boss's own open room where it ~matches the corridor end, so
+    // the two no longer fight. LOS-gated either way; out of range / LOS the
+    // wall-screened long-path drives.
+    constexpr float DC_DIRECT_PURSUIT_RANGE = 35.0f;
 
     // The long-path can complete (cursor reaches the polyline end) while the bot
     // is still outside DC_ENGAGE_RANGE of the boss: the navmesh route dead-ends
