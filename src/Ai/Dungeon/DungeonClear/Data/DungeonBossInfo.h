@@ -61,6 +61,24 @@ struct DungeonBossInfo
     // encounterIndex onto this added boss so it borrows that boss's kill-bit
     // for completion detection. Resolved and cleared by BossRosterRegistry::Apply.
     uint32 inheritCompletionFrom{0};
+
+    // Clear-ORDER override. When >= 0 the clear orders this anchor by this value
+    // INSTEAD of encounterIndex, while completion still keys on encounterIndex
+    // (the real DBC kill-bit, untouched). Lets a roster patch reorder a real
+    // boss whose DBC bit doesn't match the intended clear path without breaking
+    // its kill detection — e.g. Stratholme's Magistrate Barthilas (bit 10) must
+    // be reached BEFORE the ziggurats (bits 7-9). -1 => order by encounterIndex
+    // (every auto-derived boss and every anchor that doesn't opt in).
+    int32 orderOverride{-1};
 };
+
+// The value the clear ORDERS an anchor by: the explicit orderOverride when set,
+// else the DBC encounterIndex. Completion detection never uses this — it keys on
+// encounterIndex directly — so reordering a boss can't desync its kill-bit.
+inline uint32 BossOrderKey(DungeonBossInfo const& b)
+{
+    return b.orderOverride >= 0 ? static_cast<uint32>(b.orderOverride)
+                                : b.encounterIndex;
+}
 
 #endif
