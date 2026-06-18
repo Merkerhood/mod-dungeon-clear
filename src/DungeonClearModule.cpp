@@ -33,10 +33,14 @@
  *
  *     This login hook is a zero-config convenience for bots present at login.
  *     The reliable universal path — and the ONLY one that reaches a self-bot
- *     created mid-session via `.playerbots bot self` — is the playerbots config
- *     `NonCombatStrategies = "+dungeon clear"`, applied when each bot's engines
- *     are built. The `.dc` slash command (DungeonClearCommand.cpp) needs
- *     neither, since it dispatches the action directly.
+ *     created mid-session via `.playerbots bot self`, OR survives a
+ *     ResetStrategies() (master/group change, talent change, instance entry) —
+ *     is having the strategy in the playerbots default strategy set. The
+ *     registrar above now injects "+dungeon clear" into that set in code (the
+ *     four sPlayerbotAIConfig strategy strings), so no manual
+ *     `AiPlayerbot.NonCombatStrategies = "+dungeon clear"` conf line is needed.
+ *     The `.dc` slash command (DungeonClearCommand.cpp) needs neither, since it
+ *     dispatches the action directly.
  */
 
 #include "ScriptMgr.h"
@@ -182,6 +186,35 @@ public:
         dc_access::SharedActionContexts()->Add(new DungeonClearActionContext());
         dc_access::SharedTriggerContexts()->Add(new DungeonClearTriggerContext());
         dc_access::SharedValueContexts()->Add(new DungeonClearValueContext());
+
+        // Inject our strategies into the default strategy set, so they survive a
+        // ResetStrategies(). PlayerbotAI::ResetStrategies() (master/group change,
+        // talent change, instance entry with applyInstanceStrategies, certain
+        // commands) wipes EVERY strategy and rebuilds the engines from
+        // AiFactory's defaults + these config strings only — it does NOT re-run
+        // our OnPlayerLogin hook. So a follower that had "dungeon clear" purely
+        // from the login hook silently loses it on the next reset and reverts to
+        // following its master (the player). Appending here makes us part of the
+        // rebuilt default set — the same effect the manual conf line
+        // `AiPlayerbot.NonCombatStrategies = "+dungeon clear"` had, now automatic.
+        // It also reaches self-bots created mid-session via `.playerbots bot
+        // self`, which the login hook never sees. Cost is zero per tick: the
+        // strings are read only when an engine is (re)built. Touch all four
+        // fields — non-random bots use {non,}combatStrategies, random bots use
+        // randomBot{Non,}CombatStrategies (see AiFactory). Idempotent: if the
+        // conf line is still present, find() skips the duplicate.
+        auto const injectStrategy = [](std::string& field, char const* token)
+        {
+            if (field.find(token) != std::string::npos)
+                return;
+            if (!field.empty())
+                field += ",";
+            field += token;
+        };
+        injectStrategy(sPlayerbotAIConfig.nonCombatStrategies, "+dungeon clear");
+        injectStrategy(sPlayerbotAIConfig.randomBotNonCombatStrategies, "+dungeon clear");
+        injectStrategy(sPlayerbotAIConfig.combatStrategies, "+dungeon clear combat");
+        injectStrategy(sPlayerbotAIConfig.randomBotCombatStrategies, "+dungeon clear combat");
 
         // Closing half of the spectator AI-mover window. Registered HERE (first
         // world tick, not AddSC) so its hook sorts after playerbots' UpdateAI
