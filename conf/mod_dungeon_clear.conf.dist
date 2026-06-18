@@ -208,6 +208,53 @@ DungeonClear.CombatRegroup = 1
 DungeonClear.CombatRegroupDistance = 17.0
 
 #
+#    DungeonClear.HealReposition
+#        Master toggle for the healer line-of-sight reposition fix. Stock bots
+#        drop an out-of-LOS member from their heal-target list entirely, so a
+#        healer whose tank is dragged out of sight stops healing AND fails to move
+#        back into line of sight. With this on, a healer whose most-hurt heal
+#        target is below HealRepositionHpFloor but unhealable from where it stands
+#        (out of LOS or beyond heal range) walks to a spot with line of sight and
+#        heal range, then resumes healing automatically.
+#        1 = on, 0 = off.
+#
+#        Default: 1
+#
+
+DungeonClear.HealReposition = 1
+
+#
+#    DungeonClear.HealRepositionHpFloor
+#        A heal target only triggers a reposition while below this health percent
+#        ("actually needs healing" gate). Higher repositions more eagerly.
+#
+#        Default: 90.0
+#
+
+DungeonClear.HealRepositionHpFloor = 90.0
+
+#
+#    DungeonClear.HealRepositionTankBias
+#        Health-percent the elected leader tank is favoured by when the healer
+#        chooses whom to chase — it is the member usually being kited out of
+#        sight. 0 disables the bias (purely lowest-health).
+#
+#        Default: 15.0
+#
+
+DungeonClear.HealRepositionTankBias = 15.0
+
+#
+#    DungeonClear.HealRepositionMaxRange
+#        Beyond this distance (yards) to the heal target the healer will not
+#        reposition — that far is treated as a wipe/skip case, not a reposition.
+#
+#        Default: 60.0
+#
+
+DungeonClear.HealRepositionMaxRange = 60.0
+
+#
 #    DungeonClear.DynamicAggroRange
 #        1 (default): size the "blocking trash" scan band and the boss engage
 #        hand-off from each creature's REAL aggro range (the core's own

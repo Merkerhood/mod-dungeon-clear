@@ -181,6 +181,16 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear assist camp",
         { NextAction("dungeon clear assist camp", 29.0f) }));
 
+    // Healer LOS reposition, NON-COMBAT side. Covers the gap where the healer
+    // healed, dropped combat, and the tank then moved out of line of sight while
+    // still hurt: the bot would otherwise just follow/idle. Relevance 41 — above
+    // follow-tank (25), hold-at-camp (28) and assist (29) so it preempts trailing
+    // the tank, and below the camp/engage owners. Same trigger as the combat side;
+    // it defers during passive camp holds. See DungeonClearHealRepositionTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear heal reposition",
+        { NextAction("dungeon clear heal reposition", 41.0f) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance above advance (15) and follow-tank (25) so a bot below target
     // sits and rests instead of walking; safely below the engage triggers,
@@ -300,6 +310,20 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear regroup combat",
         { NextAction("dungeon clear regroup combat", 33.0f) }));
+
+    // Healer LOS reposition, COMBAT side. The real fix for the stranded-healer
+    // bug: a healer whose hurt heal target (usually the tank) was dragged out of
+    // line of sight walks back into a spot it can heal from. Relevance 41 — above
+    // the stock `reach party member to heal` (ACTION_CRITICAL_HEAL+10 = 40, which
+    // reads the LOS-filtered `party member to heal` and so can't chase an
+    // out-of-sight target), above DC assist (35) / regroup (33), and below the
+    // camp owners (stay-at-camp / pull-maneuver 60). Arbitration against in-LOS
+    // heals is done in the trigger (it defers to a visible hurt member), not by
+    // relevance, so this never steals a tick from a real heal. See
+    // DungeonClearHealRepositionTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear heal reposition",
+        { NextAction("dungeon clear heal reposition", 41.0f) }));
 
     // Sunken Temple Avatar of Hakkar orchestration, COMBAT side — THE place these
     // run. The encounter is a continuous wave fight, so every member is in combat
