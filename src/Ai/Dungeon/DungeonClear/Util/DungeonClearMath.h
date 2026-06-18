@@ -17,6 +17,48 @@ namespace DungeonClearMath
     // Sentinel "no rejoin crumb" returned by FindTrailRejoin.
     inline constexpr std::size_t TrailRejoinNone = static_cast<std::size_t>(-1);
 
+    // Sentinel "no member needs healing" returned by SelectHealTarget.
+    inline constexpr std::size_t HealTargetNone = static_cast<std::size_t>(-1);
+
+    // One candidate heal target for SelectHealTarget. `healthPct` is the member's
+    // current health (0..100); `isLeaderTank` marks the elected dungeon-clear
+    // leader tank so it can be favoured. Deliberately carries NO line-of-sight or
+    // range flag: heal-reposition selection must survive LOS loss (the stock
+    // `party member to heal` value drops out-of-LOS members entirely, which is the
+    // root of the "healer stops healing when the tank is dragged out of sight"
+    // bug). The caller resolves members to candidates from live game state.
+    struct HealCandidate
+    {
+        float healthPct;
+        bool  isLeaderTank;
+    };
+
+    // Pure heal-target selector (LOS-blind). Among members BELOW `hpFloor` (the
+    // "actually needs healing" gate), pick the one with the lowest tank-biased
+    // score: `healthPct - (isLeaderTank ? tankBias : 0)`. The bias only breaks the
+    // choice toward the tank among members that already need healing — a healthy
+    // tank above the floor is never selected — so a hurt tank being kited out of
+    // sight is preferred over an equally/slightly-more-hurt DPS, while a healthy
+    // tank never steals the pick from a hurt DPS. Returns the chosen index, or
+    // HealTargetNone when nobody is below the floor. Separated from the group
+    // iteration so the choice is unit-testable.
+    std::size_t SelectHealTarget(std::vector<HealCandidate> const& members,
+                                 float hpFloor, float tankBias);
+
+    // Pure standoff-point generator for heal repositioning. Produces candidate 2D
+    // points on a circle of radius `standoffRadius` around `target`, ORDERED so the
+    // first is on the side the bot already stands (shortest move / most likely to
+    // round the same corner) and the rest fan out alternately to either side. The
+    // caller snaps each to the navmesh and keeps the first that has line of sight
+    // and a clear path to the target. `ringPoints` extra points are generated past
+    // the first (so the result has `ringPoints + 1` entries). Z is left at the
+    // target's Z; the caller re-grounds via navmesh snap. With a degenerate
+    // bot-on-target input the bias direction falls back to +X.
+    std::vector<Position> HealStandoffCandidates(Position const& target,
+                                                 Position const& bot,
+                                                 float standoffRadius,
+                                                 std::uint32_t ringPoints);
+
     // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
     // pre-resolved by the caller from game state: true only when this mob is
     // navmesh-reachable from the pull target with a clear line of sight and no

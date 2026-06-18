@@ -366,3 +366,65 @@ bool DungeonClearMath::SegmentIntersectsAABB2D(float ax, float ay,
     }
     return t0 <= t1;
 }
+
+std::size_t DungeonClearMath::SelectHealTarget(std::vector<HealCandidate> const& members,
+                                               float hpFloor, float tankBias)
+{
+    std::size_t best = HealTargetNone;
+    float bestScore = 0.0f;
+    for (std::size_t i = 0; i < members.size(); ++i)
+    {
+        HealCandidate const& m = members[i];
+        // "Needs healing" gate is on RAW health, so a healthy biased tank can
+        // never be selected over a hurt DPS.
+        if (m.healthPct >= hpFloor)
+            continue;
+        float const score = m.healthPct - (m.isLeaderTank ? tankBias : 0.0f);
+        if (best == HealTargetNone || score < bestScore)
+        {
+            best = i;
+            bestScore = score;
+        }
+    }
+    return best;
+}
+
+std::vector<Position> DungeonClearMath::HealStandoffCandidates(Position const& target,
+                                                               Position const& bot,
+                                                               float standoffRadius,
+                                                               std::uint32_t ringPoints)
+{
+    std::vector<Position> out;
+    out.reserve(ringPoints + 1);
+
+    // Base direction: from the target toward the bot's current side, so the first
+    // candidate is the shortest reposition. Degenerate (bot on target) -> +X.
+    float dx = bot.GetPositionX() - target.GetPositionX();
+    float dy = bot.GetPositionY() - target.GetPositionY();
+    float const len = std::sqrt(dx * dx + dy * dy);
+    float baseAngle;
+    if (len < 0.01f)
+        baseAngle = 0.0f;
+    else
+        baseAngle = std::atan2(dy, dx);
+
+    float const z = target.GetPositionZ();
+    auto emit = [&](float angle)
+    {
+        out.emplace_back(target.GetPositionX() + std::cos(angle) * standoffRadius,
+                         target.GetPositionY() + std::sin(angle) * standoffRadius,
+                         z, 0.0f);
+    };
+
+    // First candidate dead on the bot's side, then fan out alternately +/- so
+    // nearer-to-bot angles are tried before the far side of the target.
+    emit(baseAngle);
+    float const step = (2.0f * float(M_PI)) / float(ringPoints + 1);
+    for (std::uint32_t k = 1; k <= ringPoints; ++k)
+    {
+        float const off = step * float((k + 1) / 2);
+        float const sign = (k % 2 == 1) ? 1.0f : -1.0f;
+        emit(baseAngle + sign * off);
+    }
+    return out;
+}

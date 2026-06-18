@@ -344,19 +344,41 @@ public:
 };
 
 // Follower-only, COMBAT engine. Keeps the party grouped on the leader tank during
-// ANY fight (not just an advanced-pull camp) once the leash has loosened. Fires
+// ANY fight (not just an advanced-pull camp) once the leash has loosened: fires
 // while DC is active on the group, this bot is a non-leader follower in combat,
-// and either it has drifted beyond DungeonClear.CombatRegroupDistance from the
-// tank OR (for a healer) it has lost line of sight to the tank — the case where a
-// stranded healer otherwise just stands there and the party dies. Drives
-// DungeonClearRegroupCombatAction. Deliberately INERT while the party is held
-// passive at an advanced-pull camp (GetLeaderCampHold passive) — the camp/assist
-// actions own positioning there. Gated by DungeonClear.CombatRegroup.
+// and it has drifted beyond DungeonClear.CombatRegroupDistance from the tank.
+// Drives DungeonClearRegroupCombatAction. The healer out-of-LOS case it used to
+// also cover is now owned by DungeonClearHealRepositionTrigger (which aims at the
+// hurt heal target, not just the tank, and runs in both engines). Deliberately
+// INERT while the party is held passive at an advanced-pull camp (GetLeaderCamp-
+// Hold passive) — the camp/assist actions own positioning there. Gated by
+// DungeonClear.CombatRegroup.
 class DungeonClearRegroupCombatTrigger : public Trigger
 {
 public:
     DungeonClearRegroupCombatTrigger(PlayerbotAI* botAI)
         : Trigger(botAI, "dungeon clear regroup combat", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
+// Healer-only, BOTH engines. The real fix for the long-standing "healer stops
+// healing once the tank is dragged out of line of sight" bug. Fires when this
+// bot is a healer on an active run and the most-hurt party member (the DC
+// `dungeon clear heal target` value — chosen LOS-blind, tank-biased) is below
+// the heal HP floor but currently UNHEALABLE from where the bot stands (out of
+// LOS or beyond heal range). Drives DungeonClearHealRepositionAction to move to
+// a point with line of sight + heal range, after which the stock heal stack
+// re-acquires the target. Stands down when there is in-LOS heal work the stock
+// engine can already do (it defers to a visible hurt member), during advanced-
+// pull passive camp holds, for the leader/tank itself, while CC'd, and when the
+// target is implausibly far. Gated by DungeonClear.HealReposition.
+class DungeonClearHealRepositionTrigger : public Trigger
+{
+public:
+    DungeonClearHealRepositionTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear heal reposition", 1)
     {
     }
     bool IsActive() override;

@@ -827,6 +827,12 @@ namespace
     // (see DungeonClearAssistCampTrigger).
     bool ShouldAssistCampFight(PlayerbotAI* botAI, Player* bot)
     {
+        // Healers are owned by DungeonClearHealRepositionTrigger, which positions
+        // them relative to their hurt heal target (LOS + heal range) instead of
+        // driving them onto the pack. Letting assist also grab a healer made the
+        // two fight over it and aimed the healer at the mob, not the tank.
+        if (PlayerbotAI::IsHeal(bot))
+            return false;
         if (!DcLeaderSignal::IsLeaderFightAssistWanted(bot))
             return false;
         return botAI->GetAiObjectContext()
@@ -851,6 +857,10 @@ bool DungeonClearAssistCampTrigger::IsActive()
     // AND every fight the camp machinery does not own (Leeroy/dynamic/boss);
     // defers to the camp hold during the passive pull phases.
     if (!bot || bot->isDead() || bot->IsInCombat())
+        return false;
+    // Healers are owned by the heal-reposition governor (aims at the hurt heal
+    // target, not the pack); keep assist for DPS that must be driven into the fight.
+    if (PlayerbotAI::IsHeal(bot))
         return false;
     return DcLeaderSignal::IsLeaderFightAssistWanted(bot);
 }
@@ -901,15 +911,70 @@ bool DungeonClearRegroupCombatTrigger::IsActive()
     float const dist = bot->GetExactDist2d(tank);
     float const maxLeash = DcSettings::GetFloat(bot, "CombatRegroupDistance");
 
-    // Any follower closes back in once it drifts past the leash. A healer ALSO
-    // closes whenever it loses line of sight to the tank — even inside the leash —
-    // because without it the heal lands on nothing and the party dies. Melee/ranged
-    // DPS out of LOS of the tank but in range of their own target are left alone.
-    if (dist > maxLeash)
-        return true;
-    if (PlayerbotAI::IsHeal(bot) && !bot->IsWithinLOSInMap(tank))
-        return true;
-    return false;
+    // Any follower closes back in once it drifts past the leash. The healer
+    // out-of-LOS case (which used to live here as an extra clause) is now owned by
+    // DungeonClearHealRepositionTrigger — it repositions toward the actual hurt
+    // heal target (not just the tank) and runs in both engines.
+    return dist > maxLeash;
+}
+
+bool DungeonClearHealRepositionTrigger::IsActive()
+{
+    if (!bot || bot->isDead())
+        return false;
+
+    // Healer-only. Feature toggle.
+    if (!PlayerbotAI::IsHeal(bot))
+        return false;
+    if (!DcSettings::GetBool(bot, "HealReposition"))
+        return false;
+
+    // The elected leader tank, non-null only while its clear is active and
+    // unpaused. The leader/tank never repositions to heal — it drives the clear.
+    Player* tank = AI_VALUE(Player*, "dungeon clear party tank");
+    if (!tank || tank == bot || tank->GetMapId() != bot->GetMapId())
+        return false;
+
+    // CC'd: can't move anyway; let combat / the trinket handle it.
+    if (bot->HasUnitState(UNIT_STATE_STUNNED | UNIT_STATE_FLEEING |
+                          UNIT_STATE_CONFUSED | UNIT_STATE_ROOT))
+        return false;
+
+    // Defer to the advanced-pull camp machinery while the party is held passive
+    // (Forming/Advancing/Returning) — the camp/assist actions own positioning
+    // there, exactly as the regroup trigger defers.
+    Position camp;
+    bool passive = false;
+    if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive) && passive)
+        return false;
+
+    // The most-hurt member, chosen LOS-blind (the whole point — see
+    // DungeonClearHealTargetValue). Nothing below the HP floor => nothing to do.
+    Unit* target = AI_VALUE(Unit*, "dungeon clear heal target");
+    if (!target || !target->IsAlive())
+        return false;
+
+    // Defer to visible heal work: if the stock LOS-filtered `party member to heal`
+    // resolves to someone genuinely hurt that the bot can already see, let the
+    // stock heal stack do its job this tick rather than running off to reposition.
+    // We only own the case where the bot has no useful in-sight heal but an
+    // out-of-LOS member is dying.
+    Unit* visible = AI_VALUE(Unit*, "party member to heal");
+    if (visible && visible->IsAlive() &&
+        visible->GetHealthPct() < sPlayerbotAIConfig.mediumHealth &&
+        bot->IsWithinLOSInMap(visible))
+        return false;
+
+    // Don't sprint across the map into the unknown — a target this far is a
+    // wipe/skip case, not a reposition case.
+    float const maxRange = DcSettings::GetFloat(bot, "HealRepositionMaxRange");
+    if (bot->GetExactDist2d(target) > maxRange)
+        return false;
+
+    // Fire only when the target is actually unhealable from here: out of line of
+    // sight, or beyond heal range.
+    float const healRange = botAI->GetRange("heal");
+    return !bot->IsWithinLOSInMap(target) || bot->GetExactDist2d(target) > healRange;
 }
 
 bool DungeonClearFilterLootTrigger::IsActive()

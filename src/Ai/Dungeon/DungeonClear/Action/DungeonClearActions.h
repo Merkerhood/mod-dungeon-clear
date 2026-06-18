@@ -468,6 +468,25 @@ public:
     bool Execute(Event event) override;
 };
 
+// Healer-only, BOTH engines. Moves the healer to a point with line of sight AND
+// heal range to its most-hurt heal target (the DC `dungeon clear heal target`
+// value), so a healer dragged out of sight of the tank walks back into a spot it
+// can heal from — after which the stock heal stack re-acquires the target on its
+// own. Samples a ring of standoff points around the target and takes the nearest
+// one that is navmesh-valid, has LOS, and is path-reachable; falls back to a
+// pathfound approach toward the target (5yd standoff) when none validate. Banded
+// COMBAT/NORMAL priority like the assist/regroup actions to avoid plowing a mob
+// train on a long run back. Driven by DungeonClearHealRepositionTrigger.
+class DungeonClearHealRepositionAction : public DcMovementAction
+{
+public:
+    DungeonClearHealRepositionAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear heal reposition")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

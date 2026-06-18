@@ -89,6 +89,23 @@ inline constexpr DcSettingDef kDcSettings[] =
     // See DungeonClearRegroupCombat{Trigger,Action}.
     { "CombatRegroup",         DcType::Bool,   1,   0,   1,  true  },
     { "CombatRegroupDistance", DcType::Float, 17,  10,  60,  true  },
+
+    // Healer LOS reposition. The real fix for a healer that stops healing once
+    // the tank is dragged out of line of sight: stock playerbots drops an
+    // out-of-LOS member from its heal-target value entirely, so the healer neither
+    // heals the tank nor moves to it. With HealReposition on, a healer whose
+    // most-hurt heal target (tank-biased) is below HealRepositionHpFloor but
+    // unhealable from where it stands (out of LOS or > heal range) walks to a
+    // point with line of sight + heal range, after which the stock heal stack
+    // re-acquires it. HealRepositionTankBias is the health% the leader tank is
+    // favoured by when choosing whom to chase (it is the one being kited).
+    // HealRepositionMaxRange caps how far the healer will chase before treating it
+    // as a wipe/skip rather than a reposition. See DungeonClearHealReposition{
+    // Trigger,Action} and DungeonClearHealTargetValue.
+    { "HealReposition",        DcType::Bool,   1,   0,   1,  true  },
+    { "HealRepositionHpFloor", DcType::Float, 90,   1, 100,  true  },
+    { "HealRepositionTankBias",DcType::Float, 15,   0,  50,  true  },
+    { "HealRepositionMaxRange",DcType::Float, 60,  20, 120,  true  },
     // Room-wide-aggro pre-clear (RoomAggroRegistry). ClearRoomBeforeBoss is the
     // master toggle: for the handful of bosses that force the whole room into
     // combat on engage (SM Cathedral, Shadow Lab, Pandemonius, Dagran, …), clear

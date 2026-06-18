@@ -23,6 +23,7 @@
 #include "Group.h"
 #include "Log.h"
 #include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
 #include "MoveSplineInitArgs.h"
 #include "ObjectAccessor.h"
@@ -38,6 +39,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
@@ -665,6 +667,106 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
     DcMoveTo(tank->GetMapId(), x, y, z, /*idle*/ false, /*react*/ false,
+           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    return true;
+}
+
+bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
+{
+    // The most-hurt heal target (LOS-blind, tank-biased). Re-read here (trigger/
+    // action gap); bail if it healed up or died in between.
+    Unit* target = AI_VALUE(Unit*, "dungeon clear heal target");
+    if (!target || !target->IsAlive())
+        return false;
+
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+
+    float const healRange = botAI->GetRange("heal");
+    Position const targetPos = target->GetPosition();
+    float const tx = targetPos.GetPositionX();
+    float const ty = targetPos.GetPositionY();
+    float const tz = targetPos.GetPositionZ();
+
+    // Stand a little INSIDE heal range so a step of target movement doesn't drop us
+    // straight back out. Floor at 5yd so we never try to stack on the target.
+    float const standoff = std::max(5.0f, healRange * 0.6f);
+
+    // Ring of standoff points around the target, ordered bot-side first. Take the
+    // first that snaps to the navmesh, has LOS to the target, sits within heal
+    // range, and is PATHFIND_NORMAL reachable.
+    std::vector<Position> const cands =
+        DungeonClearMath::HealStandoffCandidates(targetPos, bot->GetPosition(),
+                                                 standoff, /*ringPoints*/ 7);
+
+    constexpr float kEyeBump = 2.0f;  // eye height for the LOS ray (cf. ChordClear)
+    float dx = 0.0f, dy = 0.0f, dz = 0.0f;
+    bool haveDest = false;
+    for (Position const& c : cands)
+    {
+        NavmeshSnap::Result const snap =
+            NavmeshSnap::Snap(map, c.GetPositionX(), c.GetPositionY(), tz, 8.0f);
+        if (!snap.ok)
+            continue;
+
+        float const sdx = snap.x - tx;
+        float const sdy = snap.y - ty;
+        if (std::sqrt(sdx * sdx + sdy * sdy) > healRange)
+            continue;
+
+        if (!map->isInLineOfSight(snap.x, snap.y, snap.z + kEyeBump, tx, ty,
+                                  tz + kEyeBump, bot->GetPhaseMask(),
+                                  LINEOFSIGHT_CHECK_VMAP,
+                                  VMAP::ModelIgnoreFlags::Nothing))
+            continue;
+
+        PathGenerator gen(bot);
+        gen.CalculatePath(snap.x, snap.y, snap.z, /*forceDest*/ false);
+        if (gen.GetPathType() != PATHFIND_NORMAL)
+            continue;
+
+        dx = snap.x;
+        dy = snap.y;
+        dz = snap.z;
+        haveDest = true;
+        break;
+    }
+
+    // Fallback: no sampled point validated (tight geometry, snap misses). Close
+    // straight on the target with pathfinding — rounding corners is what regains
+    // LOS — stopping 5yd short, exactly the old regroup behaviour.
+    if (!haveDest)
+    {
+        float const dist = bot->GetExactDist2d(target);
+        dx = tx;
+        dy = ty;
+        dz = tz;
+        if (dist > 5.0f)
+        {
+            float const frac = (dist - 5.0f) / dist;
+            dx = bot->GetPositionX() + (tx - bot->GetPositionX()) * frac;
+            dy = bot->GetPositionY() + (ty - bot->GetPositionY()) * frac;
+        }
+    }
+
+    // Band the priority like the assist/regroup actions: COMBAT only on the final
+    // close leg, NORMAL beyond, so a long run back stops to fight what it aggros
+    // instead of plowing a mob train to the target.
+    float const toDest = bot->GetExactDist2d(dx, dy);
+    MovementPriority const prio =
+        (toDest <= DC_COMBAT_APPROACH_RANGE)
+            ? MovementPriority::MOVEMENT_COMBAT
+            : MovementPriority::MOVEMENT_NORMAL;
+
+    DC_PULL_TRACE("[DC:{}] heal reposition: closing on heal target {} "
+                  "({:.1f}yd, los={}, sampled={}, prio={})",
+                  bot->GetName(), target->GetGUID().ToString(),
+                  bot->GetExactDist2d(target),
+                  bot->IsWithinLOSInMap(target) ? 1 : 0, haveDest ? 1 : 0,
+                  prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
+
+    DcMoveTo(map->GetId(), dx, dy, dz, /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
 }
