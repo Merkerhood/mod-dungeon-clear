@@ -203,8 +203,9 @@ bool DcOnAction::Execute(Event event)
     // logged in before contexts registered), then stay quiet — only the leader
     // announces. The follower's follow-tank trigger self-activates off the
     // leader's enabled flag via DungeonClearPartyTankValue, so nothing else is
-    // needed for them. Leadership is the lowest-GUID tank bot in the group, so
-    // exactly one bot takes the path below even with several tanks present.
+    // needed for them. Leadership (FindLeaderTank) resolves to exactly one tank
+    // bot — lowest-GUID in a party, the Main Tank / best-geared tank in a raid —
+    // so exactly one bot takes the path below even with several tanks present.
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
     {
         if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
