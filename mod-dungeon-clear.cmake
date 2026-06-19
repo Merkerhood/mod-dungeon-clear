@@ -16,6 +16,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestBossRoster.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/TestNavGeometry.cpp"
+            "${MOD_PATH}/t/TestStrategyGate.cpp"
             "${MOD_PATH}/t/NavHarness.cpp"
             "${MOD_PATH}/t/replay_decisions.cpp"
             "${MOD_PATH}/t/replay_pull.cpp"
