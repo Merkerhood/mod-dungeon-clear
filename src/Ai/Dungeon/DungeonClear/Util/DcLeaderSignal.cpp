@@ -310,10 +310,38 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
         }
     }
 
-    // Lowest-GUID alive tank bot on the reference's map. GetFirstMember walks
+    // Candidate set: alive tank BOTS on the reference's map. GetFirstMember walks
     // every member of the group — including all raid sub-groups — so each member
     // sees the same candidate set and elects the same leader.
+    //
+    // Election rule differs by group kind:
+    //   * Party (5-man): lowest-GUID tank bot — a deterministic, state-free pick.
+    //   * Raid: the bot flagged Main Tank (MEMBER_FLAG_MAINTANK) wins outright; if
+    //     none is flagged (or the flagged member isn't an eligible tank bot), the
+    //     eligible tank bot with the highest equipped gear score wins, GUID-tiebroken.
+    // Raids carry several tanks across sub-groups and the player expects the one
+    // they designated MT to drive; absent an MT, the best-geared tank is the most
+    // survivable choice to hold threat for the whole raid.
+    bool const isRaid = group->isRaidGroup();
+
+    // The MT designation lives on the member SLOT flags, not on the Player, so it
+    // is read from the group's slot list (a real-player MT is resolved to a Player
+    // below and rejected like any non-bot tank, falling through to gear score).
+    ObjectGuid mainTankGuid;
+    if (isRaid)
+    {
+        for (Group::MemberSlot const& slot : group->GetMemberSlots())
+        {
+            if (slot.flags & MEMBER_FLAG_MAINTANK)
+            {
+                mainTankGuid = slot.guid;
+                break;
+            }
+        }
+    }
+
     Player* leader = nullptr;
+    uint32 bestGearScore = 0;
     for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
     {
         Player* member = ref->GetSource();
@@ -325,10 +353,35 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
             continue;
         // Only bot tanks can drive — a real-player tank has no PlayerbotAI to
         // run the clear, so it can never be the leader.
-        if (!GET_PLAYERBOT_AI(member))
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI)
             continue;
-        if (!leader || member->GetGUID() < leader->GetGUID())
+
+        if (!isRaid)
+        {
+            // Party: lowest GUID.
+            if (!leader || member->GetGUID() < leader->GetGUID())
+                leader = member;
+            continue;
+        }
+
+        // Raid: a flagged, eligible Main Tank bot wins immediately — no other
+        // candidate can outrank an explicit player designation.
+        if (!mainTankGuid.IsEmpty() && member->GetGUID() == mainTankGuid)
+        {
             leader = member;
+            break;
+        }
+
+        // Otherwise rank by equipped gear score (GUID as the stable tiebreak so
+        // every member still converges on the same leader).
+        uint32 const gearScore = memberAI->GetEquipGearScore(member);
+        if (!leader || gearScore > bestGearScore ||
+            (gearScore == bestGearScore && member->GetGUID() < leader->GetGUID()))
+        {
+            leader = member;
+            bestGearScore = gearScore;
+        }
     }
 
     {
