@@ -60,6 +60,7 @@
 #include "PlayerbotAI.h"
 
 #include "AiObjectContextAccess.h"
+#include "DcStrategyGate.h"
 
 // Per-class context registries — each owns its own shared static lists.
 #include "DKAiObjectContext.h"
@@ -88,6 +89,15 @@ namespace
     // owning bot drains its result on its very next AI tick), so this only ever
     // catches results orphaned by a logout / dc-off mid-build.
     constexpr uint32 DC_ASYNC_PATH_RESULT_TTL_MS = 30 * 1000;
+
+    // How often the dungeon-gate correctness sweep re-asserts the
+    // strategy-install invariant across all bots (see DcStrategyGate). Well under
+    // any human-perceptible activation delay — a tank still has to walk in and
+    // `dc on` — and the per-bot cost is two HasStrategy reads, so this is cheap
+    // even on a large realm. This is the net that restores the triggers after a
+    // ResetStrategies() fired mid-dungeon (group/talent/LFG/reset), which is why
+    // it MUST keep running and not depend on any entry event.
+    constexpr uint32 DC_STRATEGY_GATE_SWEEP_MS = 3 * 1000;
 }
 
 namespace
@@ -187,34 +197,16 @@ public:
         dc_access::SharedTriggerContexts()->Add(new DungeonClearTriggerContext());
         dc_access::SharedValueContexts()->Add(new DungeonClearValueContext());
 
-        // Inject our strategies into the default strategy set, so they survive a
-        // ResetStrategies(). PlayerbotAI::ResetStrategies() (master/group change,
-        // talent change, instance entry with applyInstanceStrategies, certain
-        // commands) wipes EVERY strategy and rebuilds the engines from
-        // AiFactory's defaults + these config strings only — it does NOT re-run
-        // our OnPlayerLogin hook. So a follower that had "dungeon clear" purely
-        // from the login hook silently loses it on the next reset and reverts to
-        // following its master (the player). Appending here makes us part of the
-        // rebuilt default set — the same effect the manual conf line
-        // `AiPlayerbot.NonCombatStrategies = "+dungeon clear"` had, now automatic.
-        // It also reaches self-bots created mid-session via `.playerbots bot
-        // self`, which the login hook never sees. Cost is zero per tick: the
-        // strings are read only when an engine is (re)built. Touch all four
-        // fields — non-random bots use {non,}combatStrategies, random bots use
-        // randomBot{Non,}CombatStrategies (see AiFactory). Idempotent: if the
-        // conf line is still present, find() skips the duplicate.
-        auto const injectStrategy = [](std::string& field, char const* token)
-        {
-            if (field.find(token) != std::string::npos)
-                return;
-            if (!field.empty())
-                field += ",";
-            field += token;
-        };
-        injectStrategy(sPlayerbotAIConfig.nonCombatStrategies, "+dungeon clear");
-        injectStrategy(sPlayerbotAIConfig.randomBotNonCombatStrategies, "+dungeon clear");
-        injectStrategy(sPlayerbotAIConfig.combatStrategies, "+dungeon clear combat");
-        injectStrategy(sPlayerbotAIConfig.randomBotCombatStrategies, "+dungeon clear combat");
+        // NOTE: the DC strategies are deliberately NOT injected into the
+        // playerbots default strategy set anymore. They used to be appended to
+        // the four sPlayerbotAIConfig strategy strings so they survived a
+        // ResetStrategies() and rode along on every bot — but that made every bot
+        // in the realm pay the DC trigger ladder (36 non-combat + 8 combat
+        // triggers, checkInterval=1) every AI tick, dungeon-bound or not. The
+        // install is now gated on Map::IsDungeon() via DcStrategyGate (see the
+        // login / map-changed / world-sweep drivers below), which both removes the
+        // overworld idle cost AND keeps the invariant ("any bot in a dungeon has
+        // the triggers active") through every ResetStrategies path via the sweep.
 
         // Closing half of the spectator AI-mover window. Registered HERE (first
         // world tick, not AddSC) so its hook sorts after playerbots' UpdateAI
@@ -242,38 +234,36 @@ private:
     bool _registered = false;
 };
 
+// Dungeon-gate drivers. The DC strategies ("dungeon clear" non-combat +
+// "dungeon clear combat" combat) are installed on a bot iff it is on a
+// dungeon/raid map — see DcStrategyGate for the why (removing the realm-wide
+// idle cost) and the invariant guarantee. This script provides the two
+// responsive drivers; the world-tick sweep (DungeonClearReaperScript) is the
+// correctness net behind them.
+//   * OnPlayerLogin    — a bot that logs in already inside an instance gets the
+//                        strategies immediately.
+//   * OnPlayerMapChanged — install on dungeon entry, strip on exit, within a
+//                        frame of the map change.
+// Reconcile() is idempotent and no-ops on real players and on already-compliant
+// bots, and runs the dc-off teardown when it strips (so `enabled` can't survive
+// to auto-resume on the next entry, and no follower keeps a stale MoveFollow).
 class DungeonClearLoginPlayerScript : public PlayerScript
 {
 public:
-    DungeonClearLoginPlayerScript() : PlayerScript("DungeonClearLoginPlayerScript") {}
+    DungeonClearLoginPlayerScript()
+        : PlayerScript("DungeonClearLoginPlayerScript", {
+            PLAYERHOOK_ON_LOGIN,
+            PLAYERHOOK_ON_MAP_CHANGED
+        }) {}
 
     void OnPlayerLogin(Player* player) override
     {
-        if (!player)
-            return;
+        DcStrategyGate::Reconcile(player);
+    }
 
-        // Only bots (and self-bot players) have a PlayerbotAI. Give them the
-        // single "dungeon clear" strategy on the non-combat engine. Harmless if
-        // the contexts aren't registered yet — ChangeStrategy is a no-op for an
-        // unknown name. Inert on a bot whose own "dungeon clear enabled" flag is
-        // false (the tank flips it via `dc on`), so installing it on every bot
-        // is safe: non-tank followers run only the follow-tank trigger, and only
-        // while a party tank has DC enabled.
-        PlayerbotAI* botAI = GET_PLAYERBOT_AI(player);
-        if (!botAI)
-            return;
-
-        if (!botAI->HasStrategy("dungeon clear", BOT_STATE_NON_COMBAT))
-            botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT);
-
-        // Combat-engine companion: the advanced-pull maneuver (leader, mid-pull),
-        // the camp hold/assist for held followers, and the in-combat regroup that
-        // keeps followers grouped on the tank. Resident on every bot so the leader
-        // can run the pull-to-camp once it aggros and followers can regroup mid-
-        // fight (the non-combat strategy can't — the combat engine takes over the
-        // instant combat starts). Every trigger is inert unless a DC run is active.
-        if (!botAI->HasStrategy("dungeon clear combat", BOT_STATE_COMBAT))
-            botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
+    void OnPlayerMapChanged(Player* player) override
+    {
+        DcStrategyGate::Reconcile(player);
     }
 };
 
@@ -398,7 +388,25 @@ public:
         // the global tick (not a per-bot one) so it keeps firing through boss
         // fights, when the bot's non-combat strategy engine is dormant.
         DcStatusPublisher::TickStatusPushes(diff);
+
+        // Dungeon-gate correctness net: re-assert "DC strategies installed iff in
+        // a dungeon" across all bots on a throttled cadence. The login and
+        // map-changed hooks apply/strip responsively on entry/exit; this sweep
+        // covers the cases those hooks can't see — a ResetStrategies() that wiped
+        // the strategy WHILE the bot is inside an instance (group/talent/LFG/
+        // master change, `.playerbots reset`), and self-bots created in-place via
+        // `.playerbots bot self`. Without it, the requirement "any bot in a
+        // dungeon has the triggers active" would not hold across resets.
+        _gateSweepAccumMs += diff;
+        if (_gateSweepAccumMs >= DC_STRATEGY_GATE_SWEEP_MS)
+        {
+            _gateSweepAccumMs = 0;
+            DcStrategyGate::ReconcileAllBots();
+        }
     }
+
+private:
+    uint32 _gateSweepAccumMs = 0;
 };
 
 // WORKAROUND for an upstream Zul'Farrak core-script typo (fixed on branch

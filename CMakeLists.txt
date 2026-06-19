@@ -111,4 +111,12 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (Dire Maul East: Ironbark the Redeemed anchored objective/event — gossip him
 #    to open the Conservatory Door to Alzzin; ordered just before Alzzin via the
 #    BossRosterRegistry map-429 patch + East-wing objective entry)
+# src/DcStrategyGate.{h,cpp}
+#   (dungeon-gated strategy install: the DC strategies are installed on a bot iff
+#    it is on a dungeon/raid map — Map::IsDungeon() — instead of on every bot in
+#    the realm. Removes the realm-wide DC trigger-ladder idle cost. Driven by
+#    OnPlayerLogin + OnPlayerMapChanged (responsive) and a throttled world-tick
+#    sweep in DungeonClearReaperScript (correctness net across ResetStrategies).
+#    Pure decision kernel DcStrategyGate::Decide is headless-tested by
+#    t/TestStrategyGate.cpp.)
 # (this comment bumps mtime to force CMake re-glob on next build)
