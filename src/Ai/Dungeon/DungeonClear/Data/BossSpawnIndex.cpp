@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "CreatureData.h"
+#include "CreatureSpawnEntry.h"
 #include "DBCStores.h"
 #include "DBCStructure.h"
 #include "ObjectMgr.h"
@@ -85,7 +86,7 @@ void BossSpawnIndex::Build()
     for (auto const& kv : spawns)
     {
         CreatureData const& data = kv.second;
-        uint32 const entry = data.id1;
+        uint32 const entry = DungeonClear::SpawnEntry(data);
         if (!entry)
             continue;
 

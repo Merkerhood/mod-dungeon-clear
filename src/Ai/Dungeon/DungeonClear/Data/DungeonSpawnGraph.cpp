@@ -9,6 +9,7 @@
 #include <cmath>
 
 #include "CreatureData.h"
+#include "CreatureSpawnEntry.h"
 #include "DBCStores.h"
 #include "DBCStructure.h"
 #include "ObjectMgr.h"
@@ -39,7 +40,8 @@ void DungeonSpawnGraph::Build()
     for (auto const& kv : spawns)
     {
         CreatureData const& data = kv.second;
-        if (!data.id1)
+        uint32 const entry = DungeonClear::SpawnEntry(data);
+        if (!entry)
             continue;
 
         MapEntry const* mapEntry = sMapStore.LookupEntry(data.mapid);
@@ -50,7 +52,7 @@ void DungeonSpawnGraph::Build()
         node.x = data.posX;
         node.y = data.posY;
         node.z = data.posZ;
-        node.entry = data.id1;
+        node.entry = entry;
         store[data.mapid].push_back(node);
     }
 
