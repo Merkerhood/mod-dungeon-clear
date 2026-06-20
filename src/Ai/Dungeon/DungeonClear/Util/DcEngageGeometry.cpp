@@ -775,14 +775,30 @@ bool DcEngageGeometry::IsLevelReachable(Player* bot, Unit* u)
     // slopes, stairs and ramps stay under it within a corridor lookahead, so
     // we trust the caller's 2D corridor/cone/LOS test and skip the probe.
     // Otherwise a genuine other-level mob falls through to the pathfinder
-    // check below.
+    // check below. (A caller WITHOUT a 2D corridor/cone pre-filter — a bare
+    // point-radius seek — must use IsEngageReachable, which always probes; the
+    // same-level shortcut here is only safe when the caller already screened 2D.)
     float const dz = std::fabs(u->GetPositionZ() - bot->GetPositionZ());
     if (dz <= DC_Z_LEVEL_TOLERANCE)
         return true;
 
-    // Different vertical level: confirm an actual ground path. A single direct
-    // probe suffices — trash is always inside the corridor/cone lookahead,
-    // comfortably under PathGenerator's single-call range cap.
+    return IsEngageReachable(bot, u);
+}
+
+bool DcEngageGeometry::IsEngageReachable(Player* bot, Unit* u, bool requireDirect)
+{
+    if (!bot || !u)
+        return false;
+
+    // STRICT reachability for point-radius SEEK selection (event ClearRadius /
+    // KillCreature.engage). Unlike IsLevelReachable there is NO same-level fast
+    // path: a point-radius scan has no corridor/cone 2D pre-filter to lean on, so
+    // a straight-line-near mob in an ADJACENT room or tunnel — same level OR not —
+    // would otherwise be trusted and EngageDirected straight into the dividing
+    // wall (the Uldaman keeper-hall / Ironaya-seal leak). Always probe the route.
+
+    // Confirm an actual ground path. A single direct probe suffices — seek trash
+    // sits inside the event's radius, comfortably under PathGenerator's range cap.
     PathGenerator gen(bot);
     gen.CalculatePath(u->GetPositionX(), u->GetPositionY(), u->GetPositionZ(), /*forceDest*/ false);
     if (gen.GetPathType() != PATHFIND_NORMAL)
@@ -799,10 +815,17 @@ bool DcEngageGeometry::IsLevelReachable(Player* bot, Unit* u)
     if (std::fabs(end.z - u->GetPositionZ()) > DC_Z_LEVEL_TOLERANCE)
         return false;
 
-    // A path existing is not enough: a mob at the bottom of a ledge can be 15yd
-    // away in a straight line while its real approach is a 70yd ramp detour.
-    // Proactively engaging/pulling it from up here sends the tank on that whole
-    // detour (or wedges it on the ledge lip when the run-in can't path). Treat
+    // A complete on-level path already rejects the through-a-wall / wrong-level
+    // case. A deliberate seek (requireDirect=false) may legitimately walk a long
+    // way to its specific objective creature, so stop here for it.
+    if (!requireDirect)
+        return true;
+
+    // A path existing is not enough: a mob across a wall (or at the bottom of a
+    // ledge) can be 15yd away in a straight line while its real approach is a long
+    // ramp/corridor detour — for a room pre-clear that means "wrong region /
+    // premature fire". Proactively engaging it from up here sends the tank on that
+    // whole detour (or wedges it against the wall when the run-in can't path). Treat
     // such a candidate as NOT reachable for target selection — the route brings
     // the tank to its floor eventually, where the straight distance collapses
     // and it's picked up normally. Mirrors the navigational-distance guard in

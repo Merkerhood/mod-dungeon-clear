@@ -99,8 +99,20 @@ namespace
     // Activation: due while the party is near the still-shut seal and Ironaya is
     // present (always spawned, just sealed). Latches DONE on completion, and also
     // reads false the instant the seal opens, so it fires exactly once.
-    bool UldamanIronayaSeal(Player* bot, AiObjectContext* /*context*/)
+    bool UldamanIronayaSeal(Player* bot, AiObjectContext* context)
     {
+        // Ordering guard (mirrors UldamanStoneKeepers / UldamanArchaedasAltar). The
+        // seal antechamber's ClearRadius must not fire until Ironaya is the NEXT
+        // boss: the still-shut seal sits within ULD_SCAN (120yd) of the earlier
+        // Revelosh / Lost-Dwarves approaches, so the proximity scan alone flickers
+        // true and the antechamber seek drags the tank at trash it can't reach
+        // cleanly (the witnessed early-Ironaya fire). The DB encounter order puts
+        // Ironaya at slot 3 (after Revelosh and the Lost Dwarves), so gate on her
+        // being current — same false-fire the sibling Archaedas guard documents.
+        std::optional<DungeonBossInfo> const next =
+            context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        bool const ironayaIsNext = next.has_value() && next->entry == ULD_IRONAYA;
+
         GameObject* seal = bot->FindNearestGameObject(ULD_SEAL_DOOR, ULD_SCAN);
         Creature* ironaya = bot->FindNearestCreature(ULD_IRONAYA, ULD_SCAN, /*alive*/ true);
 
@@ -112,12 +124,16 @@ namespace
         {
             lastLog = now;
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] Uldaman Ironaya seal cond: seal={} state={} ironaya={}",
+                      "[DC:{}] Uldaman Ironaya seal cond: seal={} state={} ironaya={} nextBoss={} ({})",
                       bot->GetName(), seal ? "found" : "MISSING",
                       seal ? static_cast<int>(seal->GetGoState()) : -1,
-                      ironaya ? "present" : "no");
+                      ironaya ? "present" : "no",
+                      next.has_value() ? next->entry : 0,
+                      ironayaIsNext ? "her turn" : "not yet");
         }
 
+        if (!ironayaIsNext)
+            return false;                            // earlier bosses still up
         if (!seal)
             return false;                            // not near the chamber yet
         if (seal->GetGoState() != GO_STATE_READY)

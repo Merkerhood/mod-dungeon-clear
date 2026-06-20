@@ -868,9 +868,14 @@ Unit* DcTargeting::NearestHostileNearPoint(Player* bot, AiObjectContext* ctx,
         if (dx * dx + dy * dy > r2)
             continue;
 
-        // Skip what the tank can't actually reach (different level / no route) or
-        // is behind a closed door, so the clear can't livelock on it.
-        if (!DcEngageGeometry::IsLevelReachable(bot, u))
+        // Skip what the tank can't actually reach or is behind a closed door, so
+        // the clear can't livelock on it. STRICT (IsEngageReachable, no same-level
+        // fast path): this is a bare point-radius scan with no corridor/cone 2D
+        // pre-filter, so a straight-line-near mob in an ADJACENT room/tunnel — even
+        // on the same level — must be probed and rejected, not trusted. Without
+        // this a conditional room event firing while the tank is elsewhere
+        // EngageDirects through the dividing wall (Uldaman keeper hall).
+        if (!DcEngageGeometry::IsEngageReachable(bot, u))
             continue;
         if (DcEngageGeometry::ClosedDoorBetween(bot, u->GetPositionX(),
                                                 u->GetPositionY(), u->GetPositionZ()))

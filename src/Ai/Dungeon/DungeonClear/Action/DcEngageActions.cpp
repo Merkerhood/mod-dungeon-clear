@@ -805,6 +805,13 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
                 if (Creature* target =
                         bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true))
                 {
+                    // FindNearestCreature is a flat 2D scan that can return an
+                    // instance of the entry across a wall / on another level. Only
+                    // engage one we can actually reach (a complete on-level route);
+                    // requireDirect=false keeps a legitimately FAR seek alive, since
+                    // the seek IS this objective's navigation.
+                    if (!DcEngageGeometry::IsEngageReachable(bot, target, /*requireDirect*/ false))
+                        return false;
                     // ResolveEscortConflict cancels a launched escort glide but
                     // leaves our own approach move intact (unlike StopBot(Hold)).
                     DcMovement::ResolveEscortConflict(bot);
@@ -980,6 +987,12 @@ bool DcRunEventAction::Execute(Event /*event*/)
                 if (Creature* target = bot->FindNearestCreature(
                         step.creatureEntry, search, /*alive*/ true))
                 {
+                    // Only engage an instance of the entry we can actually reach
+                    // (flat 2D FindNearestCreature can return one across a wall /
+                    // on another level). requireDirect=false keeps a legitimately
+                    // FAR seek alive — the seek is this event's own navigation.
+                    if (!DcEngageGeometry::IsEngageReachable(bot, target, /*requireDirect*/ false))
+                        return false;
                     DcMovement::ResolveEscortConflict(bot);
                     SetPhase(context, "event");
                     return EngageDirect(target);

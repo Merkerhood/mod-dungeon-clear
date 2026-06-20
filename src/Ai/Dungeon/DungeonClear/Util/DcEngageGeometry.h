@@ -251,6 +251,22 @@ public:
     // IsReachable.
     static bool IsLevelReachable(Player* bot, Unit* u);
 
+    // STRICT variant of IsLevelReachable with NO same-level fast path — always
+    // runs the PathGenerator probe. Requires a complete PATHFIND_NORMAL route
+    // that ends on the candidate's level; for callers that pick targets from a
+    // bare point-radius scan with no corridor/cone 2D pre-filter (event
+    // ClearRadius seeks) a straight-line-near mob in an adjacent room/tunnel —
+    // even on the SAME level — must be rejected or EngageDirect drives the tank
+    // into the dividing wall.
+    //
+    // requireDirect (default): also reject a pathological detour (path length far
+    // exceeds straight-line) — right for a room pre-clear, whose trash is meant to
+    // sit AT the anchor, so a long detour means "wrong region / premature fire".
+    // Pass false for a deliberate SEEK that may legitimately walk a long way to a
+    // specific objective creature (KillCreature.engage): there only the
+    // through-a-wall / wrong-level / no-route cases should be rejected.
+    static bool IsEngageReachable(Player* bot, Unit* u, bool requireDirect = true);
+
     // Computes the mmap path from the bot's current position to (bx, by, bz).
     // Returns true and fills `out` only when the result is PATHFIND_NORMAL —
     // a complete navigable route. Empty/incomplete/shortcut results return
