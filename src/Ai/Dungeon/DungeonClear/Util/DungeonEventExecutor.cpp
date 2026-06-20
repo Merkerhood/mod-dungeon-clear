@@ -571,6 +571,24 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
 
     DungeonEventProgress const& prog =
         context->GetValue<DungeonEventProgress&>("dungeon clear event progress")->Get();
+
+    // The progress must belong to the CURRENT instance. Drive() resets a prior
+    // run's progress on an instance change — but that reset runs only AFTER this
+    // trigger gate has fired, so on the first tick of a new run the leftover
+    // progress (stepIndex from the previous instance) is still present here. Were
+    // this sticky to fire off that stale stepIndex, the at-objective trigger would
+    // activate with the tank nowhere near the anchor, Drive would then advance the
+    // event's first step (a KillCreature gate false-completes when its creature is
+    // merely out of the 250yd scan range, i.e. the tank is far away), and the run
+    // would pin on a half-started event whose later steps can never reach their GO
+    // — a permanent "Blocked". Tying the latch to the progress's stamped instance
+    // (set by Drive only once the tank has genuinely arrived and driven a step)
+    // keeps it false until the event has actually begun in THIS instance.
+    Unit* const self = context->GetValue<Unit*>("self target")->Get();
+    uint32 const instanceId = self ? self->GetInstanceId() : 0;
+    if (instanceId == 0 || prog.instanceId != instanceId)
+        return false;
+
     // stepIndex >= 1 means the event has advanced past its first step, so this is
     // false until the tank has actually arrived and the event has begun running.
     return prog.eventId == ev->id && prog.stepIndex >= 1 &&
