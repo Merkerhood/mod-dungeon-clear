@@ -46,6 +46,13 @@ namespace
     // Range from which a creature can be gossiped (mirrors the core's
     // GetNPCIfCanInteractWith INTERACTION_DISTANCE check; kept a hair tighter).
     constexpr float DC_EVENT_GOSSIP_RANGE = 5.0f;
+    // How far out a Gossip step ACQUIRES its (unique) NPC in order to walk to it.
+    // Deliberately wide: the freed crew can settle well beyond the gossip range
+    // (the ZulFarrak crew descend to the temple floor), and the approach must
+    // start from wherever the prior steps left the tank — so this is the "walk to
+    // the NPC" radius, distinct from the 5yd interaction range. The entry is
+    // unique, so a wide flat scan can only return the intended NPC.
+    constexpr float DC_EVENT_GOSSIP_APPROACH = 100.0f;
 
     // Issue a one-shot move toward (x,y,z) if not already moving there. Short,
     // intra-room hops — the surrounding objective travel got the party into the
@@ -282,14 +289,25 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             // a real bot whose master isn't targeting this NPC, the select is a
             // silent no-op (the prisoner never gets the GOSSIP_SELECT and never
             // opens the door). Sending the NPC's own GUID makes it land.
-            float const search = step.radius > 0.0f ? step.radius : DC_EVENT_GO_SEARCH;
+            // Acquire across a WIDE approach radius and walk to the NPC, instead
+            // of gating the approach on a tight search radius. The preceding engage
+            // steps often complete instantly — the ZulFarrak temple bosses are
+            // already dead from the continuous wave combat — so they never drive
+            // the tank's descent and leave it parked up at the ramp, while Weegli /
+            // Bly walk down to the temple floor (>40yd). A tight acquire radius then
+            // strands this step until timeout (observed: the Weegli gossip never
+            // fired and the door to Chief Ukorz never opened). An author-specified
+            // larger radius is still honoured.
+            float const search = step.radius > DC_EVENT_GOSSIP_APPROACH
+                                     ? step.radius
+                                     : DC_EVENT_GOSSIP_APPROACH;
             Creature* npc = bot->FindNearestCreature(step.creatureEntry, search, /*alive*/ true);
             if (!npc)
             {
-                // Optional target: if it's not merely outside the gossip search
-                // radius but actually gone (no alive one anywhere nearby), SKIP the
-                // step rather than waiting forever for an NPC that will never come
-                // (a freed ZulFarrak helper the party let die). The wide rescan
+                // Optional target: if it's not merely outside the approach radius
+                // but actually gone (no alive one anywhere nearby), SKIP the step
+                // rather than waiting forever for an NPC that will never come (a
+                // freed ZulFarrak helper the party let die). The wide rescan
                 // separates "dead/gone" (skip) from "still walking in" (approach).
                 if (step.skipIfMissing &&
                     !bot->FindNearestCreature(step.creatureEntry, DC_EVENT_CREATURE_SCAN,
