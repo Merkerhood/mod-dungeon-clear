@@ -312,6 +312,73 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // of mob aggro-radius arcs during the advance. Default followDistance
     // (~10yd) had them strung out by the time the tank engaged.
     float const dist = std::min<float>(sPlayerbotAIConfig.followDistance, 6.0f);
+
+    // Centered trail-follow. Stock Follow() / MoveFollow re-paths to the follow
+    // slot through the core PathGenerator, which returns Detour's taut, wall-
+    // HUGGING line — so followers scrape walls and clip ledge edges the whole
+    // advance, the exact thing PathCenterEnable removes for the TANK. The tank's
+    // escort route is already corridor-centered, and its actual footsteps are
+    // recorded as breadcrumbs (DcAdvanceAction::RecordBreadcrumb). So once the
+    // tank has pulled ahead, walk the follower UP that centered crumb trail
+    // instead of re-deriving a parallel wall-hugging path of its own: the
+    // centering is inherited for free — the tank paid the navmesh/VMAP cost once
+    // when it built the route, and nothing here re-runs CorridorCenter. This is
+    // the same mechanism the dynamic scout-lag branch above uses, generalized to
+    // the ordinary close-follow. When the follower is already caught up near the
+    // tank we DON'T trail — we fall through to the golden-angle Follow() fan,
+    // whose spread keeps healers in LOS and the party out of one stack, and over
+    // that short a hop wall-hugging is irrelevant. Gated on the same switch as
+    // the centering itself (PathCenterEnable): with centering off the tank's
+    // crumbs are the wall-hugging line anyway, so there is nothing to inherit
+    // and the stock Follow() fan is the right fallback.
+    if (DcSettings::GetBool(ObjectGuid::Empty, "PathCenterEnable"))
+    {
+        float const toTank = bot->GetExactDist2d(tank);
+        // Only trail once the tank is beyond the tight follow bubble — i.e. a
+        // real corridor traversal is involved, not a fan-out shuffle. Below this
+        // the Follow() fan below keeps the cluster tight in healer LOS.
+        float const trailEngage = dist + 2.0f;
+        if (toTank > trailEngage)
+        {
+            // Per-bot stagger so the column spreads single-file ALONG the
+            // centered trail rather than every follower targeting the one crumb
+            // at `dist` behind the tank and piling onto it. Stable per GUID, same
+            // spirit as the golden-angle fan below but projected onto the trail.
+            uint32 const slot = static_cast<uint32>(bot->GetGUID().GetCounter()) % 4u;
+            float const lag = dist + static_cast<float>(slot) * 3.0f;
+            Position trailPoint;
+            // Skip the trail when the chosen crumb is one we already occupy: re-
+            // issuing MoveTo to a point we're basically on micro-steps in place
+            // (the scout-lag "two steps forward, two back" dance). Let Follow()
+            // take it — it early-outs cleanly when in range.
+            constexpr float kTrailArrival = 4.0f;
+            if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint) &&
+                bot->GetExactDist(&trailPoint) > kTrailArrival)
+            {
+                // Keep the teardown / orphan-reaper bookkeeping live; the point-
+                // move supersedes any MoveFollow a prior tick installed (same as
+                // the scout-lag trail / room-aggro skirt branches above — no
+                // explicit Stop needed).
+                followedTank = tank->GetGUID();
+                DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
+                // normal_only: never straight-line to a crumb that isn't reachable
+                // over a real navmesh path (belt-and-braces — crumbs are already
+                // reachability-gated in GetLeaderScoutTrailPoint).
+                if (DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
+                           trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
+                           false, false, /*normal_only=*/true))
+                {
+                    DC_PULL_DEBUG("[DC:{}] follow-tank: trailing tank's centered "
+                                  "breadcrumbs ({:.1f}yd behind, lag {:.1f})",
+                                  bot->GetName(), toTank, lag);
+                    return true;
+                }
+            }
+            // No usable trail yet (tank just moved off / crumb unreachable): fall
+            // through to the stock follow so the party never strands.
+        }
+    }
+
     // Remember who we're chasing so the teardown branch above can cancel this
     // continuous MoveFollow once the DC tank goes away.
     followedTank = tank->GetGUID();
