@@ -520,6 +520,67 @@ bool DcBossesAction::Execute(Event event)
     InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
     uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
 
+    // Resolve the room-aggro anchor boss (the first room-aggro boss in this
+    // wing-filtered list) up front — a room-aggro pre-clear event has no boss
+    // entry of its own, so it folds onto that boss's row. Computed here (before
+    // the boss loop) because the boss rows below carry the folded annotation.
+    bool haveRoomAggroBoss = false;
+    uint32 roomAggroBossEntry = 0;
+    uint32 roomAggroBossKey = 0;
+    for (DungeonBossInfo const& info : bosses)
+    {
+        if (info.kind != DungeonAnchorKind::Boss)
+            continue;
+        if (!RoomAggroRegistry::Find(bot->GetMapId(), info.entry))
+            continue;
+        if (!haveRoomAggroBoss || BossOrderKey(info) < roomAggroBossKey)
+        {
+            roomAggroBossEntry = info.entry;
+            roomAggroBossKey = BossOrderKey(info);
+            haveRoomAggroBoss = true;
+        }
+    }
+
+    // A conditional event that gates a specific boss (PanelBeforeBoss, or a
+    // room-aggro pre-clear) is shown FOLDED into that boss's row as a small
+    // sub-line — not as its own row with a "Go" button that can't resolve (the
+    // event isn't a creature, so `dc go <latchKey>` used to fail with "boss
+    // doesn't exist"). Build a per-boss-entry annotation here and remember which
+    // events were folded so the standalone-event loop below skips them. Events
+    // with no gated boss stay standalone (rendered read-only addon-side).
+    std::map<uint32, std::string> eventAnnotation;  // boss/objective entry -> note
+    std::unordered_set<uint32> foldedEventIds;
+    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
+    {
+        uint32 gatedEntry = ev->panelGatesBossEntry;
+        if (!gatedEntry && DungeonEventRegistry::IsRoomAggroPreClear(*ev) && haveRoomAggroBoss)
+            gatedEntry = roomAggroBossEntry;
+        if (!gatedEntry)
+            continue;
+
+        // The gated anchor must actually be in this (wing-filtered) list, else
+        // the event belongs to another wing — leave it for the standalone loop,
+        // which applies the same wing guard.
+        bool present = false;
+        for (DungeonBossInfo const& info : bosses)
+            if (info.entry == gatedEntry)
+            {
+                present = true;
+                break;
+            }
+        if (!present)
+            continue;
+
+        uint32 const lk = DungeonEventExecutor::ConditionalLatchKey(ev->id);
+        char const* statusWord =
+            cleared.count(lk) ? "done" : skipped.count(lk) ? "skipped" : "pending";
+        std::string note = ev->name + " (" + statusWord + ")";
+
+        std::string& slot = eventAnnotation[gatedEntry];
+        slot = slot.empty() ? note : slot + " | " + note;
+        foldedEventIds.insert(ev->id);
+    }
+
     for (DungeonBossInfo const& info : bosses)
     {
         // Travel objectives (BossRosterRegistry) are not creatures and carry no
@@ -533,15 +594,19 @@ bool DcBossesAction::Execute(Event event)
                 : skipped.count(info.entry) ? "skipped"
                                             : "alive";
             std::string const objName = "Objective: " + info.name;
+            auto const annIt = eventAnnotation.find(info.entry);
+            std::string const ann = annIt != eventAnnotation.end() ? annIt->second : "";
 
             // The panel sort key is BossOrderKey (the orderOverride when set,
             // else encounterIndex), so a reordered anchor lands in its clear-path
-            // slot — e.g. Stratholme's Barthilas ahead of the ziggurats.
+            // slot — e.g. Stratholme's Barthilas ahead of the ziggurats. Field 9
+            // (wing) is empty for objectives; field 10 carries any folded event
+            // note (e.g. the gong that gates this anchor).
             std::ostringstream objMsg;
             objMsg << "BOSS\t" << info.entry << "\t" << BossOrderKey(info) << "\t"
                    << objName << "\t" << objStatus << "\t"
                    << static_cast<int>(info.x) << "\t" << static_cast<int>(info.y) << "\t"
-                   << static_cast<int>(info.z) << "\t";
+                   << static_cast<int>(info.z) << "\t\t" << ann;
             DcStatusPublisher::SendAddonMessage(botAI, objMsg.str());
 
             if (!silent)
@@ -589,9 +654,13 @@ bool DcBossesAction::Execute(Event event)
         // connected maps like Maraudon this is the only place the wing surfaces
         // — the boss list still holds every boss, it's just annotated by region.
         std::string const wing = DungeonWingRegistry::WingName(bot->GetMapId(), info.entry);
+        auto const annIt = eventAnnotation.find(info.entry);
+        std::string const ann = annIt != eventAnnotation.end() ? annIt->second : "";
 
-        // Wing is appended as a trailing field; older addons that read only the
-        // first seven fields ignore it, so the protocol stays compatible.
+        // Wing (field 9) and the folded-event note (field 10) are appended as
+        // trailing fields; older addons that read only the leading fields ignore
+        // them, so the protocol stays compatible. The event note is the sub-line
+        // the panel renders under a boss whose gating event(s) fold into its row.
         std::ostringstream addonMsg;
         addonMsg << "BOSS\t"
                  << info.entry << "\t"
@@ -601,7 +670,7 @@ bool DcBossesAction::Execute(Event event)
                  << static_cast<int>(info.x) << "\t"
                  << static_cast<int>(info.y) << "\t"
                  << static_cast<int>(info.z) << "\t"
-                 << wing;
+                 << wing << "\t" << ann;
 
         DcStatusPublisher::SendAddonMessage(botAI, addonMsg.str());
 
@@ -650,6 +719,11 @@ bool DcBossesAction::Execute(Event event)
     // off-path event uses index 99 so it sorts last.
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
     {
+        // Events that gate a boss were folded into that boss's row in the pre-pass
+        // above — don't also surface them as their own (Go-less) line.
+        if (foldedEventIds.count(ev->id))
+            continue;
+
         // A room-aggro pre-clear gates one specific boss and is meaningful only
         // in that boss's wing. On a split map (Scarlet Monastery) the boss list
         // above is wing-filtered, so haveRoomAggroIndex is true only when the
@@ -755,6 +829,45 @@ bool DcGoAction::Execute(Event event)
                 matched = &info;
                 break;
             }
+        }
+    }
+
+    // Still no match? It may be a conditional EVENT, which isn't in the boss
+    // vector. The panel now folds boss-gating events into their boss row (so a
+    // "Go" sends the boss entry, not the event), but a chat `.dc go <eventname>`
+    // or an older addon can still arrive here with an event. Resolve it: if the
+    // event gates a boss, redirect the drive there (passing it fires the event);
+    // otherwise it's an off-path gate that triggers automatically — say so
+    // plainly instead of the misleading "boss doesn't exist".
+    if (!matched)
+    {
+        std::string query = param;
+        std::transform(query.begin(), query.end(), query.begin(), ::tolower);
+        for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
+        {
+            bool keyMatch = isNumeric &&
+                std::stoul(param) == DungeonEventExecutor::ConditionalLatchKey(ev->id);
+            std::string evName = ev->name;
+            std::transform(evName.begin(), evName.end(), evName.begin(), ::tolower);
+            bool nameMatch = !isNumeric && evName.find(query) != std::string::npos;
+            if (!keyMatch && !nameMatch)
+                continue;
+
+            if (ev->panelGatesBossEntry)
+                for (auto const& info : bosses)
+                    if (info.entry == ev->panelGatesBossEntry)
+                    {
+                        matched = &info;
+                        break;
+                    }
+
+            if (!matched)
+            {
+                botAI->TellError(ev->name +
+                                 " happens on the way — there's no separate spot to send the tank to.");
+                return false;
+            }
+            break;
         }
     }
 

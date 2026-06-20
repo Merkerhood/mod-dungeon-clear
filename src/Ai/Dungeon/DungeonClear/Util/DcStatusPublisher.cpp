@@ -99,6 +99,13 @@ namespace
         uint32 const mask = inst ? inst->GetCompletedEncounterMask() : 0u;
         uint32 const skipped =
             static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, "dungeon clear skipped").size());
+        // Objectives and conditional events report "dead" off the cleared-anchor
+        // latch, not the encounter mask — without folding it in, completing one
+        // (e.g. an Uldaman altar event) leaves {mask,skipped,...} unchanged so the
+        // detector never re-pushes the list and the panel row stays stuck "alive".
+        // The set only grows within a run, so its size is a sufficient change key.
+        uint32 const cleared =
+            static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, "dungeon clear cleared anchors").size());
         uint32 const selected = AI_VALUE(uint32, "dungeon clear selected boss");
         uint32 const count =
             static_cast<uint32>(AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses").size());
@@ -115,7 +122,7 @@ namespace
         // a missed change is a slightly stale boss row until the next real
         // transition or an explicit request.
         uint64 h = 1469598103934665603ull;
-        for (uint32 w : {mask, skipped, selected, count, mapId, instanceId})
+        for (uint32 w : {mask, skipped, cleared, selected, count, mapId, instanceId})
         {
             h ^= w;
             h *= 1099511628211ull;
