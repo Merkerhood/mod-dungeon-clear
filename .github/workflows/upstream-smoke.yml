@@ -14,7 +14,10 @@ name: upstream-smoke
 
 env:
   # The two staging branches you track. A break in either fails the smoke.
-  CORE_REPO: jrad7/azerothcore-wotlk        # your acore fork
+  # The playerbots core fork is the true upstream where breaking core renames
+  # (e.g. CreatureData::id1 -> id) land; your local acore test-staging just
+  # tracks this branch, so the smoke pulls from the source directly.
+  CORE_REPO: mod-playerbots/azerothcore-wotlk   # playerbots core fork (public)
   CORE_REF: test-staging
   PLAYERBOTS_REPO: mod-playerbots/mod-playerbots
   PLAYERBOTS_REF: test-staging
