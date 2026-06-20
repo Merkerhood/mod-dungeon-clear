@@ -130,8 +130,25 @@ namespace
     // exit (124367) still shut and Stone Keepers present. Reads false the instant
     // the door opens (the keepers' death SmartAI sets it ACTIVE), so it fires once
     // and ends naturally — no explicit latch needed (like the Ironaya seal).
-    bool UldamanStoneKeepers(Player* bot, AiObjectContext* /*context*/)
+    bool UldamanStoneKeepers(Player* bot, AiObjectContext* context)
     {
+        // Ordering guard (mirrors UldamanArchaedasAltar). The Hall of the Keepers
+        // is the antechamber to Archaedas — its altar opens the temple door onto
+        // the Archaedas descent — so this gate must not fire until Archaedas is the
+        // NEXT boss (i.e. Grimlok, the encounter immediately before him, is dead).
+        // The temple door is shut from instance start AND sits within ULD_SCAN
+        // (120yd) of the Grimlok approach (Grimlok is right above the Temple of the
+        // Stars), so the proximity scan alone FLICKERS true mid-Grimlok-approach:
+        // the conditional ClearRadius step then seeks the nearest keeper-hall trash
+        // and EngageDirects it through the dividing wall (an adjacent Earthen mob,
+        // short straight-line / long winding path), wedging the tank. The sibling
+        // comment's claim that this condition "gets ordering for free from the
+        // still-shut door" was wrong — shut + in-scan is exactly the false-fire case
+        // (encounter order confirms Archaedas is the boss directly after Grimlok).
+        std::optional<DungeonBossInfo> const next =
+            context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
+        bool const keepersAreNext = next.has_value() && next->entry == ULD_ARCHAEDAS;
+
         GameObject* door = bot->FindNearestGameObject(ULD_TEMPLE_DOOR, ULD_SCAN);
         Creature* keeper = bot->FindNearestCreature(ULD_STONE_KEEPER, ULD_SCAN, /*alive*/ true);
 
@@ -141,12 +158,16 @@ namespace
         {
             lastLog = now;
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] Uldaman Keepers cond: door={} state={} keeper={}",
+                      "[DC:{}] Uldaman Keepers cond: door={} state={} keeper={} nextBoss={} ({})",
                       bot->GetName(), door ? "found" : "MISSING",
                       door ? static_cast<int>(door->GetGoState()) : -1,
-                      keeper ? "present" : "no");
+                      keeper ? "present" : "no",
+                      next.has_value() ? next->entry : 0,
+                      keepersAreNext ? "his turn" : "not yet");
         }
 
+        if (!keepersAreNext)
+            return false;                            // earlier bosses (Grimlok…) still up
         if (!door)
             return false;                            // not at the hall yet
         if (door->GetGoState() != GO_STATE_READY)
