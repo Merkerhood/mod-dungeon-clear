@@ -119,4 +119,10 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    sweep in DungeonClearReaperScript (correctness net across ResetStrategies).
 #    Pure decision kernel DcStrategyGate::Decide is headless-tested by
 #    t/TestStrategyGate.cpp.)
+# Data/DcNavPenaltyRegistry.{h,cpp} + Util/DcRouteFilter.{h,cpp}
+#   (no-go route volumes: DcRouteFilter extends dtQueryFilterExt with a per-map
+#    hand-authored no-go AABB table (DcNavPenaltyRegistry), so the long-range A*
+#    corridor avoids navmesh shortcuts a real player can't follow — e.g. the LBRS
+#    chasm wall-climb. Wired into LongRangePathfinder::BuildCoreFromMesh (now takes
+#    a mapId) and screened in the StridedPathfinder fallback too.)
 # (this comment bumps mtime to force CMake re-glob on next build)

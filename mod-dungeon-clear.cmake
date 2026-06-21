@@ -13,6 +13,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestPullDecisions.cpp"
             "${MOD_PATH}/t/TestScenarioDriver.cpp"
             "${MOD_PATH}/t/TestRoomAggro.cpp"
+            "${MOD_PATH}/t/TestNavPenalty.cpp"
             "${MOD_PATH}/t/TestBossRoster.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/TestNavGeometry.cpp"

@@ -43,8 +43,46 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(329));   // Stratholme
     EXPECT_TRUE(BossRosterRegistry::HasPatch(289));   // Scholomance
     EXPECT_TRUE(BossRosterRegistry::HasPatch(429));   // Dire Maul East
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(70));    // Uldaman — altar objectives
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
+}
+
+// Uldaman: the two altar travel objectives MUST sort between Grimlok (the boss
+// before them) and Archaedas (the final boss, reordered above them), in the
+// order keeper-altar -> Archaedas-altar -> Archaedas. The keeper altar opens the
+// temple door; the Archaedas altar wakes the stoned boss; both must precede him.
+TEST(BossRosterRegistryTest, UldamanAltarObjectivesSortBeforeArchaedas)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(4854, 6, "Grimlok", 70),
+        Boss(2748, 7, "Archaedas", 70),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(70, base);
+
+    int grimlokIdx = -1, keeperIdx = -1, archAltarIdx = -1, archaedasIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 4854)
+            grimlokIdx = i;
+        else if (out[i].entry == 2748)
+            archaedasIdx = i;
+        else if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 2)
+            keeperIdx = i;
+        else if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 3)
+            archAltarIdx = i;
+    }
+
+    ASSERT_NE(grimlokIdx, -1);
+    ASSERT_NE(keeperIdx, -1);
+    ASSERT_NE(archAltarIdx, -1);
+    ASSERT_NE(archaedasIdx, -1);
+    EXPECT_LT(grimlokIdx, keeperIdx);
+    EXPECT_LT(keeperIdx, archAltarIdx);
+    EXPECT_LT(archAltarIdx, archaedasIdx);
+
+    // Archaedas keeps his real DBC kill-bit (7) — only his clear ORDER moved.
+    EXPECT_EQ(out[archaedasIdx].encounterIndex, 7u);
 }
 
 // ZulFarrak: the Temple Summit event objective (orderOverride 4) MUST sort (and

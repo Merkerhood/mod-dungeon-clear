@@ -51,8 +51,9 @@ namespace DcNavHarness
     };
 
     // Run BuildCoreFromMesh from (sx,sy,sz) to (tx,ty,tz) against `mesh` and
-    // summarize. `mesh` must outlive the call.
-    RouteResult Route(dtNavMesh const* mesh,
+    // summarize. `mapId` selects the route-cost discouragements. `mesh` must
+    // outlive the call.
+    RouteResult Route(dtNavMesh const* mesh, uint32_t mapId,
                       float sx, float sy, float sz,
                       float tx, float ty, float tz);
 }

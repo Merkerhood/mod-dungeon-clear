@@ -46,11 +46,13 @@
 //   6  Stratholme       — ziggurat 2 acolytes (Nerub'enkan, door open)
 //   7  Stratholme       — ziggurat 3 acolytes (Maleki, door open)
 //   8  Uldaman          — Ironaya seal (clear room + keystone)
-//   9  Uldaman          — Altar of the Keepers (clear hall + awaken/kill 4 keepers)
-//  10  Uldaman          — Altar of Archaedas (summon the final boss)
+//   9  (free)           — was Uldaman Altar of the Keepers; now an ANCHORED event
+//                         (70/2) on a roster objective (BossRosterRegistry map 70)
+//  10  (free)           — was Uldaman Altar of Archaedas; now an ANCHORED event
+//                         (70/3) on a roster objective
 //  11  Razorfen Downs   — approach Tuten'kash (walk to his combat spot once the
 //                         gong summons him, so the party enters aggro range)
-//   -- next free: 12
+//   -- next free: 12 (9 and 10 may be reused)
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 

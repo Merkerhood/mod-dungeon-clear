@@ -6,6 +6,7 @@
 #include "LongRangePathfinder.h"
 
 #include "Ai/Dungeon/DungeonClear/Util/CorridorCenter.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRouteFilter.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearGeometry.h"
 
 #include <algorithm>
@@ -294,7 +295,7 @@ namespace
 }
 
 LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
-    dtNavMesh const* navMesh, float sx, float sy, float sz, float tx, float ty, float tz)
+    dtNavMesh const* navMesh, uint32 mapId, float sx, float sy, float sz, float tx, float ty, float tz)
 {
     // WORKER-SAFE: no Player*/Map*/VMAP here — only the navmesh + plain floats.
     RawResult result;
@@ -315,8 +316,12 @@ LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
         return result;
     }
 
-    // Player filter — matches PathGenerator's "assume Player" branch.
-    dtQueryFilterExt filter;
+    // Player filter — matches PathGenerator's "assume Player" branch. DcRouteFilter
+    // adds the per-map no-go volume penalty that steers the A* corridor off navmesh
+    // shortcuts a real player can't follow; it derives from dtQueryFilterExt, so
+    // the include/exclude flags and the liquid area costs below apply exactly as
+    // before, and on a map with no volume the cost is identical to stock.
+    DcRouteFilter filter(mapId);
     filter.setIncludeFlags(static_cast<uint16>(NAV_GROUND | NAV_WATER | NAV_MAGMA));
     filter.setExcludeFlags(0);
     // Prefer land: water/magma stay traversable but cost more, so the A* corridor
@@ -514,7 +519,7 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         return result;
     }
 
-    RawResult const raw = BuildCoreFromMesh(navMesh, bot->GetPositionX(), bot->GetPositionY(),
-                                            bot->GetPositionZ(), tx, ty, tz);
+    RawResult const raw = BuildCoreFromMesh(navMesh, map->GetId(), bot->GetPositionX(),
+                                            bot->GetPositionY(), bot->GetPositionZ(), tx, ty, tz);
     return Finalize(bot, raw);
 }
