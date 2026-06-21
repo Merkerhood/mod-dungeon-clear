@@ -13,6 +13,7 @@
 #include "Creature.h"
 #include "Player.h"
 #include "InstanceScript.h"
+#include "Log.h"
 #include "Map.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearStateValues.h"
@@ -175,7 +176,8 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     // (instanceId 0 = not in an instance / mid-load, never triggers it).
     uint32 const instanceId = bot->GetInstanceId();
     uint32 const lastRunInstance = AI_VALUE(uint32, "dungeon clear run instance");
-    if (instanceId != 0 && lastRunInstance != 0 && lastRunInstance != instanceId)
+    bool const didReset = instanceId != 0 && lastRunInstance != 0 && lastRunInstance != instanceId;
+    if (didReset)
     {
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get().clear();
         context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get().clear();
@@ -184,7 +186,20 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
     }
     if (instanceId != 0 && lastRunInstance != instanceId)
+    {
+        // DIAGNOSTIC: fires once per instance transition so we can confirm, from
+        // the live run, that Calculate runs in the new instance, what instance ids
+        // the bot actually sees across a re-enter, and whether the completion-state
+        // reset fired. (Investigating a ZulFarrak Temple objective still reading
+        // "Done" on a genuinely fresh instance.)
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] run-instance transition: last={} now={} reset={} (mask={:#x})",
+                 bot->GetName(), lastRunInstance, instanceId, didReset ? 1 : 0,
+                 DcTargeting::GetInstanceScript(bot)
+                     ? DcTargeting::GetInstanceScript(bot)->GetCompletedEncounterMask()
+                     : 0u);
         context->GetValue<uint32>("dungeon clear run instance")->Set(instanceId);
+    }
 
     std::vector<DungeonBossInfo> const& bosses =
         AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
