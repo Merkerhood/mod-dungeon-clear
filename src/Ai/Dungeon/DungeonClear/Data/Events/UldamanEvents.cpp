@@ -10,7 +10,6 @@
 #include "Creature.h"
 #include "GameObject.h"
 #include "GameObjectData.h"
-#include "InstanceScript.h"
 #include "Log.h"
 #include "Player.h"
 #include "Playerbots.h"
@@ -75,21 +74,15 @@ namespace
     // proximity to the target / the instance state, so the direct cast is safe.
     constexpr uint32 ULD_STONE_KEEPER       = 4857;    // 4 ring the Keepers altar
     constexpr uint32 ULD_TEMPLE_DOOR        = 124367;  // Hall of the Keepers exit
-    constexpr uint32 ULD_ARCHAEDAS          = 2748;    // final boss (roster encounter)
-    constexpr uint32 ULD_DATA_ARCHAEDAS     = 2;       // instance_uldaman DATA_ARCHAEDAS
     constexpr uint32 SPELL_AWAKEN_KEEPERS   = 11568;   // Altar of The Keepers (GO 130511)
     constexpr uint32 SPELL_AWAKEN_ARCHAEDAS = 10340;   // Altar of Archaedas  (GO 133234)
 
-    // Hall of the Keepers. The 4 Stone Keeper statues ring the Altar of The
-    // Keepers (GO 130511) at room centre; the room pre-clear is centred on the
-    // altar. Radius spans the keeper ring (~18yd) plus trash up to the temple
-    // door (~36yd); zBand keeps the lower Archaedas level (z ~-52) out.
+    // Altar of The Keepers (GO 130511) at the Hall-of-the-Keepers centre, ringed
+    // by the 4 Stone Keeper statues. The roster delivers the tank here (objective
+    // OBJ(1), ordered after Grimlok / before Archaedas — see BossRosterRegistry).
     constexpr float  ULD_KEEPER_X      = 104.85f;
     constexpr float  ULD_KEEPER_Y      = 272.45f;
     constexpr float  ULD_KEEPER_Z      = -26.53f;
-    constexpr float  ULD_KEEPER_RADIUS = 40.0f;
-    constexpr float  ULD_KEEPER_ZBAND  = 15.0f;
-    constexpr uint32 ULD_KEEPER_TIMEOUT = 120000;
 
     // Altar of Archaedas (GO 133234), in the Temple of the Stars below the hall.
     constexpr float  ULD_ARCH_ALTAR_X = 96.48f;
@@ -101,14 +94,16 @@ namespace
     // reads false the instant the seal opens, so it fires exactly once.
     bool UldamanIronayaSeal(Player* bot, AiObjectContext* context)
     {
-        // Ordering guard (mirrors UldamanStoneKeepers / UldamanArchaedasAltar). The
-        // seal antechamber's ClearRadius must not fire until Ironaya is the NEXT
-        // boss: the still-shut seal sits within ULD_SCAN (120yd) of the earlier
-        // Revelosh / Lost-Dwarves approaches, so the proximity scan alone flickers
-        // true and the antechamber seek drags the tank at trash it can't reach
-        // cleanly (the witnessed early-Ironaya fire). The DB encounter order puts
-        // Ironaya at slot 3 (after Revelosh and the Lost Dwarves), so gate on her
-        // being current — same false-fire the sibling Archaedas guard documents.
+        // Ordering guard. The seal antechamber's ClearRadius must not fire until
+        // Ironaya is the NEXT boss: the still-shut seal sits within ULD_SCAN
+        // (120yd) of the earlier Revelosh / Lost-Dwarves approaches, so the
+        // proximity scan alone flickers true and the antechamber seek drags the
+        // tank at trash it can't reach cleanly (the witnessed early-Ironaya fire).
+        // The DB encounter order puts Ironaya at slot 3 (after Revelosh and the
+        // Lost Dwarves), so gate on her being current. (This event stays
+        // CONDITIONAL — unlike the keeper/Archaedas altars it has LIVE Stonevault
+        // trash whose ClearRadius seek walks the tank in; see the altar note below
+        // for why those two are anchored objectives instead.)
         std::optional<DungeonBossInfo> const next =
             context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
         bool const ironayaIsNext = next.has_value() && next->entry == ULD_IRONAYA;
@@ -141,104 +136,28 @@ namespace
         return ironaya != nullptr;
     }
 
-    // --- Altar of the Keepers gate, CONDITIONAL -----------------------------
-    // Due once the party reaches the Hall of the Keepers with the temple-door
-    // exit (124367) still shut and Stone Keepers present. Reads false the instant
-    // the door opens (the keepers' death SmartAI sets it ACTIVE), so it fires once
-    // and ends naturally — no explicit latch needed (like the Ironaya seal).
-    bool UldamanStoneKeepers(Player* bot, AiObjectContext* context)
-    {
-        // Ordering guard (mirrors UldamanArchaedasAltar). The Hall of the Keepers
-        // is the antechamber to Archaedas — its altar opens the temple door onto
-        // the Archaedas descent — so this gate must not fire until Archaedas is the
-        // NEXT boss (i.e. Grimlok, the encounter immediately before him, is dead).
-        // The temple door is shut from instance start AND sits within ULD_SCAN
-        // (120yd) of the Grimlok approach (Grimlok is right above the Temple of the
-        // Stars), so the proximity scan alone FLICKERS true mid-Grimlok-approach:
-        // the conditional ClearRadius step then seeks the nearest keeper-hall trash
-        // and EngageDirects it through the dividing wall (an adjacent Earthen mob,
-        // short straight-line / long winding path), wedging the tank. The sibling
-        // comment's claim that this condition "gets ordering for free from the
-        // still-shut door" was wrong — shut + in-scan is exactly the false-fire case
-        // (encounter order confirms Archaedas is the boss directly after Grimlok).
-        std::optional<DungeonBossInfo> const next =
-            context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
-        bool const keepersAreNext = next.has_value() && next->entry == ULD_ARCHAEDAS;
-
-        GameObject* door = bot->FindNearestGameObject(ULD_TEMPLE_DOOR, ULD_SCAN);
-        Creature* keeper = bot->FindNearestCreature(ULD_STONE_KEEPER, ULD_SCAN, /*alive*/ true);
-
-        static uint32 lastLog = 0;
-        uint32 const now = getMSTime();
-        if (getMSTimeDiff(lastLog, now) >= 5000)
-        {
-            lastLog = now;
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] Uldaman Keepers cond: door={} state={} keeper={} nextBoss={} ({})",
-                      bot->GetName(), door ? "found" : "MISSING",
-                      door ? static_cast<int>(door->GetGoState()) : -1,
-                      keeper ? "present" : "no",
-                      next.has_value() ? next->entry : 0,
-                      keepersAreNext ? "his turn" : "not yet");
-        }
-
-        if (!keepersAreNext)
-            return false;                            // earlier bosses (Grimlok…) still up
-        if (!door)
-            return false;                            // not at the hall yet
-        if (door->GetGoState() != GO_STATE_READY)
-            return false;                            // already open -> done
-        return keeper != nullptr;
-    }
-
-    // --- Altar of Archaedas gate, CONDITIONAL -------------------------------
-    // Archaedas (2748) sits STONED and non-attackable until the Altar of Archaedas
-    // (GO 133234) is used — its ritual fires SEND_EVENT spell 10340, which sets
-    // DATA_ARCHAEDAS=IN_PROGRESS and wakes him. Like the Ironaya seal this must
-    // preempt the (futile) boss pull on the still-stoned final boss. Due while he
-    // is present and his encounter has not started; reads false the instant the
-    // altar fires (state leaves NOT_STARTED), so it fires exactly once.
-    bool UldamanArchaedasAltar(Player* bot, AiObjectContext* context)
-    {
-        Creature* arch = bot->FindNearestCreature(ULD_ARCHAEDAS, ULD_SCAN, /*alive*/ true);
-        InstanceScript* instance = bot->GetInstanceScript();
-        uint32 const state = instance ? instance->GetData(ULD_DATA_ARCHAEDAS) : 0;
-
-        // Ordering guard: only summon Archaedas once he is the NEXT boss — i.e.
-        // every earlier roster boss (Grimlok included) is already dead. The 120yd
-        // proximity scan alone is NOT a real gate: Grimlok sits right above the
-        // Temple of the Stars, so while the tank fights toward him it comes within
-        // scan range of the stoned Archaedas below, and this event would otherwise
-        // fire and MoveTo-yank the tank down to the altar mid-Grimlok-approach
-        // (the "next boss is Grimlok but the tank navigates to Archaedas" bug). The
-        // sibling Ironaya/Stone-Keeper conditions get this ordering for free from
-        // their still-shut seal/door; Archaedas is ALWAYS present and ALWAYS
-        // NOT_STARTED until summoned, so it has no structural gate — tie it to the
-        // boss order explicitly. (Events run on a non-rest-gated driver, so an
-        // early fire also drags the tank off while the panel still reads "resting".)
-        std::optional<DungeonBossInfo> const next =
-            context->GetValue<std::optional<DungeonBossInfo>>("next dungeon boss")->Get();
-        bool const archaedasIsNext = next.has_value() && next->entry == ULD_ARCHAEDAS;
-
-        static uint32 lastLog = 0;
-        uint32 const now = getMSTime();
-        if (getMSTimeDiff(lastLog, now) >= 5000)
-        {
-            lastLog = now;
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] Uldaman Archaedas cond: boss={} encounterState={} nextBoss={} ({})",
-                      bot->GetName(), arch ? "present" : "no", state,
-                      next.has_value() ? next->entry : 0,
-                      archaedasIsNext ? "his turn" : "not yet");
-        }
-
-        if (!arch)
-            return false;                            // not in the Temple of the Stars
-        if (!archaedasIsNext)
-            return false;                            // earlier bosses (Grimlok…) still up
-        // NOT_STARTED (0) => due; IN_PROGRESS / DONE => the altar already fired.
-        return state == 0;
-    }
+    // --- Why the two altars below are ANCHORED, not CONDITIONAL --------------
+    // The Hall of the Keepers and the Temple of the Stars are FAR from where a
+    // conditional gate could fire: the keeper altar (104.8, 272.5, -26.5) sits
+    // ~36yd past the temple door, and Archaedas's altar (96.5, 269, -52.1) is a
+    // full floor below it. A conditional event has NO long-range navigation — it
+    // only HopTo's (raw MovePoint, 74-node capped) and preempts the boss-nav from
+    // up to ULD_SCAN (120yd) away, so it can't reliably cross that gap (the live
+    // failure: "the keeper-altar step completes the instant I near the room and
+    // the tank never clicks the altar"). It fails WORSE here than the Dire-Maul
+    // door it mirrors because the whole hall is dormant, immune Stone-Keeper /
+    // Earthen STATUES (spell_uldaman_stoned_aura -> REACT_PASSIVE + SetImmuneToAll
+    // until the altar wakes them): a room pre-clear finds NOTHING to engage, so
+    // there is no live trash whose seek would walk the tank in, and — Archaedas
+    // sitting directly below the keeper altar — the boss-nav is meanwhile pulling
+    // the tank DOWN to him while the gate yanks it UP to the keepers.
+    //
+    // So both altars are travel OBJECTIVES (BossRosterRegistry, map 70) ordered
+    // after Grimlok and before Archaedas, each wired to an ANCHORED event here:
+    // the boss-nav LongRangePathfinder delivers the tank ONTO the altar first
+    // (up to the keepers, then down to Archaedas), then the event fires the
+    // ritual SEND_EVENT. Exactly the Dire Maul Conservatory-Door / Stratholme
+    // Slaughterhouse pattern. No conditional predicate is needed for either.
 }
 
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
@@ -267,43 +186,45 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
                                       /*timeout*/ 45000)
                       .Build());
 
-    // --- Altar of the Keepers (Stone Keepers) — gate, CONDITIONAL ----------
-    // Clear the hall, fire the altar to awaken the keepers, kill all four; their
-    // deaths open the temple door (124367) onward to the Archaedas descent.
+    // --- Altar of the Keepers (Stone Keepers) — ANCHORED -------------------
+    // Anchored at OBJ(1) (BossRosterRegistry map 70), ordered after Grimlok and
+    // before Archaedas: boss-nav delivers the tank ONTO the altar, then this fires
+    // it to awaken the keepers and kills all four; their deaths open the temple
+    // door (124367) onward to the Archaedas descent.
+    //
+    // Persistent so the multi-keeper fight (each death chain-wakes the next and
+    // re-enters combat, leaving a >1s drive gap) can't rewind to step 0 and
+    // re-cast the altar / re-walk the approach.
     out.push_back(EventBuilder(70, 2, "Awaken the Stone Keepers (Altar of the Keepers)")
-                      .Conditional(9)
-                      .PanelBeforeBoss(ULD_ARCHAEDAS)
-                      // 1) clear the hall trash. The stoned keepers are immune /
-                      //    passive, so the point pre-clear ignores them.
-                      .ClearRadius(ULD_KEEPER_X, ULD_KEEPER_Y, ULD_KEEPER_Z,
-                                   ULD_KEEPER_RADIUS, ULD_KEEPER_ZBAND)
-                      .Timeout(ULD_KEEPER_TIMEOUT)
-                      // 2) stand on the altar at room centre.
+                      .Anchored(/*orderIndex, doc-only*/ 7)
+                      // 1) centre on the altar (boss-nav parked the tank within the
+                      //    objective's arrive radius; close the last few yards).
                       .MoveTo(ULD_KEEPER_X, ULD_KEEPER_Y, ULD_KEEPER_Z, /*radius*/ 6.0f)
-                      // 3) fire the altar's ritual SEND_EVENT (11568): wakes the
+                      // 2) fire the altar's ritual SEND_EVENT (11568): wakes the
                       //    nearest keeper, which "enters combat with the zone" and
                       //    pulls the party (see the altar comment above for why a
                       //    direct CastSpell is used instead of UseGO on the ritual).
                       .CastSpell(SPELL_AWAKEN_KEEPERS)
-                      // 4) kill all four. Each keeper's death chain-wakes the next
+                      // 3) kill all four. Each keeper's death chain-wakes the next
                       //    (SmartAI SetData) and re-pulls the zone, so a plain-gate
                       //    KillCreature (party auto-aggros; no .engage onto the
                       //    still-stoned/immune statues) holds the party here until
                       //    none remain alive.
                       .KillCreature(ULD_STONE_KEEPER, /*count*/ 4, /*searchRadius*/ 50.0f)
-                      // 5) confirm the temple door has rumbled open before the
+                      // 4) confirm the temple door has rumbled open before the
                       //    clear advances (search wide — it sits ~36yd off centre).
                       .WaitForGOState(ULD_TEMPLE_DOOR, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 60000, /*searchRadius*/ 70.0f)
+                      .Persistent()
                       .Build());
 
-    // --- Altar of Archaedas (final-boss summon) — CONDITIONAL --------------
-    // Archaedas is a roster encounter but spawns stoned/non-attackable; the altar
-    // must be fired before the boss pull can land. This event approaches the altar
-    // and wakes him, then latches — the normal boss pull fights and kills him.
+    // --- Altar of Archaedas (final-boss summon) — ANCHORED -----------------
+    // Anchored at OBJ(2) (ordered after the keeper altar, before Archaedas the
+    // boss). Archaedas is a roster encounter but spawns stoned/non-attackable;
+    // boss-nav delivers the tank onto the altar, this wakes him, the objective
+    // latches, and the normal boss pull then fights and kills him.
     out.push_back(EventBuilder(70, 3, "Summon Archaedas (Altar of Archaedas)")
-                      .Conditional(10)
-                      .PanelBeforeBoss(ULD_ARCHAEDAS)
+                      .Anchored(/*orderIndex, doc-only*/ 8)
                       // 1) step onto the Altar of Archaedas in his chamber.
                       .MoveTo(ULD_ARCH_ALTAR_X, ULD_ARCH_ALTAR_Y, ULD_ARCH_ALTAR_Z,
                               /*radius*/ 6.0f)
@@ -315,7 +236,5 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
 
 void RegisterUldamanConditions(EventConditionMap& out)
 {
-    out[8]  = &UldamanIronayaSeal;
-    out[9]  = &UldamanStoneKeepers;
-    out[10] = &UldamanArchaedasAltar;
+    out[8] = &UldamanIronayaSeal;
 }

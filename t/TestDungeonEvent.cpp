@@ -610,51 +610,53 @@ TEST(DungeonEventConditional, UldamanIronayaSeal)
     EXPECT_EQ(e->steps[3].goEntry, 124372u);            // the Seal of Khaz'Mul
     EXPECT_EQ(e->steps[3].wantState, 0u);               // GO_STATE_ACTIVE (open)
 
-    // Uldaman has three conditional events (Ironaya seal, the Altar of the
-    // Keepers, the Altar of Archaedas) and NO room-aggro pre-clear (the seal is a
-    // multi-step ClearRadius, not the lone KillCreature(0) shape).
-    EXPECT_EQ(DungeonEventRegistry::Conditional(70).size(), 3u);
+    // Uldaman has ONE conditional event (the Ironaya seal — its antechamber has
+    // live Stonevault trash whose ClearRadius seek walks the tank in). The Altar
+    // of the Keepers and Altar of Archaedas are ANCHORED events on roster
+    // objectives instead (the halls are dormant immune statues with nothing to
+    // seek, so a conditional gate can't navigate the tank in). NO room-aggro
+    // pre-clear (the seal is a multi-step ClearRadius, not the lone
+    // KillCreature(0) shape).
+    EXPECT_EQ(DungeonEventRegistry::Conditional(70).size(), 1u);
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*e));
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(70));
 }
 
-// Uldaman (70): the Altar of the Keepers — clear the hall, fire the altar's
-// SEND_EVENT to awaken the keepers, kill all four, then wait for the temple door.
-TEST(DungeonEventConditional, UldamanStoneKeepers)
+// Uldaman (70): the Altar of the Keepers — an ANCHORED event on roster objective
+// OBJ(1). Boss-nav delivers the tank onto the altar; the event centres on it,
+// fires the altar's SEND_EVENT to awaken the keepers, kills all four, then waits
+// for the temple door. Persistent so the multi-keeper fight can't rewind it.
+TEST(DungeonEventAnchored, UldamanStoneKeepers)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(70, 2);
     ASSERT_NE(e, nullptr);
-    EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 9u);
-    EXPECT_TRUE(EventConditionRegistry::Has(9u));
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_FALSE(EventConditionRegistry::Has(9u));       // condition 9 retired
     EXPECT_TRUE(e->required);
-    EXPECT_EQ(e->panelGatesBossEntry, 2748u);            // renders before Archaedas
+    EXPECT_TRUE(e->persistent);
 
-    ASSERT_EQ(e->steps.size(), 5u);
-    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
-    EXPECT_TRUE(e->steps[0].engage);
-    EXPECT_EQ(e->steps[1].kind, EventStepKind::MoveTo);
-    EXPECT_EQ(e->steps[2].kind, EventStepKind::CastSpell);
-    EXPECT_EQ(e->steps[2].spellId, 11568u);              // Altar of The Keepers SEND_EVENT
-    EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[3].creatureEntry, 4857u);         // Stone Keeper
-    EXPECT_FALSE(e->steps[3].engage);                    // plain gate (party auto-aggros)
-    EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForGameObjectState);
-    EXPECT_EQ(e->steps[4].goEntry, 124367u);             // temple door
-    EXPECT_EQ(e->steps[4].wantState, 0u);                // GO_STATE_ACTIVE (open)
+    ASSERT_EQ(e->steps.size(), 4u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::CastSpell);
+    EXPECT_EQ(e->steps[1].spellId, 11568u);              // Altar of The Keepers SEND_EVENT
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[2].creatureEntry, 4857u);         // Stone Keeper
+    EXPECT_FALSE(e->steps[2].engage);                    // plain gate (party auto-aggros)
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[3].goEntry, 124367u);             // temple door
+    EXPECT_EQ(e->steps[3].wantState, 0u);                // GO_STATE_ACTIVE (open)
 }
 
-// Uldaman (70): the Altar of Archaedas — approach the altar and fire its
-// SEND_EVENT to wake the stoned final boss; the boss pull then kills him.
-TEST(DungeonEventConditional, UldamanArchaedasAltar)
+// Uldaman (70): the Altar of Archaedas — an ANCHORED event on roster objective
+// OBJ(2). Boss-nav delivers the tank onto the altar, this fires its SEND_EVENT to
+// wake the stoned final boss, and the boss pull then kills him.
+TEST(DungeonEventAnchored, UldamanArchaedasAltar)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(70, 3);
     ASSERT_NE(e, nullptr);
-    EXPECT_EQ(e->activation, EventActivation::Conditional);
-    EXPECT_EQ(e->conditionId, 10u);
-    EXPECT_TRUE(EventConditionRegistry::Has(10u));
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_FALSE(EventConditionRegistry::Has(10u));      // condition 10 retired
     EXPECT_TRUE(e->required);
-    EXPECT_EQ(e->panelGatesBossEntry, 2748u);
 
     ASSERT_EQ(e->steps.size(), 2u);
     EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
