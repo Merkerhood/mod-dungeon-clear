@@ -781,6 +781,28 @@ bool DcBossesAction::Execute(Event event)
         if (DungeonEventRegistry::IsRoomAggroPreClear(*ev) && !haveRoomAggroIndex)
             continue;
 
+        // Wing scoping for split maps (Dire Maul): an event anchored to a specific
+        // boss (panelGatesBossEntry / panelSortAfterBossEntry) belongs to that
+        // boss's wing. The boss list above is wing-filtered, so if the anchor boss
+        // isn't in it, this event is in another wing — hide it. This is the guard
+        // the fold pre-pass promises when it declines an out-of-wing gated event;
+        // without it the Gordok doors (anchored to North bosses) surfaced in the
+        // Dire Maul East/West panels too.
+        if (uint32 const wingBoss = ev->panelGatesBossEntry
+                                        ? ev->panelGatesBossEntry
+                                        : ev->panelSortAfterBossEntry)
+        {
+            bool inWing = false;
+            for (DungeonBossInfo const& info : bosses)
+                if (info.entry == wingBoss)
+                {
+                    inWing = true;
+                    break;
+                }
+            if (!inWing)
+                continue;
+        }
+
         uint32 const latchKey = DungeonEventExecutor::ConditionalLatchKey(ev->id);
         std::string const evStatus =
             cleared.count(latchKey) ? "dead"
