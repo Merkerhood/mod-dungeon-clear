@@ -123,7 +123,7 @@ TEST(DcNavGeometry, ScenariosRouteAsExpected)
         }
 
         DcNavHarness::RouteResult const r =
-            DcNavHarness::Route(mesh.get(), s.sx, s.sy, s.sz, s.tx, s.ty, s.tz);
+            DcNavHarness::Route(mesh.get(), s.map, s.sx, s.sy, s.sz, s.tx, s.ty, s.tz);
         ASSERT_TRUE(r.built) << s.name;
         ++ran;
 

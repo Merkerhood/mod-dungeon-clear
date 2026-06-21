@@ -52,7 +52,7 @@ void DcPathWorker::WorkerLoop()
         {
             // The ONLY work done off the map thread: pure navmesh A*+smooth.
             // job.mesh keeps the navmesh alive for the whole call.
-            raw = LongRangePathfinder::BuildCoreFromMesh(job.mesh.get(),
+            raw = LongRangePathfinder::BuildCoreFromMesh(job.mesh.get(), job.mapId,
                                                          job.sx, job.sy, job.sz,
                                                          job.tx, job.ty, job.tz);
         }

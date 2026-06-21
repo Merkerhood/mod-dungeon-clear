@@ -121,7 +121,7 @@ namespace DcNavHarness
         return navMesh;
     }
 
-    RouteResult Route(dtNavMesh const* mesh,
+    RouteResult Route(dtNavMesh const* mesh, uint32_t mapId,
                       float sx, float sy, float sz,
                       float tx, float ty, float tz)
     {
@@ -131,7 +131,7 @@ namespace DcNavHarness
         out.built = true;
 
         LongRangePathfinder::RawResult const raw =
-            LongRangePathfinder::BuildCoreFromMesh(mesh, sx, sy, sz, tx, ty, tz);
+            LongRangePathfinder::BuildCoreFromMesh(mesh, mapId, sx, sy, sz, tx, ty, tz);
 
         out.reachable = raw.reachable;
         out.corridorComplete = raw.corridorComplete;
