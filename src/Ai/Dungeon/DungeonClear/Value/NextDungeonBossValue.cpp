@@ -163,53 +163,12 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     if (!map || !map->IsDungeon())
         return std::nullopt;
 
-    // New-instance reset. The run-scoped completion state read below — cleared
-    // anchors (where a travel objective / conditional event latches its "done"),
-    // user skips, the boss commit, and seen-boss bookkeeping — lives in the bot's
-    // CONTEXT, not the instance, so it survives leaving the group and re-entering
-    // a fresh instance. The completed-encounter MASK self-resets with the instance
-    // (so real bosses come back), but these sets don't, and `dc on` is the only
-    // other thing that clears them. Without this, re-running the same dungeon in a
-    // new instance without toggling dc on inherits the prior run's latched
-    // objectives — a completed ZulFarrak Temple event read "Done" again on
-    // re-entry. Wipe them once when the run crosses into a different instance
-    // (instanceId 0 = not in an instance / mid-load, never triggers it).
-    //
-    // The reset fires whenever the stored run-instance doesn't match the live one,
-    // INCLUDING the unstamped (lastRunInstance == 0) case. A latch present the very
-    // first time this code stamps an instance can only be stale — left by an
-    // untracked prior run (it was latched before run-instance tracking existed, or
-    // in a context whose stamp was lost). On a genuinely fresh run the sets are
-    // empty, so the reset is a harmless no-op; and the first Calculate stamps the
-    // instance BEFORE any objective is cleared in it, so this never wipes
-    // same-instance progress. (An earlier `lastRunInstance != 0` guard here is what
-    // left a pre-tracking ZF Temple latch reading "Done" forever: the baseline was
-    // 0, so the guard skipped the reset — confirmed live via reset=0 at last=0.)
-    uint32 const instanceId = bot->GetInstanceId();
-    uint32 const lastRunInstance = AI_VALUE(uint32, "dungeon clear run instance");
-    if (instanceId != 0 && lastRunInstance != instanceId)
-    {
-        auto& clearedSet = context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
-        auto& skippedSet = context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get();
-        // DIAGNOSTIC: one line per instance transition — confirms Calculate runs in
-        // the new instance, the ids the bot actually sees across a re-enter, and how
-        // many stale latches were wiped (clearedAnchors>0 => a leaked "Done" removed).
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] run-instance transition: last={} now={} clearedAnchors={} skipped={} (mask={:#x})",
-                 bot->GetName(), lastRunInstance, instanceId,
-                 static_cast<uint32>(clearedSet.size()), static_cast<uint32>(skippedSet.size()),
-                 DcTargeting::GetInstanceScript(bot)
-                     ? DcTargeting::GetInstanceScript(bot)->GetCompletedEncounterMask()
-                     : 0u);
-
-        clearedSet.clear();
-        skippedSet.clear();
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
-        context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
-        context->GetValue<uint32>("dungeon clear sticky boss")->Set(0u);
-        context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
-        context->GetValue<uint32>("dungeon clear run instance")->Set(instanceId);
-    }
+    // Wipe stale run-completion latches when this bot is first seen in a new
+    // instance (objective/event "Done" lives in the bot's context, not the
+    // instance, so it outlives a re-enter — unlike boss kills, which ride the
+    // self-resetting encounter mask). Shared with the boss-list builder so the
+    // panel clears even while DC is off; see DcTargeting::ResetCompletionLatches…
+    DcTargeting::ResetCompletionLatchesForNewInstance(bot, context);
 
     std::vector<DungeonBossInfo> const& bosses =
         AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");

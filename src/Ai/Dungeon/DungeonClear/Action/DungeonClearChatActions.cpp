@@ -489,6 +489,13 @@ bool DcBossesAction::Execute(Event event)
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
+    // Clear stale completion latches the first time the leader builds the list in a
+    // new instance. This action answers the addon's boss-list request even while DC
+    // is OFF — when NextDungeonBossValue (the other caller) isn't running — so it
+    // must do the new-instance reset itself, or a re-entered dungeon shows a
+    // completed objective/event as "Done" until the player toggles dc on.
+    DcTargeting::ResetCompletionLatchesForNewInstance(bot, context);
+
     auto const& bosses = AI_VALUE(std::vector<DungeonBossInfo>, "dungeon bosses");
 
     std::string const param = event.getParam();

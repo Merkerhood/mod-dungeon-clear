@@ -140,6 +140,19 @@ public:
     // falling back to spawn-store creature scanning.
     static InstanceScript* GetInstanceScript(Player* bot);
 
+    // Wipe the run-scoped completion state (cleared anchors / skips / seen-boss
+    // and seen-due-event bookkeeping / boss commit) the first time the bot is seen
+    // in a NEW instance id, stamping "dungeon clear run instance" so it fires once
+    // per re-enter. Boss kills self-reset with the instance via the encounter mask,
+    // but these MODULE-side latches live in the bot's context and outlive the
+    // instance, so a re-enter would otherwise show a completed objective/event as
+    // still "Done". Idempotent (returns true only on the tick it actually resets);
+    // call it from EVERY leader-side entry point that reads the completion state —
+    // both NextDungeonBossValue (drives navigation, runs only while DC is on) and
+    // the boss-list builder (drives the panel, runs on the addon's request even
+    // while DC is off) — so whichever fires first clears the latch.
+    static bool ResetCompletionLatchesForNewInstance(Player* bot, AiObjectContext* context);
+
     // --- Room-wide-aggro pre-clear (RoomAggroRegistry) --------------------
 
     // True when the next boss is a flagged room-aggro boss AND the tank is at
