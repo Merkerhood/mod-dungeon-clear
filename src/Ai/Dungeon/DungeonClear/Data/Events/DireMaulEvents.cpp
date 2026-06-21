@@ -93,11 +93,18 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // Open state is GO_STATE_ACTIVE (0) here (unlike the East door, which Ironbark
     // opens to 2). Optional so a misfire degrades to the normal door-blocked stall.
 
+    // PanelAfterBoss anchors each door to a North-wing boss: it sorts the panel
+    // row sensibly (the courtyard door after the three southern guards, the inner
+    // door after Slip'kik / before the King's chamber) AND — crucially on this
+    // wing-split map — scopes the row to the North wing, so these events don't
+    // surface in the Dire Maul East/West panels (the boss list is wing-filtered;
+    // an event whose anchor boss isn't in it is hidden). See DungeonClearChatActions.
     out.push_back(EventBuilder(429, 2, "Open the Gordok Courtyard Door")
                       .Conditional(/*conditionId*/ 12)
                       .UseGO(/*Gordok Courtyard Door*/ 177219, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177219, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 30000, /*searchRadius*/ 25.0f)
+                      .PanelAfterBoss(/*Guard Fengus*/ 14321)
                       .Optional()
                       .Build());
 
@@ -106,6 +113,7 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                       .UseGO(/*Gordok Inner Door*/ 177217, /*searchRadius*/ 25.0f)
                       .WaitForGOState(177217, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 30000, /*searchRadius*/ 25.0f)
+                      .PanelAfterBoss(/*Guard Slip'kik*/ 14323)
                       .Optional()
                       .Build());
 }
