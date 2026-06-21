@@ -574,9 +574,12 @@ namespace
                 p.mapId = 70;
                 p.reorder = { { 2748, 10 } };  // Archaedas — order only, bit 7 kept
                 p.add = {
+                    // arriveRadius 30 so the tank "arrives" on reaching the hall
+                    // and the event's ClearRadius (r40) drives the trash clear from
+                    // the entrance inward, rather than shoving to the altar first.
                     MakeObjective(OBJ(1), /*encounterIndex*/ 7, 70,
                                   "Altar of the Keepers",
-                                  104.85f, 272.45f, -26.53f, /*arriveRadius*/ 10.0f,
+                                  104.85f, 272.45f, -26.53f, /*arriveRadius*/ 30.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 2,
                                   /*orderOverride*/ 8),
                     MakeObjective(OBJ(2), /*encounterIndex*/ 7, 70,

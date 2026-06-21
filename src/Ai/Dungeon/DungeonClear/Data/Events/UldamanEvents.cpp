@@ -77,12 +77,21 @@ namespace
     constexpr uint32 SPELL_AWAKEN_KEEPERS   = 11568;   // Altar of The Keepers (GO 130511)
     constexpr uint32 SPELL_AWAKEN_ARCHAEDAS = 10340;   // Altar of Archaedas  (GO 133234)
 
-    // Altar of The Keepers (GO 130511) at the Hall-of-the-Keepers centre, ringed
-    // by the 4 Stone Keeper statues. The roster delivers the tank here (objective
-    // OBJ(1), ordered after Grimlok / before Archaedas — see BossRosterRegistry).
-    constexpr float  ULD_KEEPER_X      = 104.85f;
-    constexpr float  ULD_KEEPER_Y      = 272.45f;
-    constexpr float  ULD_KEEPER_Z      = -26.53f;
+    // Altar of The Keepers (GO 130511) at the Hall-of-the-Keepers centre. The
+    // roster delivers the tank here (objective OBJ(1), ordered after Grimlok /
+    // before Archaedas — see BossRosterRegistry). The hall holds LIVE trash
+    // (Stone Stewards 4860, Earthen Stonebreakers 7396 / Stonecarvers 7397 — they
+    // cast combat abilities, no stoned aura) that the first ClearRadius step
+    // clears before the altar is fired; only the 4 Stone Keepers (4857) are stoned
+    // statues (immune -> ignored by the clear, woken+killed after the altar).
+    // Radius spans the keeper ring plus trash up to the temple door (~36yd); zBand
+    // keeps the lower Archaedas level (z ~-52) out.
+    constexpr float  ULD_KEEPER_X       = 104.85f;
+    constexpr float  ULD_KEEPER_Y       = 272.45f;
+    constexpr float  ULD_KEEPER_Z       = -26.53f;
+    constexpr float  ULD_KEEPER_RADIUS  = 40.0f;
+    constexpr float  ULD_KEEPER_ZBAND   = 15.0f;
+    constexpr uint32 ULD_KEEPER_TIMEOUT = 120000;
 
     // Altar of Archaedas (GO 133234), in the Temple of the Stars below the hall.
     constexpr float  ULD_ARCH_ALTAR_X = 96.48f;
@@ -142,22 +151,22 @@ namespace
     // ~36yd past the temple door, and Archaedas's altar (96.5, 269, -52.1) is a
     // full floor below it. A conditional event has NO long-range navigation — it
     // only HopTo's (raw MovePoint, 74-node capped) and preempts the boss-nav from
-    // up to ULD_SCAN (120yd) away, so it can't reliably cross that gap (the live
-    // failure: "the keeper-altar step completes the instant I near the room and
-    // the tank never clicks the altar"). It fails WORSE here than the Dire-Maul
-    // door it mirrors because the whole hall is dormant, immune Stone-Keeper /
-    // Earthen STATUES (spell_uldaman_stoned_aura -> REACT_PASSIVE + SetImmuneToAll
-    // until the altar wakes them): a room pre-clear finds NOTHING to engage, so
-    // there is no live trash whose seek would walk the tank in, and — Archaedas
-    // sitting directly below the keeper altar — the boss-nav is meanwhile pulling
-    // the tank DOWN to him while the gate yanks it UP to the keepers.
+    // up to ULD_SCAN (120yd) away. The keeper event's first step CLEARS the hall
+    // (live Stewards / Earthen), but a conditional gate fires that ClearRadius
+    // from 120yd out, where the trash fails the bounded reachability probe — so it
+    // reports "clear" at once and the event runs the altar with all the trash
+    // still up (the live wipe), or the bare follow-up MoveTo can't cross the gap
+    // and never clicks the altar. Archaedas sitting directly below the keeper
+    // altar makes it worse: the boss-nav pulls the tank DOWN to him while the gate
+    // yanks it UP to the keepers.
     //
     // So both altars are travel OBJECTIVES (BossRosterRegistry, map 70) ordered
     // after Grimlok and before Archaedas, each wired to an ANCHORED event here:
-    // the boss-nav LongRangePathfinder delivers the tank ONTO the altar first
-    // (up to the keepers, then down to Archaedas), then the event fires the
-    // ritual SEND_EVENT. Exactly the Dire Maul Conservatory-Door / Stratholme
-    // Slaughterhouse pattern. No conditional predicate is needed for either.
+    // the boss-nav LongRangePathfinder delivers the tank INTO the hall first,
+    // where the trash IS reachable, so the ClearRadius step engages it properly
+    // and holds until the room is clear before the altar fires. Exactly the
+    // Stratholme Slaughterhouse / Dire Maul Conservatory-Door pattern. No
+    // conditional predicate is needed for either.
 }
 
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
@@ -188,30 +197,37 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out)
 
     // --- Altar of the Keepers (Stone Keepers) — ANCHORED -------------------
     // Anchored at OBJ(1) (BossRosterRegistry map 70), ordered after Grimlok and
-    // before Archaedas: boss-nav delivers the tank ONTO the altar, then this fires
-    // it to awaken the keepers and kills all four; their deaths open the temple
-    // door (124367) onward to the Archaedas descent.
+    // before Archaedas: boss-nav delivers the tank into the hall, this clears the
+    // live trash, then fires the altar to awaken the keepers and kills all four;
+    // their deaths open the temple door (124367) onward to the Archaedas descent.
     //
     // Persistent so the multi-keeper fight (each death chain-wakes the next and
     // re-enters combat, leaving a >1s drive gap) can't rewind to step 0 and
     // re-cast the altar / re-walk the approach.
     out.push_back(EventBuilder(70, 2, "Awaken the Stone Keepers (Altar of the Keepers)")
                       .Anchored(/*orderIndex, doc-only*/ 7)
-                      // 1) centre on the altar (boss-nav parked the tank within the
-                      //    objective's arrive radius; close the last few yards).
+                      // 1) clear the hall's LIVE trash (Stewards / Earthen) first.
+                      //    The boss-nav delivered the tank into the hall, so the
+                      //    trash is reachable and the seek engages it; the 4 stoned
+                      //    Stone Keepers are immune and ignored here. Held until the
+                      //    room is clear so the altar never fires with trash up.
+                      .ClearRadius(ULD_KEEPER_X, ULD_KEEPER_Y, ULD_KEEPER_Z,
+                                   ULD_KEEPER_RADIUS, ULD_KEEPER_ZBAND)
+                      .Timeout(ULD_KEEPER_TIMEOUT)
+                      // 2) centre on the altar (close the last few yards).
                       .MoveTo(ULD_KEEPER_X, ULD_KEEPER_Y, ULD_KEEPER_Z, /*radius*/ 6.0f)
-                      // 2) fire the altar's ritual SEND_EVENT (11568): wakes the
+                      // 3) fire the altar's ritual SEND_EVENT (11568): wakes the
                       //    nearest keeper, which "enters combat with the zone" and
                       //    pulls the party (see the altar comment above for why a
                       //    direct CastSpell is used instead of UseGO on the ritual).
                       .CastSpell(SPELL_AWAKEN_KEEPERS)
-                      // 3) kill all four. Each keeper's death chain-wakes the next
+                      // 4) kill all four. Each keeper's death chain-wakes the next
                       //    (SmartAI SetData) and re-pulls the zone, so a plain-gate
                       //    KillCreature (party auto-aggros; no .engage onto the
                       //    still-stoned/immune statues) holds the party here until
                       //    none remain alive.
                       .KillCreature(ULD_STONE_KEEPER, /*count*/ 4, /*searchRadius*/ 50.0f)
-                      // 4) confirm the temple door has rumbled open before the
+                      // 5) confirm the temple door has rumbled open before the
                       //    clear advances (search wide — it sits ~36yd off centre).
                       .WaitForGOState(ULD_TEMPLE_DOOR, /*GO_STATE_ACTIVE*/ 0,
                                       /*timeout*/ 60000, /*searchRadius*/ 70.0f)

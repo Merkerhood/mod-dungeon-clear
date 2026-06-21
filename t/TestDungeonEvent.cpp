@@ -623,9 +623,10 @@ TEST(DungeonEventConditional, UldamanIronayaSeal)
 }
 
 // Uldaman (70): the Altar of the Keepers — an ANCHORED event on roster objective
-// OBJ(1). Boss-nav delivers the tank onto the altar; the event centres on it,
-// fires the altar's SEND_EVENT to awaken the keepers, kills all four, then waits
-// for the temple door. Persistent so the multi-keeper fight can't rewind it.
+// OBJ(1). Boss-nav delivers the tank into the hall; the event clears the live
+// trash (Stewards / Earthen), centres on the altar, fires the SEND_EVENT to
+// awaken the 4 stoned keepers, kills them, then waits for the temple door.
+// Persistent so the multi-keeper fight can't rewind it.
 TEST(DungeonEventAnchored, UldamanStoneKeepers)
 {
     DungeonEvent const* e = DungeonEventRegistry::Find(70, 2);
@@ -635,16 +636,18 @@ TEST(DungeonEventAnchored, UldamanStoneKeepers)
     EXPECT_TRUE(e->required);
     EXPECT_TRUE(e->persistent);
 
-    ASSERT_EQ(e->steps.size(), 4u);
-    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
-    EXPECT_EQ(e->steps[1].kind, EventStepKind::CastSpell);
-    EXPECT_EQ(e->steps[1].spellId, 11568u);              // Altar of The Keepers SEND_EVENT
-    EXPECT_EQ(e->steps[2].kind, EventStepKind::KillCreature);
-    EXPECT_EQ(e->steps[2].creatureEntry, 4857u);         // Stone Keeper
-    EXPECT_FALSE(e->steps[2].engage);                    // plain gate (party auto-aggros)
-    EXPECT_EQ(e->steps[3].kind, EventStepKind::WaitForGameObjectState);
-    EXPECT_EQ(e->steps[3].goEntry, 124367u);             // temple door
-    EXPECT_EQ(e->steps[3].wantState, 0u);                // GO_STATE_ACTIVE (open)
+    ASSERT_EQ(e->steps.size(), 5u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);  // clear live hall trash
+    EXPECT_TRUE(e->steps[0].engage);
+    EXPECT_EQ(e->steps[1].kind, EventStepKind::MoveTo);
+    EXPECT_EQ(e->steps[2].kind, EventStepKind::CastSpell);
+    EXPECT_EQ(e->steps[2].spellId, 11568u);              // Altar of The Keepers SEND_EVENT
+    EXPECT_EQ(e->steps[3].kind, EventStepKind::KillCreature);
+    EXPECT_EQ(e->steps[3].creatureEntry, 4857u);         // Stone Keeper
+    EXPECT_FALSE(e->steps[3].engage);                    // plain gate (party auto-aggros)
+    EXPECT_EQ(e->steps[4].kind, EventStepKind::WaitForGameObjectState);
+    EXPECT_EQ(e->steps[4].goEntry, 124367u);             // temple door
+    EXPECT_EQ(e->steps[4].wantState, 0u);                // GO_STATE_ACTIVE (open)
 }
 
 // Uldaman (70): the Altar of Archaedas — an ANCHORED event on roster objective
