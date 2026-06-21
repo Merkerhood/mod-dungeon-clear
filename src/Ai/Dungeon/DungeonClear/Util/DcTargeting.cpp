@@ -779,6 +779,42 @@ InstanceScript* DcTargeting::GetInstanceScript(Player* bot)
     InstanceMap* im = map->ToInstanceMap();
     return im ? im->GetInstanceScript() : nullptr;
 }
+bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectContext* context)
+{
+    if (!bot || !context)
+        return false;
+    // instanceId 0 = not in an instance / mid-load; never stamp or reset on it.
+    uint32 const instanceId = bot->GetInstanceId();
+    if (instanceId == 0)
+        return false;
+    // The stored run-instance matches => same run, nothing to do. This is the
+    // common path every tick. Resetting fires only when the live instance id
+    // differs from the stamp, INCLUDING the unstamped 0 case: a latch present the
+    // first time we stamp an instance can only be stale (left by an untracked prior
+    // run), and on a genuinely fresh run the sets are empty so the wipe is a no-op.
+    uint32 const lastRunInstance = context->GetValue<uint32>("dungeon clear run instance")->Get();
+    if (lastRunInstance == instanceId)
+        return false;
+
+    auto& clearedSet = context->GetValue<std::unordered_set<uint32>&>("dungeon clear cleared anchors")->Get();
+    auto& skippedSet = context->GetValue<std::unordered_set<uint32>&>("dungeon clear skipped")->Get();
+
+    InstanceScript* inst = GetInstanceScript(bot);
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] run-instance transition: last={} now={} clearedAnchors={} skipped={} (mask={:#x})",
+             bot->GetName(), lastRunInstance, instanceId,
+             static_cast<uint32>(clearedSet.size()), static_cast<uint32>(skippedSet.size()),
+             inst ? inst->GetCompletedEncounterMask() : 0u);
+
+    clearedSet.clear();
+    skippedSet.clear();
+    context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen bosses")->Get().clear();
+    context->GetValue<std::unordered_set<uint32>&>("dungeon clear seen due events")->Get().clear();
+    context->GetValue<uint32>("dungeon clear sticky boss")->Set(0u);
+    context->GetValue<uint32>("dungeon clear selected boss")->Set(0u);
+    context->GetValue<uint32>("dungeon clear run instance")->Set(instanceId);
+    return true;
+}
 bool DcTargeting::IsRoomClearActive(Player* bot, AiObjectContext* ctx)
 {
     if (!bot || !ctx)
