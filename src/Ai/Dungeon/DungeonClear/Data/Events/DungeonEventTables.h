@@ -48,7 +48,9 @@
 //   8  Uldaman          — Ironaya seal (clear room + keystone)
 //   9  Uldaman          — Altar of the Keepers (clear hall + awaken/kill 4 keepers)
 //  10  Uldaman          — Altar of Archaedas (summon the final boss)
-//   -- next free: 11
+//  11  Razorfen Downs   — approach Tuten'kash (walk to his combat spot once the
+//                         gong summons him, so the party enters aggro range)
+//   -- next free: 12
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 

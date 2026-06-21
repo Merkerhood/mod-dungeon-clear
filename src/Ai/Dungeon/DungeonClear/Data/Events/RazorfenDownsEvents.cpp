@@ -39,10 +39,31 @@
 //
 // REPEATABLE so it re-fires for each of the three rings instead of latching
 // after the first; the gong's own selectable flag (condition 4) paces the rings
-// and Tuten'kash going live ends the loop. When he spawns (at his summon spot
-// ~80yd off) the condition goes false and the normal boss flow engages him via
-// live-boss tracking. Rendered first in the panel (PanelBeforeBoss 7355) since
-// it precedes boss #0.
+// and Tuten'kash being summoned ends the loop (the 3rd ring leaves the gong
+// NOT_SELECTABLE, so condition 4 reads false). Rendered first in the panel
+// (PanelBeforeBoss 7355) since it precedes boss #0.
+//
+// --- "Approach Tuten'kash" (condition 11) — close the last gap to him ------
+// The ring phase parks the tank AT the gong. But Tuten'kash does NOT spawn at
+// the gong: creature_summon_groups summons him ~83yd off (2487.94, 804.22) and
+// his SmartAI ("On Reset - Move Point") then walks him to a fixed combat spot
+// (2515.71, 854.81, 47.68) — which is still ~37yd from the gong, OUTSIDE his
+// aggro radius. So once he settles the party stands at the gong, he stands at
+// his spot, and nobody aggros: the run deadlocks ("holding for at-boss",
+// live=0, forever).
+//
+// The boss flow can't recover this on its own. He is a TempSummon (no spawnId),
+// so GetLiveBoss / FindLiveCreatureOnMap — which scan the map's spawn-id store
+// (DB spawns only) — never see him; live-boss tracking reads him as absent and
+// the tank holds on the static gong anchor. We don't need to TRACK him, though;
+// we just need to walk to where he goes. A second conditional event fires the
+// instant he is summoned (a grid FindNearestCreature DOES see a summon, unlike
+// the spawn-store scan) and MoveTos the party onto his combat spot, putting them
+// in aggro range. REPEATABLE so the completed step holds the tank planted there
+// (DcRunEventAction returns true on a repeatable completion) until aggro lands
+// and the combat engine takes over — and so it self-heals if he ever evades and
+// walks back to reset. The condition reads false once his encounter bit is set
+// (killed), ending the loop. Folded under Tuten'kash in the panel (he gates it).
 
 void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out)
 {
@@ -54,6 +75,18 @@ void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out)
                       // so a tank parked at the far edge still finds the gong and
                       // HopTos the last yards to Use() it.
                       .UseGO(/*gong*/ 148917, /*searchRadius*/ 35.0f)
+                      .Build());
+
+    out.push_back(EventBuilder(129, 2, "Approach Tuten'kash")
+                      .Conditional(11)
+                      .Repeatable()
+                      .PanelBeforeBoss(/*Tuten'kash*/ 7355)
+                      // His SmartAI "On Reset - Move Point" target — the spot he
+                      // walks to and idles at. A tight arrival radius walks the
+                      // tank essentially onto it so aggro is guaranteed even if his
+                      // radius is small or he is still en route from the summon
+                      // spot when the tank arrives.
+                      .MoveTo(/*combat spot*/ 2515.71f, 854.81f, 47.68f, /*radius*/ 6.0f)
                       .Build());
 }
 
@@ -82,6 +115,11 @@ namespace
     // larger than the boss engage range so the event takes over the instant
     // boss-nav has parked the tank at the gong, before the stall escalates.
     constexpr float RFD_GONG_RING_RANGE = 30.0f;
+    // How far the "Approach Tuten'kash" condition scans for the summoned boss.
+    // He spawns ~83yd from the gong (where the tank rings), so this must reach
+    // that far to detect him at his summon spot; the grid around the party is
+    // loaded out to there (it rang the gong that summoned him).
+    constexpr float RFD_TUTENKASH_SCAN = 100.0f;
 
     bool RfdGong(Player* bot, AiObjectContext* /*context*/)
     {
@@ -110,9 +148,34 @@ namespace
 
         return true;
     }
+
+    // --- the approach gate (condition 11, repeatable) ---------------------
+    // DUE while Tuten'kash has been summoned (the 3rd ring is rung) but is not
+    // yet killed: drive the party from the gong onto his combat spot so they
+    // enter aggro range. Reads false before he is up (the gong event still owns
+    // the ring phase) and once his encounter bit is set (dead) — the two gates
+    // (gong selectable vs boss present) are mutually exclusive, so the gong and
+    // approach events never both fire.
+    bool RfdApproach(Player* bot, AiObjectContext* /*context*/)
+    {
+        // Done for good once he is killed — his kill flips encounter bit 0, the
+        // signal that survives even after his corpse despawns.
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (inst && (inst->GetCompletedEncounterMask() & (1u << RFD_TUTENKASH_BIT)))
+            return false;
+
+        // Fire only once the 3rd ring has SUMMONED him. He is a
+        // creature_summon_groups TempSummon (no spawnId), invisible to the
+        // map-wide spawn-store scan (FindLiveCreatureOnMap) — but a grid
+        // FindNearestCreature DOES see a summon, which is all we need to know
+        // he is up. Until then the gong event owns the ring phase; stand down.
+        return bot->FindNearestCreature(RFD_TUTENKASH, RFD_TUTENKASH_SCAN,
+                                        /*alive*/ true) != nullptr;
+    }
 }
 
 void RegisterRazorfenDownsConditions(EventConditionMap& out)
 {
     out[4] = &RfdGong;
+    out[11] = &RfdApproach;
 }
