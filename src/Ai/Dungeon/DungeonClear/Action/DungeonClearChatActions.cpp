@@ -561,9 +561,10 @@ bool DcBossesAction::Execute(Event event)
     // A faction-specific event (panelTeam set) is shown only to its own team —
     // the activation predicate already gates execution by team, so the other
     // faction would only ever see a row it can never act on.
-    auto const hiddenForTeam = [bot](DungeonEvent const* ev)
+    TeamId const myTeam = bot->GetTeamId();
+    auto const hiddenForTeam = [myTeam](DungeonEvent const* ev)
     {
-        return ev->panelTeam != TEAM_NEUTRAL && ev->panelTeam != bot->GetTeamId();
+        return ev->panelTeam != TEAM_NEUTRAL && ev->panelTeam != myTeam;
     };
 
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
