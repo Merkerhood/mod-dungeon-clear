@@ -428,16 +428,18 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
     EXPECT_LT(BossOrderKey(*wp),
               BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(6))));
 
-    // The Warpwood entrance pre-clear (OBJ 8, event 11) exists and is ordered
+    // The Warpwood entrance sweep (OBJ 8 west / OBJ 9 east) exists and is ordered
     // FIRST — before every pylon and Tendris — so the entrance room is swept on
     // the way in.
-    DungeonBossInfo const* entrance = Find(out, BossRosterRegistry::ObjectiveEntry(8));
-    ASSERT_NE(entrance, nullptr);
-    EXPECT_EQ(entrance->eventId, 11u);
-    EXPECT_LT(BossOrderKey(*entrance),
-              BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(2))))
-        << "entrance pre-clear precedes crystal generator 1";
-    EXPECT_LT(BossOrderKey(*entrance), BossOrderKey(*Find(out, 11489)));
+    for (uint32 obj : {8u, 9u})
+    {
+        DungeonBossInfo const* sweep = Find(out, BossRosterRegistry::ObjectiveEntry(obj));
+        ASSERT_NE(sweep, nullptr);
+        EXPECT_LT(BossOrderKey(*sweep),
+                  BossOrderKey(*Find(out, BossRosterRegistry::ObjectiveEntry(2))))
+            << "entrance sweep OBJ" << obj << " precedes crystal generator 1";
+        EXPECT_LT(BossOrderKey(*sweep), BossOrderKey(*Find(out, 11489)));
+    }
 
     // REGRESSION GUARD: every objective that carries a ClearRadius (the entrance
     // pre-clear AND the five crystals) must have a MODERATE arriveRadius. Two ways
@@ -447,7 +449,7 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
     //   * too LARGE -> the tank "arrives" far from the mobs, the ClearRadius gate
     //     finds nothing loaded and completes in 0ms (premature no-op). Keep it
     //     within ~ClearRadius + 20 so "arrived" means "among the mobs".
-    for (uint32 obj : {8u, 2u, 3u, 4u, 5u, 6u})
+    for (uint32 obj : {8u, 9u, 2u, 3u, 4u, 5u, 6u})
     {
         DungeonBossInfo const* o = Find(out, BossRosterRegistry::ObjectiveEntry(obj));
         ASSERT_NE(o, nullptr);

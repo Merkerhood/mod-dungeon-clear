@@ -187,32 +187,43 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                           .Build());
     }
 
-    // --- Dire Maul West (map 429) — Warpwood entrance pre-clear ------------
-    // The square entrance room is packed with Warpwood / Petrified Treants that
-    // pull as a group; clear them before pushing on to Tendris. A dedicated
-    // ClearRadius pre-clear (BossRosterRegistry OBJ(8), ordered FIRST), NOT a
-    // step on the crystal click.
+    // --- Dire Maul West (map 429) — Warpwood entrance SWEEP ----------------
+    // The entrance room is large (~245x175yd; the entrance teleport is at y~159
+    // and Petrified Treants/Guardians span y185-361, out to ~151yd from centre)
+    // and the Tendris-area Eldreth start at ~135yd from the same centre — so ONE
+    // ClearRadius can't cover the treants without also pulling the Eldreth, and a
+    // single huge radius either no-ops (arrives too far) or thrashes. Instead
+    // SWEEP it: a few small clear-waypoints (BossRosterRegistry OBJ(8)/OBJ(9),
+    // ordered FIRST) route the tank across the south treant band; at each stop a
+    // small ClearRadius (45) engages the local pack (the treants are aggro-on-
+    // sight and cluster on the tank) and the gate holds until that stop is clear
+    // before moving to the next. The middle band is covered by generator 1's own
+    // clear; the north band abuts the Eldreth and is left to the normal
+    // engage-trash flow on the walk to Tendris.
     //
-    // Tuned to the Uldaman keeper-altar numbers (arriveRadius 30 < ClearRadius
-    // 45), NOT a huge arriveRadius. ClearRadius only fires its "no hostile -> done"
-    // gate once the tank is AT the objective; that gate ASSUMES "arrived" means
-    // "among the mobs, which are therefore loaded/reachable". A huge arriveRadius
-    // (the earlier 95) broke that: the tank "arrived" ~80yd out, the treants
-    // weren't loaded/reachable, so the gate returned DONE in 0ms and the pre-clear
-    // no-op'd (live log: "step 0 ... result 1 elapsed 0ms" then marked cleared).
-    // A moderate arriveRadius (30, still > the ~10-17yd the tank parks short of the
-    // off-mesh dais, so no travel-thrash deadlock) makes "arrived" mean the tank
-    // is genuinely in the room, so the ClearRadius engages the treants instead of
-    // instantly completing. ClearRadius-only (no UseGO); counts only REACHABLE
-    // hostiles; Persistent across the fight; Optional; generous timeout.
-    out.push_back(EventBuilder(429, 11, "Clear the Warpwood entrance")
-                      .Anchored(/*orderIndex, doc-only*/ 3)
-                      .ClearRadius(13.0f, 277.0f, -8.0f, /*radius*/ 45.0f,
-                                   /*zBand*/ 20.0f)
-                          .Timeout(180000)
-                      .Persistent()
-                      .Optional()
-                      .Build());
+    // Key: these waypoints sit on OPEN FLOOR where the treants stand (not on the
+    // off-mesh crystal dais), so the tank reaches them closely — no parks-short
+    // deadlock — and "arrives" AMONG the treants, so the ClearRadius engages
+    // instead of completing in 0ms. arriveRadius (30) < ClearRadius (45) is fine
+    // (Uldaman keeper numbers); the small radius keeps the tank fighting in place
+    // as the pack closes, so it does not chase far and thrash. ClearRadius-only;
+    // REACHABLE-only; Persistent; Optional; generous timeout.
+    struct SweepWaypoint { uint32 eventId; float x, y, z; char const* name; };
+    static constexpr SweepWaypoint kEntranceSweep[] = {
+        { 11, -70.0f, 200.0f, -4.0f, "Clear the Warpwood entrance (west)" },
+        { 12,  90.0f, 200.0f, -5.0f, "Clear the Warpwood entrance (east)" },
+    };
+    for (SweepWaypoint const& wp : kEntranceSweep)
+    {
+        out.push_back(EventBuilder(429, wp.eventId, wp.name)
+                          .Anchored(/*orderIndex, doc-only*/ wp.eventId)
+                          .ClearRadius(wp.x, wp.y, wp.z, /*radius*/ 45.0f,
+                                       /*zBand*/ 20.0f)
+                              .Timeout(180000)
+                          .Persistent()
+                          .Optional()
+                          .Build());
+    }
 
     // --- Dire Maul West (map 429) — Crescent Key doors ---------------------
     // Two locked doors (GO 177221 after Tendris, GO 179550 before Immol'thar)

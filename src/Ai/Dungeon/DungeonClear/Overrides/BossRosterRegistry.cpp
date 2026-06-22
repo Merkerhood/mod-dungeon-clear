@@ -599,20 +599,25 @@ namespace
                                   -56.59f, -269.12f, -57.87f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
-                    // West — clear the Warpwood entrance room FIRST (event 429/11,
-                    // ClearRadius 45). Ordered first (orderOverride 3 < Gen1's 5).
-                    // arriveRadius 30 (Uldaman keeper-altar numbers): big enough to
-                    // clear the parks-short of the off-mesh dais (~10-17yd) so no
-                    // travel-thrash deadlock, but NOT huge — a huge arriveRadius
-                    // makes the tank "arrive" ~80yd out where the treants aren't
-                    // loaded, so the ClearRadius gate completes in 0ms and the
-                    // pre-clear no-ops. 30 means "arrived" = actually in the room.
-                    // See the matching note in DireMaulEvents.
+                    // West — SWEEP the Warpwood entrance room FIRST: two small
+                    // clear-waypoints across the south treant band (west then
+                    // east), ordered before everything (orderOverride 2/3 < Gen1's
+                    // 5). These anchors are on OPEN FLOOR among the treants (not on
+                    // the off-mesh crystal dais), so the tank reaches them closely
+                    // (no parks-short) and "arrives" among the treants (so the
+                    // ClearRadius engages instead of 0ms no-op). arriveRadius 30,
+                    // ClearRadius 45 (small, so the tank fights the closing pack in
+                    // place rather than chasing far). See DireMaulEvents 429/11-12.
                     MakeObjective(OBJ(8), /*encounterIndex*/ 47, 429,
-                                  "Clear the Warpwood entrance",
-                                  13.0f, 277.0f, -8.0f,
+                                  "Clear the Warpwood entrance (west)",
+                                  -70.0f, 200.0f, -4.0f,
                                   /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
-                                  /*hook*/ 0, /*eventId*/ 11, /*orderOverride*/ 3),
+                                  /*hook*/ 0, /*eventId*/ 11, /*orderOverride*/ 2),
+                    MakeObjective(OBJ(9), /*encounterIndex*/ 48, 429,
+                                  "Clear the Warpwood entrance (east)",
+                                  90.0f, 200.0f, -5.0f,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 12, /*orderOverride*/ 3),
                     // West — Immol'thar pylons. Southern trio (before Tendris).
                     // The crystal objectives' arriveRadius (45) is moderate — big
                     // enough to clear the parks-short distance (so no travel-thrash
