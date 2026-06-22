@@ -138,58 +138,34 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     // reaches Immol'thar). Optional: a misfire degrades to the tank standing at
     // the still-shielded boss until the pylon is dealt with.
     //
-    // Each generator is guarded by a tight cluster of ~7-8 elementals (Arcane
-    // Aberration 11480 / Mana Remnant 11483) standing on it. The Mana Remnants
-    // cast Blink (14514, ~20yd teleport), so a UseGO-only event left one behind
-    // alive after the bot clicked and moved on — that stray, often blinked out of
-    // melee, kept the party in combat and wedged progression. So clear the crystal
-    // first: a ClearRadius(50) step (covers the ~15yd cluster + a blink hop, with
-    // no overlap onto the next generator's cluster ~200yd away) precedes the UseGO,
-    // so all reachable elementals die before the bot clicks and leaves. Radius is
-    // deliberately > the cluster so a blinking Remnant stays inside the kill zone;
-    // ClearRadius counts only REACHABLE hostiles, so a Remnant that blinks
-    // somewhere unreachable can't hang the step. Generous timeout for the caster
-    // pack. The click (UseGO) is step 1: if the clear somehow times out and the
-    // Optional event skips, the pylon would be left unclicked — but the 120s
-    // window is ample for a 5-bot party vs ~8 casters, so in practice every pylon
-    // is cleared then clicked.
+    // The event does ONE thing: go to the pylon and click it. It deliberately
+    // does NOT carry a ClearRadius "room clear" step. An earlier version did, to
+    // sweep the guarding elementals / entrance treants — but a point-anchored
+    // ClearRadius is a SECOND controller (engage that mob) that fights the
+    // travel-to-the-crystal controller: whenever the tank wasn't firmly "arrived"
+    // (it parks ~10yd out, just past the arrive radius), engage-trash pulled it
+    // toward a treant while Advance pulled it toward the crystal — the live
+    // back-and-forth deadlock. Trash the bot runs into on the way is handled by
+    // the normal engage-trash flow (kill what aggros, then advance), exactly as
+    // everywhere else in the dungeon; that flow takes the tick cleanly because it
+    // is not competing with a second move-to-a-point intent layered on the same
+    // objective.
     //
     // NOTE (verify live): the generator trigger is SMART_EVENT_UPDATE (a timer),
     // not an explicit on-use event. If the generators auto-activate on spawn
-    // rather than on click, the UseGO is a harmless no-op (idempotent bit) and the
-    // ClearRadius still does the useful work of clearing the guards.
-    // clearRadius covers each generator's own ~7-8 elemental guards (~15yd
-    // cluster + a Mana Remnant blink hop). Generator 1 sits in the middle of the
-    // square Warpwood entrance room, so it carries a wider sweep (70) to also
-    // clear the surrounding entrance treants that pull as a group (within the
-    // proven ClearRadius range — Sunken Temple 60, Slaughterhouse 80 — and, unlike
-    // the broken dais anchor, it runs as a COMBAT sweep from the reachable crystal
-    // so it always makes progress, never deadlocks) — this replaces
-    // the old standalone entrance-clear objective, whose dais anchor the bot
-    // couldn't reach. The other crystals stand alone, so a tight 50 keeps the
-    // sweep on their own guards (no chasing unrelated packs).
-    struct PylonObjective
-    {
-        uint32 eventId;
-        uint32 goEntry;
-        float x, y, z;
-        float clearRadius;
-        char const* name;
-    };
+    // rather than on click, the UseGO is a harmless no-op (the bit is idempotent).
+    struct PylonObjective { uint32 eventId; uint32 goEntry; char const* name; };
     static constexpr PylonObjective kPylons[] = {
-        { 4, 177259,   12.94f, 277.93f,  -8.93f, 70.0f, "Destroy Demon Crystal (Generator 1)" },
-        { 5, 177257,  -92.35f, 442.67f,  28.55f, 50.0f, "Destroy Demon Crystal (Generator 2)" },
-        { 6, 177258,  121.22f, 429.09f,  28.45f, 50.0f, "Destroy Demon Crystal (Generator 3)" },
-        { 7, 179504,   78.14f, 737.40f, -24.62f, 50.0f, "Destroy Demon Crystal (Generator 4)" },
-        { 8, 179505, -155.43f, 734.17f, -24.62f, 50.0f, "Destroy Demon Crystal (Generator 5)" },
+        { 4, 177259, "Destroy Demon Crystal (Generator 1)" },
+        { 5, 177257, "Destroy Demon Crystal (Generator 2)" },
+        { 6, 177258, "Destroy Demon Crystal (Generator 3)" },
+        { 7, 179504, "Destroy Demon Crystal (Generator 4)" },
+        { 8, 179505, "Destroy Demon Crystal (Generator 5)" },
     };
     for (PylonObjective const& pyl : kPylons)
     {
         out.push_back(EventBuilder(429, pyl.eventId, pyl.name)
                           .Anchored(/*orderIndex, doc-only*/ pyl.eventId)
-                          .ClearRadius(pyl.x, pyl.y, pyl.z, pyl.clearRadius,
-                                       /*zBand*/ 15.0f)
-                              .Timeout(120000)
                           .UseGO(pyl.goEntry, /*searchRadius*/ 12.0f)
                           .Wait(/*pylon activation delay*/ 6000)
                           .Persistent()
@@ -197,14 +173,15 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
                           .Build());
     }
 
-    // NOTE: the Warpwood entrance treants are swept by generator 1's own
-    // ClearRadius (above, radius 70) rather than a separate entrance objective.
-    // A standalone ClearRadius anchored on the crystal dais (13,277,-8) could not
-    // be reached: the bot drifted off-line and could not generate a rejoin path to
-    // the point (off-mesh / GO collision / ~1yd above the floor), thrashing on
-    // posStuck/resnap forever with combat=0 (it never engaged anything). Folding
-    // the sweep into generator 1 (whose anchor IS reachable, and which the bot
-    // visits anyway) clears the same treants as a combat sweep that makes progress.
+    // NOTE: there is intentionally no dedicated "clear the Warpwood entrance"
+    // objective/step. Two attempts failed: (1) a standalone ClearRadius anchored
+    // on the crystal dais couldn't be reached (off-mesh, thrashed forever); (2)
+    // folding a ClearRadius into generator 1 made the crystal objective fight
+    // itself — engage-the-treants vs run-to-the-crystal — a live deadlock. The
+    // entrance treants are hostile and handled by the ordinary engage-trash flow
+    // as the tank walks in to generator 1. If a specific entrance pack still needs
+    // forcing, it must be a SEPARATE pre-objective at a verified-walkable anchor,
+    // not layered onto the crystal click.
 
     // --- Dire Maul West (map 429) — Crescent Key doors ---------------------
     // Two locked doors (GO 177221 after Tendris, GO 179550 before Immol'thar)

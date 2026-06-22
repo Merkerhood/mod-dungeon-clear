@@ -923,35 +923,33 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
         EXPECT_EQ(e->activation, EventActivation::Anchored);
         EXPECT_TRUE(e->persistent);
         EXPECT_FALSE(e->required);  // Optional
-        ASSERT_EQ(e->steps.size(), 3u);
-        // Clear the guarding elementals FIRST so a blinked Mana Remnant isn't
-        // left alive when the bot clicks and moves on.
-        EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
-        EXPECT_GT(e->steps[0].radius, 15.0f);     // covers cluster + blink hop
-        EXPECT_GT(e->steps[0].timeoutMs, 30000u); // generous for a caster pack
-        EXPECT_EQ(e->steps[1].kind, EventStepKind::UseGameObject);
-        EXPECT_EQ(e->steps[1].goEntry, p.goEntry);
-        EXPECT_EQ(e->steps[2].kind, EventStepKind::Wait);
-        EXPECT_GT(e->steps[2].durationMs, 0u);
+        // The crystal objective does ONE thing — click the pylon — with NO
+        // ClearRadius "room clear" step (that second controller fought the
+        // travel-to-crystal and deadlocked). Trash is handled by engage-trash.
+        ASSERT_EQ(e->steps.size(), 2u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(e->steps[0].goEntry, p.goEntry);
+        EXPECT_EQ(e->steps[1].kind, EventStepKind::Wait);
+        EXPECT_GT(e->steps[1].durationMs, 0u);
     }
 }
 
-// Generator 1's ClearRadius doubles as the Warpwood entrance sweep, so it is
-// wider than the other pylons' (which only clear their own guards). There is no
-// separate entrance-clear event (429/11) — its unreachable dais anchor deadlocked.
-TEST(DungeonEventAnchored, DireMaulWestEntranceFoldedIntoGenerator1)
+// There is no dedicated Warpwood entrance-clear event (429/11), and the crystal
+// objectives carry NO ClearRadius step — both the standalone entrance anchor and
+// the ClearRadius-folded-into-generator-1 approaches deadlocked (unreachable
+// anchor / room-clear-vs-travel competition). The crystals are click-only.
+TEST(DungeonEventAnchored, DireMaulWestNoEntranceClearOrCrystalSweep)
 {
     EXPECT_EQ(DungeonEventRegistry::Find(429, 11), nullptr);
 
-    DungeonEvent const* gen1 = DungeonEventRegistry::Find(429, 4);
-    DungeonEvent const* gen2 = DungeonEventRegistry::Find(429, 5);
-    ASSERT_NE(gen1, nullptr);
-    ASSERT_NE(gen2, nullptr);
-    ASSERT_FALSE(gen1->steps.empty());
-    ASSERT_FALSE(gen2->steps.empty());
-    EXPECT_EQ(gen1->steps[0].kind, EventStepKind::ClearRadius);
-    EXPECT_GT(gen1->steps[0].radius, gen2->steps[0].radius)
-        << "generator 1 sweeps wider to clear the entrance room";
+    for (uint32 id : {4u, 5u, 6u, 7u, 8u})
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(429, id);
+        ASSERT_NE(e, nullptr);
+        for (auto const& step : e->steps)
+            EXPECT_NE(step.kind, EventStepKind::ClearRadius)
+                << "crystal event " << id << " must not carry a ClearRadius";
+    }
 }
 
 // The two Crescent Key doors (events 9/10, conditions 14/15) are on-path
