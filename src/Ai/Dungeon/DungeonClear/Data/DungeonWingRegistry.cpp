@@ -52,7 +52,8 @@ namespace
                     BossRosterRegistry::ObjectiveEntry(5),
                     BossRosterRegistry::ObjectiveEntry(6),
                     BossRosterRegistry::ObjectiveEntry(7),  // barrier-skirt waypoint
-                    BossRosterRegistry::ObjectiveEntry(8),  // Warpwood entrance pre-clear
+                    BossRosterRegistry::ObjectiveEntry(8),  // Warpwood entrance sweep (W)
+                    BossRosterRegistry::ObjectiveEntry(9),  // Warpwood entrance sweep (E)
                 }},
                 {"Dire Maul (North)", {
                     14326,  // Guard Mol'dar

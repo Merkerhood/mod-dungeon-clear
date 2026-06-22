@@ -938,21 +938,24 @@ TEST(DungeonEventAnchored, DireMaulWestPylonEventShape)
     }
 }
 
-// The Warpwood entrance pre-clear (event 429/11) is a dedicated ClearRadius-only
-// Anchored objective ordered first. It carries no UseGO (clear the room, that's
-// it). Its roster arriveRadius (95) is > this ClearRadius (80) — the rule that
-// stops the clear competing with travel — verified in TestBossRoster.
-TEST(DungeonEventAnchored, DireMaulWestEntrancePreClearShape)
+// The Warpwood entrance is swept by two small ClearRadius-only Anchored
+// waypoints (events 429/11 west, 429/12 east), ordered first. Small radius (so
+// the tank fights the closing pack in place, not chasing far); no UseGO.
+TEST(DungeonEventAnchored, DireMaulWestEntranceSweepShape)
 {
-    DungeonEvent const* e = DungeonEventRegistry::Find(429, 11);
-    ASSERT_NE(e, nullptr);
-    EXPECT_EQ(e->activation, EventActivation::Anchored);
-    EXPECT_TRUE(e->persistent);
-    EXPECT_FALSE(e->required);  // Optional
-    ASSERT_EQ(e->steps.size(), 1u);
-    EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
-    EXPECT_GT(e->steps[0].radius, 40.0f);      // covers the entrance room
-    EXPECT_GT(e->steps[0].timeoutMs, 30000u);  // generous for the pack
+    for (uint32 id : {11u, 12u})
+    {
+        DungeonEvent const* e = DungeonEventRegistry::Find(429, id);
+        ASSERT_NE(e, nullptr) << "missing entrance sweep event " << id;
+        EXPECT_EQ(e->activation, EventActivation::Anchored);
+        EXPECT_TRUE(e->persistent);
+        EXPECT_FALSE(e->required);  // Optional
+        ASSERT_EQ(e->steps.size(), 1u);
+        EXPECT_EQ(e->steps[0].kind, EventStepKind::ClearRadius);
+        EXPECT_GT(e->steps[0].radius, 30.0f);
+        EXPECT_LT(e->steps[0].radius, 60.0f);      // small -> fight in place
+        EXPECT_GT(e->steps[0].timeoutMs, 30000u);
+    }
 }
 
 // The two Crescent Key doors (events 9/10, conditions 14/15) are on-path
