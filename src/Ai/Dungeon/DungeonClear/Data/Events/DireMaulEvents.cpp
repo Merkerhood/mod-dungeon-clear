@@ -188,36 +188,57 @@ void RegisterDireMaulEvents(std::vector<DungeonEvent>& out)
     }
 
     // --- Dire Maul West (map 429) — Warpwood entrance SWEEP ----------------
-    // The entrance room is large (~245x175yd; the entrance teleport is at y~159
-    // and Petrified Treants/Guardians span y185-361, out to ~151yd from centre)
-    // and the Tendris-area Eldreth start at ~135yd from the same centre — so ONE
-    // ClearRadius can't cover the treants without also pulling the Eldreth, and a
-    // single huge radius either no-ops (arrives too far) or thrashes. Instead
-    // SWEEP it: a few small clear-waypoints (BossRosterRegistry OBJ(8)/OBJ(9),
-    // ordered FIRST) route the tank across the south treant band; at each stop a
-    // small ClearRadius (45) engages the local pack (the treants are aggro-on-
-    // sight and cluster on the tank) and the gate holds until that stop is clear
-    // before moving to the next. The middle band is covered by generator 1's own
-    // clear; the north band abuts the Eldreth and is left to the normal
-    // engage-trash flow on the walk to Tendris.
+    // The entrance hall is HUGE — the Petrified Treant / Petrified Guardian (plus
+    // Ironbark Protector) packs blanket the whole room: x -97..+135 (≈232yd wide)
+    // by y 185..360 (≈175yd deep), in three latitude bands. ONE ClearRadius (or
+    // even the old two, both parked at the entrance lip y~200) reaches only the
+    // few packs by the door — the model shows ~16 treant packs, of which the old
+    // sweep's two y=200/r45 circles covered barely two, so the clear no-op'd in
+    // 0ms and left the room full. The Eldreth ghosts (behind Tendris, y>=410) and
+    // the imprisoned Highborne (z+28) must NOT be woken, so a single huge radius
+    // is out. Instead SWEEP a GRID of small clears that together tile the treant
+    // field while each stays clear of the Eldreth/Highborne (BossRosterRegistry
+    // OBJ(8)..OBJ(14)):
+    //   Band 1 entrance  (y~195, z~-4): west / centre / east  — covers the door
+    //                    packs t,k,l,m,u,y + the flanking Ironbark Protectors.
+    //   Band 2 mid hall  (y~270, z~-8): west / east — covers c,d,e,g,j (west) and
+    //                    f,h,i (east); radii kept just short of generator 1's own
+    //                    clear at (13,278) so the two don't fight over the dais.
+    //   Band 3 approach  (y~357, z~-4): west / east — covers the far z,o packs and
+    //                    their Ironbarks; r kept tight so the y>=410 Eldreth stay
+    //                    asleep.
+    // Each stop's ClearRadius engages the local pack (treants are aggro-on-sight
+    // and cluster on the tank) and the gate holds until that stop is clear before
+    // the run advances. zBand 20 (centred on the band's floor) excludes the z+28
+    // Highborne. All three bands order BEFORE generator 1 (BossRosterRegistry
+    // orderOverride 2/3/4 < Gen1's 5), so the tank tiles the room front-to-back in
+    // one contiguous northward pass while the y>=410 Eldreth / Tendris sleep.
     //
-    // Key: these waypoints sit on OPEN FLOOR where the treants stand (not on the
-    // off-mesh crystal dais), so the tank reaches them closely — no parks-short
-    // deadlock — and "arrives" AMONG the treants, so the ClearRadius engages
-    // instead of completing in 0ms. arriveRadius (30) < ClearRadius (45) is fine
+    // Key: every waypoint sits on OPEN FLOOR where treants stand (not the off-mesh
+    // crystal dais), so the tank reaches it closely — no parks-short deadlock —
+    // and "arrives" AMONG the treants, so the ClearRadius engages instead of
+    // completing in 0ms. arriveRadius (30) < ClearRadius (per-stop) is fine
     // (Uldaman keeper numbers); the small radius keeps the tank fighting in place
     // as the pack closes, so it does not chase far and thrash. ClearRadius-only;
     // REACHABLE-only; Persistent; Optional; generous timeout.
-    struct SweepWaypoint { uint32 eventId; float x, y, z; char const* name; };
+    struct SweepWaypoint { uint32 eventId; float x, y, z, radius; char const* name; };
     static constexpr SweepWaypoint kEntranceSweep[] = {
-        { 11, -70.0f, 200.0f, -4.0f, "Clear the Warpwood entrance (west)" },
-        { 12,  90.0f, 200.0f, -5.0f, "Clear the Warpwood entrance (east)" },
+        // Band 1 — entrance lip (west / centre / east).
+        {  12, -97.0f, 202.0f, -4.0f, 45.0f, "Clear the Warpwood entrance (west)" },
+        {  11, -15.0f, 192.0f, -3.5f, 45.0f, "Clear the Warpwood entrance (centre)" },
+        {  13, 128.0f, 200.0f, -4.0f, 45.0f, "Clear the Warpwood entrance (east)" },
+        // Band 2 — mid hall (west / east); radii short of generator 1's clear.
+        {  14, -44.0f, 280.0f, -7.5f, 48.0f, "Clear the Warpwood hall (west)" },
+        {  15,  60.0f, 285.0f, -8.0f, 45.0f, "Clear the Warpwood hall (east)" },
+        // Band 3 — northern approach (west / east); tight so the Eldreth sleep.
+        {  16, -93.0f, 357.0f, -4.0f, 42.0f, "Clear the Warpwood approach (west)" },
+        {  17, 126.0f, 357.0f, -4.0f, 42.0f, "Clear the Warpwood approach (east)" },
     };
     for (SweepWaypoint const& wp : kEntranceSweep)
     {
         out.push_back(EventBuilder(429, wp.eventId, wp.name)
                           .Anchored(/*orderIndex, doc-only*/ wp.eventId)
-                          .ClearRadius(wp.x, wp.y, wp.z, /*radius*/ 45.0f,
+                          .ClearRadius(wp.x, wp.y, wp.z, wp.radius,
                                        /*zBand*/ 20.0f)
                               .Timeout(180000)
                           .Persistent()

@@ -599,25 +599,64 @@ namespace
                                   -56.59f, -269.12f, -57.87f,
                                   /*arriveRadius*/ 12.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 1, /*orderOverride*/ 40),
-                    // West — SWEEP the Warpwood entrance room FIRST: two small
-                    // clear-waypoints across the south treant band (west then
-                    // east), ordered before everything (orderOverride 2/3 < Gen1's
-                    // 5). These anchors are on OPEN FLOOR among the treants (not on
-                    // the off-mesh crystal dais), so the tank reaches them closely
-                    // (no parks-short) and "arrives" among the treants (so the
-                    // ClearRadius engages instead of 0ms no-op). arriveRadius 30,
-                    // ClearRadius 45 (small, so the tank fights the closing pack in
-                    // place rather than chasing far). See DireMaulEvents 429/11-12.
+                    // West — SWEEP the Warpwood entrance room: a GRID of small
+                    // clear-waypoints that together tile the whole treant field
+                    // (x -97..+135 by y 185..360) in three latitude bands. These
+                    // anchors are on OPEN FLOOR among the treants (not on the
+                    // off-mesh crystal dais), so the tank reaches them closely (no
+                    // parks-short) and "arrives" among the treants (so each
+                    // ClearRadius engages instead of 0ms no-op). arriveRadius 30 <
+                    // each stop's ClearRadius (small, so the tank fights the
+                    // closing pack in place rather than chasing far).
+                    //
+                    // ALL three bands order BEFORE generator 1 (override 2/3/4 <
+                    // Gen1's 5), so the tank sweeps the ENTIRE room front-to-back
+                    // (entrance y~195 -> mid y~270 -> approach y~357) before the
+                    // first generator at y278 — one contiguous northward pass, and
+                    // crucially the northern approach is cleared while the y>=410
+                    // Eldreth / Tendris are still asleep. Within a band, same-key
+                    // siblings are visited in add-order (stable_sort); the calls
+                    // below run a serpentine (entrance W->C->E, mid E->W, approach
+                    // W->E) so each band starts near where the last one ended. See
+                    // DireMaulEvents 429/11-17.
+                    // Band 1 — entrance lip (west -> centre -> east).
                     MakeObjective(OBJ(8), /*encounterIndex*/ 47, 429,
                                   "Clear the Warpwood entrance (west)",
-                                  -70.0f, 200.0f, -4.0f,
+                                  -97.0f, 202.0f, -4.0f,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 12, /*orderOverride*/ 2),
+                    MakeObjective(OBJ(9), /*encounterIndex*/ 48, 429,
+                                  "Clear the Warpwood entrance (centre)",
+                                  -15.0f, 192.0f, -3.5f,
                                   /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
                                   /*hook*/ 0, /*eventId*/ 11, /*orderOverride*/ 2),
-                    MakeObjective(OBJ(9), /*encounterIndex*/ 48, 429,
+                    MakeObjective(OBJ(10), /*encounterIndex*/ 49, 429,
                                   "Clear the Warpwood entrance (east)",
-                                  90.0f, 200.0f, -5.0f,
+                                  128.0f, 200.0f, -4.0f,
                                   /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
-                                  /*hook*/ 0, /*eventId*/ 12, /*orderOverride*/ 3),
+                                  /*hook*/ 0, /*eventId*/ 13, /*orderOverride*/ 2),
+                    // Band 2 — mid hall (east -> west), before generator 1.
+                    MakeObjective(OBJ(11), /*encounterIndex*/ 50, 429,
+                                  "Clear the Warpwood hall (east)",
+                                  60.0f, 285.0f, -8.0f,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 15, /*orderOverride*/ 3),
+                    MakeObjective(OBJ(12), /*encounterIndex*/ 51, 429,
+                                  "Clear the Warpwood hall (west)",
+                                  -44.0f, 280.0f, -7.5f,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 14, /*orderOverride*/ 3),
+                    // Band 3 — northern approach (west -> east), before generator 1.
+                    MakeObjective(OBJ(13), /*encounterIndex*/ 52, 429,
+                                  "Clear the Warpwood approach (west)",
+                                  -93.0f, 357.0f, -4.0f,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 16, /*orderOverride*/ 4),
+                    MakeObjective(OBJ(14), /*encounterIndex*/ 53, 429,
+                                  "Clear the Warpwood approach (east)",
+                                  126.0f, 357.0f, -4.0f,
+                                  /*arriveRadius*/ 30.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 17, /*orderOverride*/ 4),
                     // West — Immol'thar pylons. Southern trio (before Tendris).
                     // The crystal objectives' arriveRadius (45) is moderate — big
                     // enough to clear the parks-short distance (so no travel-thrash
