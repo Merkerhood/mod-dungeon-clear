@@ -52,8 +52,15 @@ namespace
                     BossRosterRegistry::ObjectiveEntry(5),
                     BossRosterRegistry::ObjectiveEntry(6),
                     BossRosterRegistry::ObjectiveEntry(7),  // barrier-skirt waypoint
-                    BossRosterRegistry::ObjectiveEntry(8),  // Warpwood entrance sweep (W)
-                    BossRosterRegistry::ObjectiveEntry(9),  // Warpwood entrance sweep (E)
+                    // Warpwood entrance SWEEP grid (3 bands, 7 stops). See the
+                    // map-429 West patch in BossRosterRegistry / DireMaulEvents.
+                    BossRosterRegistry::ObjectiveEntry(8),   // entrance (W)
+                    BossRosterRegistry::ObjectiveEntry(9),   // entrance (centre)
+                    BossRosterRegistry::ObjectiveEntry(10),  // entrance (E)
+                    BossRosterRegistry::ObjectiveEntry(11),  // mid hall (W)
+                    BossRosterRegistry::ObjectiveEntry(12),  // mid hall (E)
+                    BossRosterRegistry::ObjectiveEntry(13),  // approach (W)
+                    BossRosterRegistry::ObjectiveEntry(14),  // approach (E)
                 }},
                 {"Dire Maul (North)", {
                     14326,  // Guard Mol'dar
