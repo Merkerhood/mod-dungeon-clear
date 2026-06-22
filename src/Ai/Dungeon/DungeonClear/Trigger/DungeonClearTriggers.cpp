@@ -205,8 +205,27 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
     float const radius = next->arriveRadius > 0.0f
                              ? next->arriveRadius
                              : DcSettings::GetFloat(bot, "ObjectiveArriveRadius");
-    if (bot->GetExactDist(next->x, next->y, next->z) <= radius)
+    float const distToAnchor = bot->GetExactDist(next->x, next->y, next->z);
+    if (distToAnchor <= radius)
         return true;
+
+    // Diagnostic (throttled, leader only): when the tank is hovering NEAR an
+    // objective but not arriving, this names the exact gap — dist vs arriveRadius
+    // — so a "parks just short, never triggers the event" stall is unambiguous in
+    // the log instead of inferred from spline distances.
+    if (distToAnchor <= radius + 20.0f && DcLeaderSignal::IsDungeonClearLeader(bot))
+    {
+        static uint32 lastLog = 0;
+        uint32 const nowMs = getMSTime();
+        if (getMSTimeDiff(lastLog, nowMs) >= 3000)
+        {
+            lastLog = nowMs;
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] objective '{}': dist={:.1f} > arriveRadius={:.1f} "
+                      "(NOT arrived; event not started)",
+                      bot->GetName(), next->name, distToAnchor, radius);
+        }
+    }
 
     if (next->gateEntry)
     {
