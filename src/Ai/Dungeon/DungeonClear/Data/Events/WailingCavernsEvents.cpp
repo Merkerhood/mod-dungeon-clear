@@ -57,4 +57,48 @@ void RegisterWailingCavernsEvents(std::vector<DungeonEvent>& out)
             //    stock boss-nav then carries the bot to Serpentis.
             .Jump(WC_LAND_X, WC_LAND_Y, WC_LAND_Z, /*radius*/ 5.0f)
             .Build());
+
+    // --- The finale: ESCORT the DISCIPLE OF NARALEX, ANCHORED + PERSISTENT ---
+    // After the four Fanglords are dead the dungeon's last objective is a scripted
+    // ESCORT: talk to the Disciple of Naralex (3678) to start him, then protect him
+    // along a 25-waypoint path (three ambushes + a banish ritual) to the ritual
+    // chamber, where he summons MUTANUS THE DEVOURER (3654) — the final boss.
+    //
+    // mod-playerbots will NOT put a bot into combat when only a non-party escortee
+    // is attacked (no bot receives a threat event), so aggro propagation alone lets
+    // the Disciple die while the party just keeps following. The EscortCreature step
+    // exists exactly to bridge that: it actively engages whatever hits him, which
+    // pulls the rest of the party in via the leader-fight assist seam.
+    //
+    // ANCHORED + PERSISTENT, never Conditional+Repeatable: the escort spans four+
+    // separate fights (3 ambushes + the final-chamber waves + Mutanus), and the
+    // executor REWINDS a non-persistent event to step 0 after any >1s driving-engine
+    // gap — which every wave's combat is. Persistence keeps stepIndex across the
+    // gaps; the sticky at-objective trigger (stepIndex >= 1) lets the tank roam the
+    // whole route from the anchor. Step 0 is a short MoveTo to the Disciple so
+    // stepIndex reaches 1 (the persistence sticky); step 1 is the escort proper
+    // (its self-heal re-runs the start gossip itself, so a dead Disciple recovers
+    // even though a Persistent event won't auto-rewind to a step-0 Gossip).
+    //
+    // Completion is gated STRICTLY on Mutanus existing (grid scan) / his encounter
+    // bit (7) — never on "reached the end" — to avoid the DM-West/RFD premature-
+    // completion class of bug. Once it latches, the roster's Mutanus BOSS anchor
+    // takes over and the normal kill-bit completes the dungeon.
+    constexpr float WC_DISCIPLE_X = -134.97f;
+    constexpr float WC_DISCIPLE_Y = 125.40f;
+    constexpr float WC_DISCIPLE_Z = -78.09f;
+
+    out.push_back(
+        EventBuilder(43, 2, "Escort the Disciple of Naralex")
+            .Anchored(/*encounterIndex*/ 7)
+            .Persistent()
+            // Step 0: close to the Disciple so the persistent stepIndex reaches 1
+            //         (the escort step's own start branch walks the last yards to
+            //         gossip range, so this just needs to get near him).
+            .MoveTo(WC_DISCIPLE_X, WC_DISCIPLE_Y, WC_DISCIPLE_Z, /*radius*/ 5.0f)
+            // Step 1: start (gossip menu 201 option 0), follow + protect, and
+            //         complete on Mutanus (3654, encounter bit 7).
+            .EscortCreature(/*escortee*/ 3678, /*startGossipOption*/ 0,
+                            /*doneEntry*/ 3654, /*doneBit*/ 7)
+            .Build());
 }

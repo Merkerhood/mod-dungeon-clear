@@ -55,6 +55,20 @@ enum class EventStepKind : uint8
     UseItem,                 // leader uses itemId (milestone 2+)
     Wait,                    // dwell `durationMs` then continue
     Custom,                  // escape hatch -> ObjectiveHookRegistry hookId
+    EscortCreature,          // PROTECT a moving NPC (Wailing Caverns' Disciple of
+                             // Naralex) the whole way to its destination: start its
+                             // scripted escort via gossip, then each tick FOLLOW it
+                             // and actively ENGAGE whatever attacks it (mod-playerbots
+                             // gives a bot no threat event when only a non-party
+                             // escortee is hit, so aggro propagation alone never puts
+                             // the tank into the fight). Done only when the final
+                             // boss (`escortDoneEntry` / `escortDoneBit`) exists —
+                             // never on "reached the end". DRIVEN by the action
+                             // (DcObjectiveArriveAction::DriveEscortCreature, which
+                             // owns the follow + threat-engage + self-heal gossip +
+                             // watchdog); RunStep here is the pure completion gate.
+                             // Anchored+Persistent only (the escort spans several
+                             // combat gaps that would rewind a non-persistent event).
 };
 
 // One typed primitive. Fields are a shared bag — only those relevant to `kind`
@@ -113,6 +127,27 @@ struct EventStep
     uint32 durationMs{0};    // Wait: dwell length
     uint32 timeoutMs{0};     // 0 => EventStepTimeout config default; else per-step
     uint32 hookId{0};        // Custom -> ObjectiveHookRegistry
+
+    // --- EscortCreature only ----------------------------------------------
+    // The escortee (creatureEntry) is the NPC to protect; `radius` is the grid
+    // scan radius used to (re)resolve it live each tick. `gossipOption` is the
+    // menu option that STARTS its scripted escort (re-run for self-heal when it
+    // resets to idle). The remaining knobs:
+    float  escortStandoff{0.0f};    // follow slot distance to hold BEHIND the
+                                    // escortee (offset so the tank never blocks
+                                    // its movement spline). 0 => per-kind default.
+    float  escortThreatRadius{0.0f};// TIGHT scan radius around the escortee for an
+                                    // attacker to engage (the ambushes spawn ON it,
+                                    // so a tight radius catches them without
+                                    // cross-pulling the cavern's ambient fauna).
+                                    // `zBand` reuses the shared field for vertical
+                                    // tolerance (the chamber drops ~z -96 -> -102).
+    uint32 escortDoneEntry{0};      // completion creature (Mutanus 3654): the step
+                                    // is Done once it exists (grid scan) — never on
+                                    // "reached the destination".
+    int32  escortDoneBit{-1};       // completion encounter bit, as a backstop to the
+                                    // grid scan (set once the boss is killed even
+                                    // after its corpse despawns). -1 => bit unused.
 
     // MoveTo garrison gate, instance-data variant. When instanceDataId >= 0 the
     // step holds at (x,y,z) until the map's InstanceScript GetData(instanceDataId)
@@ -296,6 +331,15 @@ public:
                               float zBand = 20.0f);
     EventBuilder& Wait(uint32 durationMs);
     EventBuilder& Custom(uint32 hookId);
+    // Protect a moving escortee (see EventStepKind::EscortCreature). `escortee` is
+    // the NPC entry, `startGossipOption` the menu option that starts its scripted
+    // escort (re-run on self-heal), `doneEntry`/`doneBit` the final boss whose
+    // existence/kill completes the step. The geometry knobs carry sensible
+    // defaults; `searchRadius` is the live-escortee grid scan radius.
+    EventBuilder& EscortCreature(uint32 escortee, int32 startGossipOption,
+                                 uint32 doneEntry, int32 doneBit,
+                                 float standoff = 5.0f, float threatRadius = 18.0f,
+                                 float threatZBand = 20.0f, float searchRadius = 80.0f);
 
     DungeonEvent Build() const { return _ev; }
 

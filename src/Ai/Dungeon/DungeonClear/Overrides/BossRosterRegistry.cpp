@@ -438,8 +438,10 @@ namespace
                 t.push_back(std::move(p));
             }
 
-            // --- Wailing Caverns (map 43) — drop down to Lord Serpentis -------
-            // Lord Serpentis (3673, encounterIndex 5) sits on an upper-ground
+            // --- Wailing Caverns (map 43) — Serpentis drop + Mutanus escort ---
+            // Two roster additions, both backed by WailingCavernsEvents.cpp:
+            //
+            // (1) Lord Serpentis (3673, encounterIndex 5) sits on an upper-ground
             // navmesh island the party reaches only by running to a ledge and
             // DROPPING onto it; Recast bakes no off-mesh link across the gap, so
             // stock boss-nav calls him unreachable. Add an OBJECTIVE anchor at the
@@ -447,14 +449,46 @@ namespace
             // objective-before-boss tie-break drives the tank there first, the
             // event (eventId 1) jumps the gap, then the clear advances to
             // Serpentis (now on the same island). No gateEntry: the event owns
-            // completion via the Jump landing. See WailingCavernsEvents.
+            // completion via the Jump landing.
+            //
+            // (2) The finale is a scripted ESCORT of the Disciple of Naralex (3678)
+            // to the ritual chamber, where he summons MUTANUS THE DEVOURER (3654) —
+            // the dungeon's final boss. Mutanus is a TempSummon (spawnId 0), so
+            // BossSpawnIndex never emits him; add him as a BOSS at his summon spot
+            // with his real DungeonEncounter bit 7 (instance_encounters credit 3654,
+            // the 8th WC encounter after Anacondra/Cobrahn/Kresh/Pythas/Skum 0-4,
+            // Serpentis 5, Verdan 6), so his kill flips bit 7 and completes the run.
+            // The Disciple/escort OBJECTIVE (eventId 2) sits at the same key 7 and,
+            // by the objective-before-boss tie-break, is reached FIRST: the party
+            // escorts the Disciple, he summons Mutanus, the escort completion gate
+            // latches, and the picker hands over the same-key Mutanus boss next.
+            //
+            // NOTE (deferred — see the plan §6.2): the RETURN-FALL from the
+            // Serpentis/Verdan shelf back down to the lower caverns may need its own
+            // Jump objective (the shelf is a one-way drop in). Its lip/landing coords
+            // require in-game island-dumper probing, so it is intentionally not wired
+            // here yet; if the navmesh routes the party off the shelf on its own the
+            // escort is reachable without it.
             {
                 BossRosterPatch p;
                 p.mapId = 43;
+
+                // Mutanus: built (not MakeBoss) so we can stamp his own real
+                // encounterIndex 7 (he inherits from no removed entry).
+                DungeonBossInfo mutanus =
+                    MakeBoss(3654, 43, "Mutanus the Devourer",
+                             151.27f, 252.26f, -102.82f, /*completionFrom*/ 0);
+                mutanus.encounterIndex = 7;
+
                 p.add = {
                     MakeObjective(OBJ(1), /*encounterIndex*/ 5, 43, "Drop to Lord Serpentis",
                                   -290.65567f, -3.8297224f, -58.30473f, /*arriveRadius*/ 6.0f,
                                   /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
+                    MakeObjective(OBJ(2), /*encounterIndex*/ 7, 43,
+                                  "Escort the Disciple of Naralex",
+                                  -134.97f, 125.40f, -78.09f, /*arriveRadius*/ 18.0f,
+                                  /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 2),
+                    mutanus,
                 };
                 t.push_back(std::move(p));
             }

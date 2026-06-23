@@ -115,6 +115,34 @@ namespace
     }
 }
 
+bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option)
+{
+    if (!bot || !npc)
+        return false;
+
+    // Open the menu — synchronously populates PlayerTalkClass with this NPC as
+    // the gossip-menu sender and its DB options.
+    bot->SetFacingToObject(npc);
+    WorldPacket hello;
+    hello << npc->GetGUID();
+    bot->GetSession()->HandleGossipHelloOpcode(hello);
+
+    GossipMenu& menu = bot->PlayerTalkClass->GetGossipMenu();
+    if (menu.GetMenuItems().empty() ||
+        !menu.GetItem(static_cast<uint32>(option)))
+        return false;  // menu/option not ready yet — caller retries
+
+    // Send the NPC's OWN guid: HandleGossipSelectOptionOpcode rejects the select
+    // unless the packet guid equals the open menu's sender GUID, and a real bot's
+    // master isn't targeting this NPC. See the Gossip step note below.
+    WorldPacket select;
+    select << npc->GetGUID() << menu.GetMenuId()
+           << static_cast<uint32>(option);
+    select << std::string();  // no coded box
+    bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+    return true;
+}
+
 StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                                          EventStep const& step, DungeonEventProgress& prog,
                                          uint32 nowMs)
@@ -353,29 +381,38 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;
             }
 
-            // Open the menu — synchronously populates PlayerTalkClass with this
-            // NPC as the gossip-menu sender and its DB options.
-            bot->SetFacingToObject(npc);
-            WorldPacket hello;
-            hello << npc->GetGUID();
-            bot->GetSession()->HandleGossipHelloOpcode(hello);
-
-            GossipMenu& menu = bot->PlayerTalkClass->GetGossipMenu();
-            if (menu.GetMenuItems().empty() ||
-                !menu.GetItem(static_cast<uint32>(step.gossipOption)))
-                return StepResult::Running;  // menu/option not ready yet — retry
-
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[dungeon-clear] {} event-step Gossip {} '{}' menu {} option {}",
+                      "[dungeon-clear] {} event-step Gossip {} '{}' option {}",
                       bot->GetName(), npc->GetGUID().ToString(), npc->GetName(),
-                      menu.GetMenuId(), step.gossipOption);
+                      step.gossipOption);
 
-            WorldPacket select;
-            select << npc->GetGUID() << menu.GetMenuId()
-                   << static_cast<uint32>(step.gossipOption);
-            select << std::string();  // no coded box
-            bot->GetSession()->HandleGossipSelectOptionOpcode(select);
-            return StepResult::Done;
+            // Drive the open-menu + select opcodes (shared with the escort step's
+            // self-heal start). Running while the menu/option isn't populated yet.
+            return SelectGossip(bot, npc, step.gossipOption) ? StepResult::Done
+                                                             : StepResult::Running;
+        }
+
+        case EventStepKind::EscortCreature:
+        {
+            // PURE COMPLETION GATE only. The follow + threat-engage + self-heal
+            // gossip + watchdog are all driven by the ACTION
+            // (DcObjectiveArriveAction::DriveEscortCreature), which owns the tick
+            // while the escort is in progress and only falls through to this Drive
+            // once the final boss exists. Done strictly when that boss is up (grid
+            // scan) or its encounter bit is set — NEVER on "reached the end" (the
+            // DM-West / RFD premature-completion class of bug).
+            if (step.escortDoneEntry &&
+                bot->FindNearestCreature(step.escortDoneEntry, DC_EVENT_CREATURE_SCAN,
+                                         /*alive*/ true))
+                return StepResult::Done;
+            if (step.escortDoneBit >= 0)
+            {
+                InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+                if (inst && (inst->GetCompletedEncounterMask() &
+                             (1u << static_cast<uint32>(step.escortDoneBit))))
+                    return StepResult::Done;
+            }
+            return StepResult::Running;
         }
 
         case EventStepKind::CastSpell:
@@ -451,9 +488,15 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
 
     if (result == StepResult::Running)
     {
+        // The EscortCreature step has NO flat timeout: a 30s default would mis-fire
+        // during the Disciple's 32.5s banish channel and the long ritual hold. Its
+        // own dead-air watchdog (DriveEscortCreature) owns liveness instead, so the
+        // step is never escalated to Failed here regardless of elapsed time.
+        bool const watchdogOwned = step.kind == EventStepKind::EscortCreature;
         // Escalate a step that has run too long to Failed. uint32 subtraction is
         // wrap-safe for an elapsed interval.
-        if (timeout > 0 && static_cast<uint32>(nowMs - prog.stepStartMs) >= timeout)
+        if (!watchdogOwned && timeout > 0 &&
+            static_cast<uint32>(nowMs - prog.stepStartMs) >= timeout)
             result = StepResult::Failed;
         else
             return EventDriveOutcome::Running;

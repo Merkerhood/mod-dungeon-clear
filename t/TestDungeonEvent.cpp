@@ -93,6 +93,26 @@ TEST(EventBuilderTest, OptionalAndConditionalFlags)
     EXPECT_EQ(e.steps[0].durationMs, 500u);
 }
 
+TEST(EventBuilderTest, EscortCreatureCarriesEscorteeAndCompletionGate)
+{
+    DungeonEvent e = EventBuilder(43, 2, "Escort the Disciple of Naralex")
+                         .EscortCreature(/*escortee*/ 3678, /*startGossipOption*/ 0,
+                                         /*doneEntry*/ 3654, /*doneBit*/ 7)
+                         .Build();
+    ASSERT_EQ(e.steps.size(), 1u);
+    EventStep const& s = e.steps[0];
+    EXPECT_EQ(s.kind, EventStepKind::EscortCreature);
+    EXPECT_EQ(s.creatureEntry, 3678u);   // escortee
+    EXPECT_EQ(s.gossipOption, 0);        // start option
+    EXPECT_EQ(s.escortDoneEntry, 3654u); // Mutanus
+    EXPECT_EQ(s.escortDoneBit, 7);       // his DungeonEncounter bit
+    // Defaults applied.
+    EXPECT_FLOAT_EQ(s.escortStandoff, 5.0f);
+    EXPECT_FLOAT_EQ(s.escortThreatRadius, 18.0f);
+    EXPECT_FLOAT_EQ(s.zBand, 20.0f);
+    EXPECT_FLOAT_EQ(s.radius, 80.0f);
+}
+
 // --- DungeonEventExecutor::Advance (pure) ---------------------------------
 
 TEST(DungeonEventAdvance, EmptyEventCompletes)
@@ -150,6 +170,20 @@ TEST(DungeonEventAdvance, DefaultTimeoutUsedWhenStepHasNone)
               EventDriveOutcome::Running);  // 2000 < default 3000
     EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Running, 4000, 3000),
               EventDriveOutcome::Stalled);  // 4000 >= default 3000
+}
+
+TEST(DungeonEventAdvance, EscortCreatureNeverTimesOut)
+{
+    // The escort's own dead-air watchdog owns liveness; Advance must NOT escalate
+    // a long-Running EscortCreature step to Failed even far past any timeout (else
+    // it would fire during the Disciple's 32.5s banish / the long ritual hold).
+    DungeonEvent ev = EventBuilder(43, 2, "e")
+                          .EscortCreature(3678, 0, 3654, 7)
+                          .Build();
+    DungeonEventProgress p = Prog(2, 0, 0);
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Running, 10u * 60u * 1000u, 30000),
+              EventDriveOutcome::Running);
+    EXPECT_EQ(p.stepIndex, 0u);  // still on the escort step
 }
 
 TEST(DungeonEventAdvance, BlockedAlwaysStallsEvenWhenOptional)
@@ -981,4 +1015,29 @@ TEST(DungeonEventConditional, DireMaulWestCrescentDoorEventShape)
 
         EXPECT_TRUE(EventConditionRegistry::Has(d.conditionId));
     }
+}
+
+// Wailing Caverns FINALE: the Disciple of Naralex escort (event 2). Anchored +
+// Persistent (it spans 3 ambushes + the final-chamber waves + Mutanus — every
+// combat is a >1s gap that would rewind a non-persistent event). Step 0 is a
+// short MoveTo so the persistent stepIndex reaches 1 (the at-objective sticky);
+// step 1 is the escort proper, completing STRICTLY on Mutanus (3654, bit 7) —
+// never on "reached the end".
+TEST(DungeonEventRegistryTest, WailingCavernsDiscipleEscort)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(43, 2);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_TRUE(e->persistent);
+    EXPECT_TRUE(e->required);
+    ASSERT_EQ(e->steps.size(), 2u);
+
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);  // close to the Disciple
+
+    EventStep const& esc = e->steps[1];
+    EXPECT_EQ(esc.kind, EventStepKind::EscortCreature);
+    EXPECT_EQ(esc.creatureEntry, 3678u);   // Disciple of Naralex
+    EXPECT_EQ(esc.gossipOption, 0);        // "Let the event begin!"
+    EXPECT_EQ(esc.escortDoneEntry, 3654u); // Mutanus the Devourer
+    EXPECT_EQ(esc.escortDoneBit, 7);       // his DungeonEncounter bit
 }
