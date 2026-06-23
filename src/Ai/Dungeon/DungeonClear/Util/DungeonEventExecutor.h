@@ -10,6 +10,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 
 class Player;
+class Creature;
 class AiObjectContext;
 
 // Result of running ONE event step on a tick.
@@ -42,6 +43,13 @@ struct DungeonEventProgress
     uint32 lastDriveMs{0};  // ms-time Drive last ran this event (gap detector)
     uint32 instanceId{0};   // instance this progress belongs to (new-instance reset)
 
+    // EscortCreature watchdog: ms-time the escort last made genuine progress
+    // (escortee moved, combat occurred, a reachable threat existed, or the final
+    // boss is pending within grace). The escort step has no flat timeout (the
+    // 32.5s banish channel + the long ritual would mis-fire one); this is its
+    // dead-air liveness clock instead. 0 => unset (stamped on the first tick).
+    uint32 escortProgressMs{0};
+
     // Drive-log throttle: the per-tick step line is logged only on a transition
     // (step or result change) or every kLogHeartbeatMs while Running, so a long
     // WaitForSpawn doesn't spam one line per tick.
@@ -57,6 +65,7 @@ struct DungeonEventProgress
         attempts = 0;
         lastDriveMs = 0;
         instanceId = 0;
+        escortProgressMs = 0;
         lastLoggedStep = -1;
         lastLoggedResult = -1;
         lastLogMs = 0;
@@ -83,6 +92,23 @@ public:
     // separated from Advance so the latter stays pure/testable.
     static StepResult RunStep(Player* bot, AiObjectContext* context,
                               EventStep const& step, DungeonEventProgress& prog, uint32 nowMs);
+
+    // True once the leader has fallen onto a DropInHole step's deep-floor landing
+    // (settled at/below landing Z and no longer falling). Shared by RunStep's gate
+    // and the action's DriveDropInHole so the "still dropping vs. landed" decision
+    // is single-sourced. Z-based: the MoveFall is pure-vertical, so the leader's
+    // X/Y is already over the landing — only the descent has to finish.
+    static bool IsOnDropLanding(Player* bot, EventStep const& step);
+
+    // IMPURE: drive the gossip OPCODES to open `npc`'s menu and select `option`,
+    // returning true once the select has been sent (false while the menu/option
+    // is not yet populated). Shared by the Gossip step and the EscortCreature
+    // step's self-heal start (DriveEscortCreature), so the one subtle bit — the
+    // core rejects a select whose packet guid isn't the open menu's sender, so we
+    // send the NPC's OWN guid rather than the master's target — lives in one
+    // place. The caller is responsible for being in interact range and (if it
+    // matters) facing the NPC.
+    static bool SelectGossip(Player* bot, Creature* npc, int32 option);
 
     // --- Conditional activation (milestone 2) ----------------------------
 

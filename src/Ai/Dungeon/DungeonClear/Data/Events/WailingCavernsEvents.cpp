@@ -57,4 +57,106 @@ void RegisterWailingCavernsEvents(std::vector<DungeonEvent>& out)
             //    stock boss-nav then carries the bot to Serpentis.
             .Jump(WC_LAND_X, WC_LAND_Y, WC_LAND_Z, /*radius*/ 5.0f)
             .Build());
+
+    // --- The finale: ESCORT the DISCIPLE OF NARALEX, ANCHORED + PERSISTENT ---
+    // After the four Fanglords are dead the dungeon's last objective is a scripted
+    // ESCORT: talk to the Disciple of Naralex (3678) to start him, then protect him
+    // along a 25-waypoint path (three ambushes + a banish ritual) to the ritual
+    // chamber, where he summons MUTANUS THE DEVOURER (3654) — the final boss.
+    //
+    // mod-playerbots will NOT put a bot into combat when only a non-party escortee
+    // is attacked (no bot receives a threat event), so aggro propagation alone lets
+    // the Disciple die while the party just keeps following. The EscortCreature step
+    // exists exactly to bridge that: it actively engages whatever hits him, which
+    // pulls the rest of the party in via the leader-fight assist seam.
+    //
+    // ANCHORED + PERSISTENT, never Conditional+Repeatable: the escort spans four+
+    // separate fights (3 ambushes + the final-chamber waves + Mutanus), and the
+    // executor REWINDS a non-persistent event to step 0 after any >1s driving-engine
+    // gap — which every wave's combat is. Persistence keeps stepIndex across the
+    // gaps; the sticky at-objective trigger (stepIndex >= 1) lets the tank roam the
+    // whole route from the anchor. Step 0 is a short MoveTo to the Disciple so
+    // stepIndex reaches 1 (the persistence sticky); step 1 is the escort proper
+    // (its self-heal re-runs the start gossip itself, so a dead Disciple recovers
+    // even though a Persistent event won't auto-rewind to a step-0 Gossip).
+    //
+    // Completion is gated STRICTLY on Mutanus existing (grid scan) / his encounter
+    // bit (7) — never on "reached the end" — to avoid the DM-West/RFD premature-
+    // completion class of bug. Once it latches, the roster's Mutanus BOSS anchor
+    // takes over and the normal kill-bit completes the dungeon.
+    constexpr float WC_DISCIPLE_X = -134.97f;
+    constexpr float WC_DISCIPLE_Y = 125.40f;
+    constexpr float WC_DISCIPLE_Z = -78.09f;
+
+    // --- The RETURN-FALL: drop off Verdan's shelf to the lower caverns --------
+    // After Verdan the dungeon's last objective (the Disciple escort) sits back
+    // DOWN in the lower caverns, reachable only by dropping through a narrow
+    // vertical hole behind Verdan into the water below. Boss-nav can't path the
+    // one-way vertical gap (the shelf and the deep water floor are disjoint mesh
+    // tiers), so — exactly like the Serpentis drop — an OBJECTIVE anchor at the
+    // LIP (reachable approach-side mesh) drives the tank there, then this event
+    // drops it the one off-mesh leg.
+    //
+    // The navmesh (probed offline with tools/probe_navmesh.py) shows the lip
+    // column is FOUR stacked tiers: shelf -27.5 / a mid-shaft LEDGE -58 / the deep
+    // water floor -105.8 / -111.5. That ledge is the trap that beat the earlier
+    // attempts: a plain MoveFall straight off the lip catches it, and a ballistic
+    // Jump clips the narrow shaft wall. DropInHole instead glides the leader ~7yd
+    // in +X to (-49.5, 47.6) — the one spot whose column is open STRAIGHT to the
+    // -105.8 floor — then MoveFall()s PURE-VERTICAL into the water (no horizontal
+    // travel => no wall clip; clears the -58 ledge). A polygon-adjacency BFS over
+    // the merged mesh confirms the deep floor is ONE connected component with the
+    // Disciple's poly, so stock nav routes the party to him after landing.
+    //
+    // Followers can't reproduce the off-mesh nudge, so for the whole drop they HOLD
+    // at the ledge top (DcLeaderSignal::IsLeaderDroppingInHole — a MoveFollow to the
+    // far-below tank can't path the shaft and would clip them straight down through
+    // its wall) and TELEPORT to the landing once the tank has finished falling (the
+    // sanctioned one-way-drop fix, shared with the Serpentis Jump).
+    //
+    // PERSISTENT + ANCHORED, same one-way reasoning as the Serpentis drop: the bot
+    // can't path back UP across the gap, so the step progress must survive any >1s
+    // combat gap (the party may land among lower-caverns fauna) rather than
+    // rewinding to MoveTo(lip) and walking back toward the now-unreachable lip.
+    constexpr float WC_DROP_LIP_X  = -55.89f;
+    constexpr float WC_DROP_LIP_Y  =  44.32f;
+    constexpr float WC_DROP_LIP_Z  = -29.01f;
+    // Over the OPEN shaft mouth (a short +X nudge from the lip), held at shelf Z;
+    // its column is clear straight down to the deep floor (no shelf / no -58 ledge).
+    constexpr float WC_DROP_OVER_X = -49.5f;
+    constexpr float WC_DROP_OVER_Y =  47.6f;
+    constexpr float WC_DROP_OVER_Z = -29.0f;
+    // The deep water floor directly below the over-hole point (probe centroid;
+    // BFS-confirmed connected to the Disciple).
+    constexpr float WC_DROP_LAND_X = -49.5f;
+    constexpr float WC_DROP_LAND_Y =  47.6f;
+    constexpr float WC_DROP_LAND_Z = -105.83f;
+
+    out.push_back(
+        EventBuilder(43, 3, "Drop down to the lower caverns")
+            .Anchored(/*orderIndex*/ 7)
+            .Persistent()
+            // Step 0: settle on the lip (the objective arrive radius may leave the
+            //         tank a few yards off; the drop needs it at the shaft edge so
+            //         stepIndex also reaches 1, the persistence sticky).
+            .MoveTo(WC_DROP_LIP_X, WC_DROP_LIP_Y, WC_DROP_LIP_Z, /*radius*/ 4.0f)
+            // Step 1: glide over the open shaft mouth, MoveFall into the water, then
+            //         teleport the held followers down. Done once the fall finishes.
+            .DropInHole(WC_DROP_OVER_X, WC_DROP_OVER_Y, WC_DROP_OVER_Z,
+                        WC_DROP_LAND_X, WC_DROP_LAND_Y, WC_DROP_LAND_Z)
+            .Build());
+
+    out.push_back(
+        EventBuilder(43, 2, "Escort the Disciple of Naralex")
+            .Anchored(/*encounterIndex*/ 7)
+            .Persistent()
+            // Step 0: close to the Disciple so the persistent stepIndex reaches 1
+            //         (the escort step's own start branch walks the last yards to
+            //         gossip range, so this just needs to get near him).
+            .MoveTo(WC_DISCIPLE_X, WC_DISCIPLE_Y, WC_DISCIPLE_Z, /*radius*/ 5.0f)
+            // Step 1: start (gossip menu 201 option 0), follow + protect, and
+            //         complete on Mutanus (3654, encounter bit 7).
+            .EscortCreature(/*escortee*/ 3678, /*startGossipOption*/ 0,
+                            /*doneEntry*/ 3654, /*doneBit*/ 7)
+            .Build());
 }

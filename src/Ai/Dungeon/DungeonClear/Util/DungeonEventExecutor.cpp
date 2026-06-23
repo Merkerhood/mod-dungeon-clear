@@ -115,6 +115,53 @@ namespace
     }
 }
 
+bool DungeonEventExecutor::IsOnDropLanding(Player* bot, EventStep const& step)
+{
+    if (!bot)
+        return false;
+    MotionMaster* mm = bot->GetMotionMaster();
+    // The MoveFall spline runs in an EFFECT_MOTION_TYPE generator that POPS the
+    // moment the spline reaches the floor — a reliable, server-managed "the fall
+    // FINISHED" signal, so we fire only once the bot is actually at the bottom (not
+    // mid-shaft, which teleported the party into the walls). Do NOT also test
+    // MOVEMENTFLAG_FALLING: a server bot has no client to send the fall-land packet
+    // that clears it, so it stays stuck on and would wedge this gate forever (the
+    // party strands up top and the tank dies — the first observed bug). Require the
+    // bot to also be well below the hole mouth (step.z, the ledge height) so a tick
+    // before the fall has started (no EFFECT generator yet) doesn't read as landed.
+    bool const fallSplineRunning =
+        mm && mm->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE;
+    return !fallSplineRunning && bot->GetPositionZ() < step.z - 15.0f;
+}
+
+bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option)
+{
+    if (!bot || !npc)
+        return false;
+
+    // Open the menu — synchronously populates PlayerTalkClass with this NPC as
+    // the gossip-menu sender and its DB options.
+    bot->SetFacingToObject(npc);
+    WorldPacket hello;
+    hello << npc->GetGUID();
+    bot->GetSession()->HandleGossipHelloOpcode(hello);
+
+    GossipMenu& menu = bot->PlayerTalkClass->GetGossipMenu();
+    if (menu.GetMenuItems().empty() ||
+        !menu.GetItem(static_cast<uint32>(option)))
+        return false;  // menu/option not ready yet — caller retries
+
+    // Send the NPC's OWN guid: HandleGossipSelectOptionOpcode rejects the select
+    // unless the packet guid equals the open menu's sender GUID, and a real bot's
+    // master isn't targeting this NPC. See the Gossip step note below.
+    WorldPacket select;
+    select << npc->GetGUID() << menu.GetMenuId()
+           << static_cast<uint32>(option);
+    select << std::string();  // no coded box
+    bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+    return true;
+}
+
 StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                                          EventStep const& step, DungeonEventProgress& prog,
                                          uint32 nowMs)
@@ -353,28 +400,66 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;
             }
 
-            // Open the menu — synchronously populates PlayerTalkClass with this
-            // NPC as the gossip-menu sender and its DB options.
-            bot->SetFacingToObject(npc);
-            WorldPacket hello;
-            hello << npc->GetGUID();
-            bot->GetSession()->HandleGossipHelloOpcode(hello);
-
-            GossipMenu& menu = bot->PlayerTalkClass->GetGossipMenu();
-            if (menu.GetMenuItems().empty() ||
-                !menu.GetItem(static_cast<uint32>(step.gossipOption)))
-                return StepResult::Running;  // menu/option not ready yet — retry
-
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[dungeon-clear] {} event-step Gossip {} '{}' menu {} option {}",
+                      "[dungeon-clear] {} event-step Gossip {} '{}' option {}",
                       bot->GetName(), npc->GetGUID().ToString(), npc->GetName(),
-                      menu.GetMenuId(), step.gossipOption);
+                      step.gossipOption);
 
-            WorldPacket select;
-            select << npc->GetGUID() << menu.GetMenuId()
-                   << static_cast<uint32>(step.gossipOption);
-            select << std::string();  // no coded box
-            bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+            // Drive the open-menu + select opcodes (shared with the escort step's
+            // self-heal start). Running while the menu/option isn't populated yet.
+            return SelectGossip(bot, npc, step.gossipOption) ? StepResult::Done
+                                                             : StepResult::Running;
+        }
+
+        case EventStepKind::EscortCreature:
+        {
+            // PURE COMPLETION GATE only. The follow + threat-engage + self-heal
+            // gossip + watchdog are all driven by the ACTION
+            // (DcObjectiveArriveAction::DriveEscortCreature), which owns the tick
+            // while the escort is in progress and only falls through to this Drive
+            // once the final boss exists. Done strictly when that boss is up (grid
+            // scan) or its encounter bit is set — NEVER on "reached the end" (the
+            // DM-West / RFD premature-completion class of bug).
+            if (step.escortDoneEntry &&
+                bot->FindNearestCreature(step.escortDoneEntry, DC_EVENT_CREATURE_SCAN,
+                                         /*alive*/ true))
+                return StepResult::Done;
+            if (step.escortDoneBit >= 0)
+            {
+                InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+                if (inst && (inst->GetCompletedEncounterMask() &
+                             (1u << static_cast<uint32>(step.escortDoneBit))))
+                    return StepResult::Done;
+            }
+            return StepResult::Running;
+        }
+
+        case EventStepKind::DropInHole:
+        {
+            // PURE gate + follower teleport. The leader's glide-over-the-hole and
+            // pure-vertical MoveFall are driven by the ACTION (DriveDropInHole),
+            // which owns the tick so the at-objective Hold can't cancel the off-mesh
+            // nudge spline; RunStep is reached only once the action hands back — i.e.
+            // the leader has finished falling and is down on the deep floor. Pull any
+            // follower still held up top down to the landing (they can't reproduce
+            // the off-mesh nudge; the teleport is the sanctioned one-way-drop fix),
+            // then report Done so the objective latches and the clear advances to the
+            // escort. Idempotent: a follower already down is skipped.
+            if (!DungeonEventExecutor::IsOnDropLanding(bot, step))
+                return StepResult::Running;
+            // Clear the stuck fall state. MoveFall set MOVEMENTFLAG_FALLING and no
+            // client ever clears it for a bot, so without this the leader stays
+            // "falling" forever and can't swim/walk out to the escort afterward.
+            bot->RemoveUnitMovementFlag(MOVEMENTFLAG_FALLING | MOVEMENTFLAG_FALLING_FAR);
+            bot->GetMotionMaster()->Clear();
+            // MoveFall targets the vmap GROUND (the lakebed), which in WC sits a few
+            // yards below the water-SURFACE navmesh sheet the mmaps bake (the deep
+            // floor we routed to). Settle the leader exactly on the landing so stock
+            // nav resumes cleanly (and the followers fan out around it there).
+            if (std::fabs(bot->GetPositionZ() - step.landZ) > 3.0f)
+                bot->NearTeleportTo(step.landX, step.landY, step.landZ,
+                                    bot->GetOrientation());
+            PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
             return StepResult::Done;
         }
 
@@ -451,9 +536,15 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
 
     if (result == StepResult::Running)
     {
+        // The EscortCreature step has NO flat timeout: a 30s default would mis-fire
+        // during the Disciple's 32.5s banish channel and the long ritual hold. Its
+        // own dead-air watchdog (DriveEscortCreature) owns liveness instead, so the
+        // step is never escalated to Failed here regardless of elapsed time.
+        bool const watchdogOwned = step.kind == EventStepKind::EscortCreature;
         // Escalate a step that has run too long to Failed. uint32 subtraction is
         // wrap-safe for an elapsed interval.
-        if (timeout > 0 && static_cast<uint32>(nowMs - prog.stepStartMs) >= timeout)
+        if (!watchdogOwned && timeout > 0 &&
+            static_cast<uint32>(nowMs - prog.stepStartMs) >= timeout)
             result = StepResult::Failed;
         else
             return EventDriveOutcome::Running;

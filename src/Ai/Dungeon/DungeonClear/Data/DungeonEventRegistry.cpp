@@ -245,6 +245,36 @@ EventBuilder& EventBuilder::Custom(uint32 hookId)
     return *this;
 }
 
+EventBuilder& EventBuilder::EscortCreature(uint32 escortee, int32 startGossipOption,
+                                           uint32 doneEntry, int32 doneBit,
+                                           float standoff, float threatRadius,
+                                           float threatZBand, float searchRadius)
+{
+    EventStep& s = Add(EventStepKind::EscortCreature);
+    s.creatureEntry = escortee;
+    s.gossipOption = startGossipOption;
+    s.escortDoneEntry = doneEntry;
+    s.escortDoneBit = doneBit;
+    s.escortStandoff = standoff;
+    s.escortThreatRadius = threatRadius;
+    s.zBand = threatZBand;
+    s.radius = searchRadius;
+    return *this;
+}
+
+EventBuilder& EventBuilder::DropInHole(float overX, float overY, float overZ,
+                                       float landX, float landY, float landZ)
+{
+    EventStep& s = Add(EventStepKind::DropInHole);
+    s.x = overX;
+    s.y = overY;
+    s.z = overZ;
+    s.landX = landX;
+    s.landY = landY;
+    s.landZ = landZ;
+    return *this;
+}
+
 // --- The event table ------------------------------------------------------
 // The rows themselves live one-file-per-dungeon under Data/Events/, each
 // exposing a Register<Dungeon>Events appender (declared in DungeonEventTables.h).

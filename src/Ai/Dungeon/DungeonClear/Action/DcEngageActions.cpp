@@ -21,6 +21,7 @@
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "Group.h"
+#include "InstanceScript.h"
 #include "Log.h"
 #include "LootMgr.h"
 #include "Map.h"
@@ -773,6 +774,245 @@ bool DungeonClearClearStalledAction::Execute(Event /*event*/)
     return EngageDirect(target);
 }
 
+namespace
+{
+    // --- EscortCreature (Wailing Caverns' Disciple of Naralex) helpers -------
+
+    // Friendly template faction the Disciple carries while IDLE at spawn (creature
+    // template 3678, faction 35). His SmartAI flips it to 250 the instant the
+    // gossip starts the escort, and back to 35 if he dies and respawns — so this
+    // is the single "needs (re)starting" signal the step keys self-heal on.
+    constexpr uint32 DC_ESCORT_IDLE_FACTION = 35;
+
+    // The escort owns the tick by FOLLOWING; these size that follow.
+    constexpr float DC_ESCORT_FOLLOW_ARRIVE = 3.0f;   // hold once within this of the slot
+    constexpr float DC_ESCORT_KEEPUP_SLACK = 10.0f;   // "keeping up" = within standoff+this
+    // Dead-air window: stall only after this long FAILING to keep up with the
+    // escortee (NOT a flat step timeout — a legitimate long pause keeps the tank
+    // parked right next to the escortee, which reads as "keeping up" and never
+    // trips this). Generous so a brief stutter never mis-fires.
+    constexpr uint32 DC_ESCORT_DEAD_AIR_MS = 15000;
+
+    // True once the escort's final boss exists (grid scan) or its encounter bit
+    // is set — mirrors the RunStep gate so the action and the gate agree.
+    bool EscortComplete(Player* bot, EventStep const& step)
+    {
+        if (step.escortDoneEntry &&
+            bot->FindNearestCreature(step.escortDoneEntry, 250.0f, /*alive*/ true))
+            return true;
+        if (step.escortDoneBit >= 0)
+        {
+            InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+            if (inst && (inst->GetCompletedEncounterMask() &
+                         (1u << static_cast<uint32>(step.escortDoneBit))))
+                return true;
+        }
+        return false;
+    }
+
+    // The threat to engage to protect the escortee, or nullptr: prefer a mob
+    // hitting him RIGHT NOW (the ambushes spawn on him, so it's co-located and
+    // safe to reach), else the nearest hostile in a TIGHT radius around him.
+    // Strict reachability + LOS before returning an attacker (the winding tunnels
+    // wedge a bare-proximity pick against a wall — the Uldaman Grimlok lesson);
+    // NearestHostileNearPoint already applies those filters for the scan path.
+    Unit* PickEscortThreat(Player* bot, AiObjectContext* ctx, Creature* escortee,
+                           EventStep const& step)
+    {
+        for (Unit* att : escortee->getAttackers())
+        {
+            if (!att || !att->IsAlive())
+                continue;
+            if (!bot->IsValidAttackTarget(att))
+                continue;
+            if (!DcEngageGeometry::IsEngageReachable(bot, att, /*requireDirect*/ true))
+                continue;
+            if (!bot->IsWithinLOSInMap(att))
+                continue;
+            return att;
+        }
+
+        float const r = step.escortThreatRadius > 0.0f ? step.escortThreatRadius : 18.0f;
+        return DcTargeting::NearestHostileNearPoint(bot, ctx, escortee->GetPositionX(),
+                                                    escortee->GetPositionY(),
+                                                    escortee->GetPositionZ(), r, step.zBand);
+    }
+
+    // Distance-to-escortee progress watchdog. While the tank is keeping up (close
+    // to the escortee) the clock resets and any stall clears; only sustained
+    // failure to keep up (the escortee ran off and the tank can't follow) trips a
+    // visible stall the player can `dc skip`. Auto-clears the moment it catches up.
+    void EscortWatchdog(PlayerbotAI* botAI, AiObjectContext* ctx,
+                        DungeonEventProgress& prog, uint32 now, bool keepingUp,
+                        std::string const& whom)
+    {
+        if (keepingUp || prog.escortProgressMs == 0)
+        {
+            prog.escortProgressMs = now;
+            ClearStall(ctx);
+            return;
+        }
+        if (static_cast<uint32>(now - prog.escortProgressMs) >= DC_ESCORT_DEAD_AIR_MS)
+            StallDungeonClear(botAI, "Escort stalled: I can't keep up with " + whom +
+                                         ". Clear my path and I'll continue, or `dc skip`.");
+    }
+}
+
+bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
+                                                       DungeonEventProgress& prog)
+{
+    uint32 const now = getMSTime();
+
+    // Final boss exists -> escort is over. Don't own the tick: the caller falls
+    // through to Drive, whose RunStep gate returns Done and latches the objective.
+    if (EscortComplete(bot, step))
+        return false;
+
+    float const searchR = step.radius > 0.0f ? step.radius : 80.0f;
+    Creature* escortee = bot->FindNearestCreature(step.creatureEntry, searchR, /*alive*/ true);
+
+    // Escortee absent (died and mid-respawn, or briefly out of the grid). Hold and
+    // let the watchdog flag a genuine never-returns stall; the start branch below
+    // re-runs the gossip once he reappears idle at spawn.
+    if (!escortee)
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        SetPhase(context, "escort");
+        EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ false, "the escort");
+        return true;
+    }
+
+    // (Re)start: idle at spawn (never started, or reset to idle after dying). Walk
+    // to gossip range and start his scripted escort. Folded into the step (not a
+    // separate step-0 Gossip) so a Persistent event — which never auto-rewinds to
+    // step 0 — still recovers when he dies mid-escort. Idempotent: once started his
+    // faction is 250 and this is skipped.
+    if (escortee->GetFaction() == DC_ESCORT_IDLE_FACTION)
+    {
+        SetPhase(context, "escort");
+        if (!bot->IsWithinDistInMap(escortee, 5.0f))
+        {
+            DcMoveTo(bot->GetMapId(), escortee->GetPositionX(), escortee->GetPositionY(),
+                     escortee->GetPositionZ(), /*idle*/ false, /*react*/ false,
+                     /*normal_only*/ false, /*exact_waypoint*/ false,
+                     MovementPriority::MOVEMENT_NORMAL);
+            EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ true, escortee->GetName());
+            return true;
+        }
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+        if (DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {} started the escort of {} (gossip option {})",
+                     bot->GetName(), escortee->GetName(), step.gossipOption);
+        prog.escortProgressMs = now;  // starting the escort IS progress
+        ClearStall(context);
+        return true;
+    }
+
+    // Threat engage: a mob attacking the escortee, else a tight scan around him.
+    // EngageDirect flips the tank to the combat engine; the followers then pile in
+    // via IsLeaderFightAssistWanted (fires on ANY party-member combat — no follower
+    // needs to be targeted, which is exactly why a non-party escortee can be
+    // defended at all).
+    if (Unit* threat = PickEscortThreat(bot, context, escortee, step))
+    {
+        DcMovement::ResolveEscortConflict(bot);
+        SetPhase(context, "escort");
+        prog.escortProgressMs = now;  // engaging a threat IS progress
+        ClearStall(context);
+        EngageDirect(threat);
+        return true;
+    }
+
+    // Else FOLLOW a slot behind the escortee (offset so the tank never blocks his
+    // movement spline). Metric-matched arrival + hysteresis: the "arrived?" test
+    // and the MoveTo target are the SAME slot point (the scout-lag lesson — a test
+    // and target on different metrics oscillate). Hold (don't shove) once parked
+    // within the slot, so a paused escortee isn't pushed off his waypoint.
+    float const standoff = step.escortStandoff > 0.0f ? step.escortStandoff : 5.0f;
+    float const o = escortee->GetOrientation();
+    float const fx = escortee->GetPositionX() - std::cos(o) * standoff;
+    float const fy = escortee->GetPositionY() - std::sin(o) * standoff;
+    float const fz = escortee->GetPositionZ();
+    float const toSlot = bot->GetExactDist(fx, fy, fz);
+
+    SetPhase(context, "escort");
+    if (toSlot > DC_ESCORT_FOLLOW_ARRIVE)
+        DcMoveTo(bot->GetMapId(), fx, fy, fz, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false,
+                 MovementPriority::MOVEMENT_NORMAL);
+    else
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+
+    bool const keepingUp = bot->GetExactDist(escortee) <= standoff + DC_ESCORT_KEEPUP_SLACK;
+    EscortWatchdog(botAI, context, prog, now, keepingUp, escortee->GetName());
+    return true;
+}
+
+bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
+{
+    if (!bot)
+        return false;
+
+    // Already down on the deep floor -> hand back. The caller drops through to
+    // Drive, whose RunStep gate pulls the stranded followers and latches Done.
+    if (DungeonEventExecutor::IsOnDropLanding(bot, step))
+        return false;
+
+    MotionMaster* mm = bot->GetMotionMaster();
+
+    // Mid-fall: the pure-vertical MoveFall is in flight (its EFFECT generator is
+    // still running). Let gravity finish — keep owning the tick so the at-objective
+    // Hold can't interrupt the descent. Test the GENERATOR, not MOVEMENTFLAG_FALLING
+    // (a server bot never clears that flag, so it would read "falling" forever).
+    bool const falling =
+        mm && mm->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE;
+    if (falling)
+        return true;
+
+    SetPhase(context, "objective");
+
+    // How close (2D) the leader must be to the over-hole nudge target before we
+    // commit the fall — tight, so the column below really is the open shaft (the
+    // landing X/Y), not the shelf or the mid-shaft ledge a yard short of it.
+    constexpr float DC_DROP_OVERHOLE_RADIUS = 2.5f;
+    float const overDist2d = bot->GetExactDist2d(step.x, step.y);
+
+    // Settled OVER the open hole-mouth at shelf height -> commit the drop. MoveFall
+    // searches straight down (vmap) and falls to the first floor it finds; because
+    // we are over the open shaft (not the lip), that floor is the deep water, not
+    // the intermediate ledge. Pure-vertical => no horizontal travel => no wall clip.
+    if (overDist2d <= DC_DROP_OVERHOLE_RADIUS && !bot->isMoving())
+    {
+        mm->MoveFall();
+        LOG_INFO("playerbots.dungeonclear",
+                 "[dungeon-clear] {} DropInHole: MoveFall from ({:.1f},{:.1f},{:.1f})",
+                 bot->GetName(), bot->GetPositionX(), bot->GetPositionY(),
+                 bot->GetPositionZ());
+        return true;
+    }
+
+    // Still on/at the lip. Glide OUT over the open hole-mouth with a raw spline:
+    // MoveSplinePath feeds the two points straight to an EscortMovementGenerator
+    // (no per-point navmesh path generation), so it leaves the mesh edge instead
+    // of clamping to it. The leg is a few yards of OPEN AIR above the shaft mouth
+    // (no wall there — it's the opening), held at shelf Z; the MoveFall above then
+    // takes over. Re-issue only when settled, so a launched glide isn't restarted.
+    if (!bot->isMoving())
+    {
+        Movement::PointsArray pts;
+        pts.push_back(G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(),
+                                   bot->GetPositionZ()));
+        pts.push_back(G3D::Vector3(step.x, step.y, step.z));
+        mm->MoveSplinePath(&pts, FORCED_MOVEMENT_NONE);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[dungeon-clear] {} DropInHole: glide to hole-mouth "
+                 "({:.1f},{:.1f},{:.1f})",
+                 bot->GetName(), step.x, step.y, step.z);
+    }
+    return true;
+}
+
 bool DcObjectiveArriveAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, "next dungeon boss");
@@ -834,6 +1074,26 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
                     SetPhase(context, "objective");
                     return EngageDirect(target);
                 }
+            }
+            // EscortCreature: the step OWNS the tick (follow the escortee + engage
+            // its attackers + self-heal gossip + watchdog) the whole way to the
+            // final boss. DriveEscortCreature returns false only once that boss
+            // exists, so we fall through to Drive and the completion gate latches.
+            else if (step.kind == EventStepKind::EscortCreature)
+            {
+                if (DriveEscortCreature(step, prog))
+                    return true;
+            }
+            // DropInHole: the step OWNS the tick while the leader glides out over
+            // the hole-mouth and falls. Returning here SKIPS the StopBot(Hold)
+            // below, which would otherwise cancel the off-mesh nudge spline every
+            // tick and pin the leader on the lip (the prior attempts' failure).
+            // DriveDropInHole returns false once landed, so we fall through to
+            // Drive and RunStep's gate pulls the followers down + latches Done.
+            else if (step.kind == EventStepKind::DropInHole)
+            {
+                if (DriveDropInHole(step))
+                    return true;
             }
         }
     }

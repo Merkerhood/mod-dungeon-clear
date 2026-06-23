@@ -17,6 +17,8 @@ class PlayerbotAI;
 class Unit;
 class Creature;
 struct DungeonBossInfo;
+struct EventStep;
+struct DungeonEventProgress;
 
 // Thin MovementAction subclass that every movement-issuing DC action derives
 // from (directly or transitively). It exists for one reason: to expose the
@@ -78,6 +80,27 @@ protected:
     // engage handshake (the pull-idle room-clear branch); EngageDirect consumers
     // get the skirt for free via EngageDirect itself.
     bool MoveToSkirtingRoomAggro(Unit* target, MovementPriority prio);
+
+    // Drive an EscortCreature step (Wailing Caverns' Disciple of Naralex): START
+    // its scripted escort via gossip, then each tick FOLLOW the escortee and
+    // ENGAGE whatever attacks it (the entire reason for the step — mod-playerbots
+    // gives a bot no threat event when only a non-party escortee is hit). Self-
+    // heals if the escortee dies and resets to idle; auto-stalls on prolonged
+    // dead air (its own watchdog, since at-objective preempts the normal stall
+    // recovery and a flat timeout would mis-fire during the long banish/ritual
+    // channels). Returns true while the escort OWNS the tick; false once the
+    // final boss exists, so the caller falls through to Drive and the step's
+    // completion gate latches the objective. `prog` carries the watchdog clock.
+    bool DriveEscortCreature(EventStep const& step, DungeonEventProgress& prog);
+
+    // Drive a DropInHole step (Wailing Caverns' return-fall off Verdan's shelf):
+    // glide the leader a few yards OUT over the open hole-mouth with a raw spline
+    // (a MovePoint would clamp it back onto the shelf edge), then MoveFall() it
+    // pure-vertical into the water below. Owns the tick (returns true) the whole
+    // way down so the at-objective Hold can't cancel the off-mesh nudge spline;
+    // returns false once the leader is on the deep floor, so the caller falls
+    // through to Drive and RunStep's gate pulls the followers down + latches.
+    bool DriveDropInHole(EventStep const& step);
 };
 
 class DungeonClearAdvanceAction : public DcMovementAction
