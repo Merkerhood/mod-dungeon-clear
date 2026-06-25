@@ -188,6 +188,35 @@ TEST(BossRosterRegistryTest, ZfFullClearOrder)
     EXPECT_EQ(BossOrderKey(*Find(out, 7267)), 5u);
 }
 
+// Hellfire Ramparts (543): the auto-derived list ends at Omor because the final
+// boss's credit creature, Vazruden (17537), is a TempSummon with no DB spawn so
+// BossSpawnIndex never emits it. The patch adds it explicitly at the lower
+// platform with DBC kill-bit 2 (set directly — there is no base entry to inherit
+// from), so the run does not stop one boss short.
+TEST(BossRosterRegistryTest, HellfireRampartsAddsFinalBoss)
+{
+    // Auto-derived list as BossSpawnIndex emits it (only the two spawned bosses).
+    std::vector<DungeonBossInfo> base = {
+        Boss(17306, 0, "Watchkeeper Gargolmar", 543),
+        Boss(17308, 1, "Omor the Unscarred", 543),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(543, base);
+
+    DungeonBossInfo const* vaz = Find(out, 17537);
+    ASSERT_NE(vaz, nullptr) << "Vazruden must be injected";
+    EXPECT_EQ(vaz->kind, DungeonAnchorKind::Boss);
+    EXPECT_EQ(vaz->encounterIndex, 2u);  // DBC bit 2, the final encounter
+    EXPECT_EQ(vaz->inheritCompletionFrom, 0u);  // set directly, not inherited
+    EXPECT_FLOAT_EQ(vaz->x, -1378.0f);
+    EXPECT_FLOAT_EQ(vaz->y, 1718.0f);
+
+    // Sorted last, after Gargolmar (0) and Omor (1).
+    ASSERT_EQ(out.size(), 3u);
+    EXPECT_EQ(out[0].entry, 17306u);
+    EXPECT_EQ(out[1].entry, 17308u);
+    EXPECT_EQ(out[2].entry, 17537u);
+}
+
 // Stratholme dead side: the DBC puts the ziggurats (Baroness 7, Nerub'enkan 8,
 // Maleki 9) before Magistrate Barthilas (10), but the path runs Barthilas FIRST.
 // The patch re-adds Barthilas with orderOverride 6 (keeping kill-bit 10) so the

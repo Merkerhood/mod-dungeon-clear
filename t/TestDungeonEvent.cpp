@@ -719,6 +719,34 @@ TEST(DungeonEventConditional, UldamanIronayaSeal)
     EXPECT_FALSE(DungeonEventRegistry::HasRoomAggroEvent(70));
 }
 
+// Hellfire Ramparts (543): the "Approach Vazruden" event — a CONDITIONAL +
+// REPEATABLE single MoveTo that walks the tank onto the lower platform between
+// the two Hellfire Sentries, whose deaths fly the summoned final boss down.
+// Same summon-boss shape as RFD's "Approach Tuten'kash": the real boss (17537)
+// is a TempSummon invisible to the live-boss spawn-store scan, so the repeatable
+// MoveTo holds the tank on the trigger until aggro lands. Folded under Vazruden
+// in the panel.
+TEST(DungeonEventConditional, HellfireRampartsApproachVazruden)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(543, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Conditional);
+    EXPECT_EQ(e->conditionId, 16u);
+    EXPECT_TRUE(EventConditionRegistry::Has(16u));
+    EXPECT_TRUE(e->repeatable);
+    EXPECT_EQ(e->panelGatesBossEntry, 17537u);  // folded under Vazruden
+
+    ASSERT_EQ(e->steps.size(), 1u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(e->steps[0].x, -1378.0f);
+    EXPECT_FLOAT_EQ(e->steps[0].y, 1718.0f);
+    EXPECT_FLOAT_EQ(e->steps[0].radius, 6.0f);
+
+    // It is the map's only conditional event, and not a room-aggro pre-clear.
+    EXPECT_EQ(DungeonEventRegistry::Conditional(543).size(), 1u);
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*e));
+}
+
 // Uldaman (70): the Altar of the Keepers — an ANCHORED event on roster objective
 // OBJ(1). Boss-nav delivers the tank into the hall; the event clears the live
 // trash (Stewards / Earthen), centres on the altar, fires the SEND_EVENT to
