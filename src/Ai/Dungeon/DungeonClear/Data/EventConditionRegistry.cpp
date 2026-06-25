@@ -28,6 +28,7 @@ namespace
             RegisterStratholmeConditions(m);
             RegisterUldamanConditions(m);
             RegisterDireMaulConditions(m);
+            RegisterHellfireRampartsConditions(m);
             return m;
         }();
         return kConditions;

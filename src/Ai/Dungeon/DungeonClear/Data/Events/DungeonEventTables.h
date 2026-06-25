@@ -56,7 +56,10 @@
 //  13  Dire Maul North  — Gordok Inner Door (on-path; click to open)
 //  14  Dire Maul West   — Crescent Key Door, lower (on-path; click to open)
 //  15  Dire Maul West   — Crescent Key Door, upper (on-path; click to open)
-//   -- next free: 16 (9 and 10 may be reused)
+//  16  Hellfire Ramparts— approach Vazruden (walk onto the platform between the
+//                         two Hellfire Sentries; killing them flies the summoned
+//                         boss down, who has no static spawn)
+//   -- next free: 17 (9 and 10 may be reused)
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 
@@ -73,6 +76,7 @@ void RegisterStratholmeEvents(std::vector<DungeonEvent>& out);
 void RegisterUldamanEvents(std::vector<DungeonEvent>& out);
 void RegisterScholomanceEvents(std::vector<DungeonEvent>& out);
 void RegisterDireMaulEvents(std::vector<DungeonEvent>& out);
+void RegisterHellfireRampartsEvents(std::vector<DungeonEvent>& out);
 
 // --- activation conditions (only for dungeons with Conditional events) ----
 void RegisterSharedEventConditions(EventConditionMap& out);
@@ -81,5 +85,6 @@ void RegisterRazorfenDownsConditions(EventConditionMap& out);
 void RegisterStratholmeConditions(EventConditionMap& out);
 void RegisterUldamanConditions(EventConditionMap& out);
 void RegisterDireMaulConditions(EventConditionMap& out);
+void RegisterHellfireRampartsConditions(EventConditionMap& out);
 
 #endif
