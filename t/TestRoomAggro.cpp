@@ -17,6 +17,40 @@ TEST(RoomAggroRegistryTest, FindsFlaggedBoss)
     EXPECT_FLOAT_EQ(b->radius, 70.0f);
 }
 
+// Pandemonius mirrors boss_pandemonius::PullRoom(): the three room-add entries
+// AND the ROOM_EXIT(-145) < Y < ROOM_ENTERANCE(-50) corridor. The Y band keeps
+// the room-clear off the adds standing behind him toward Tavarok (Y <= -145),
+// which the script never force-pulls.
+TEST(RoomAggroRegistryTest, PandemoniusHasRoomAddWhitelistAndYBand)
+{
+    RoomAggroBoss const* b = RoomAggroRegistry::Find(557, 18341);
+    ASSERT_NE(b, nullptr);
+    EXPECT_EQ(b->memberEntries,
+              (std::vector<uint32>{18309, 18311, 18313}));
+    ASSERT_TRUE(b->hasYBand);
+    EXPECT_FLOAT_EQ(b->minY, -145.0f);
+    EXPECT_FLOAT_EQ(b->maxY, -50.0f);
+
+    // An add in the corridor is room trash; the same add behind the boss
+    // (Y <= -145) or in front of the entrance (Y >= -50) is outside the pull.
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(*b, -97.0f));   // mid-room
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, -160.0f)); // behind, toward Tavarok
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, -30.0f));  // in front of the room
+    // Strict bounds, matching the script's < / > guards.
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, -145.0f));
+    EXPECT_FALSE(RoomAggroRegistry::InRoomBand(*b, -50.0f));
+}
+
+// A boss with no Y band (every row but Pandemonius) admits any world Y.
+TEST(RoomAggroRegistryTest, NoYBandAdmitsAnyWorldY)
+{
+    RoomAggroBoss boss{555, 18667, 100.0f, {}};  // Blackheart — no band
+    ASSERT_FALSE(boss.hasYBand);
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(boss, 0.0f));
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(boss, -9999.0f));
+    EXPECT_TRUE(RoomAggroRegistry::InRoomBand(boss, 9999.0f));
+}
+
 TEST(RoomAggroRegistryTest, UnflaggedBossReturnsNull)
 {
     // Right map, wrong entry.

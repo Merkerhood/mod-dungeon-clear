@@ -62,7 +62,15 @@ namespace
 
         { 555, 18667, 100.0f, {} }, // Shadow Labyrinth — Blackheart the Inciter
         { 109, 5710,   90.0f, {} }, // Sunken Temple — Jammal'an the Prophet
-        { 557, 18341,  70.0f, {} }, // Mana-Tombs — Pandemonius
+        // Mana-Tombs — Pandemonius. boss_pandemonius::PullRoom() gathers the three
+        // room adds within ROOM_PULL_RANGE(70) but force-pulls ONLY those with
+        // ROOM_EXIT(-145) < Y < ROOM_ENTERANCE(-50): the Scavengers/Crypt
+        // Raiders/Sorcerers BEHIND him (toward Tavarok, Y <= -145) never join the
+        // fight. Mirror that exactly — entry whitelist + the Y corridor — or the
+        // room-clear fixates on the unreachable behind-the-boss adds, orbits him,
+        // and burns the full RoomClearTimeout before giving up (live: kept=2..7
+        // flickering on 18309/18311/18313, far=108+, never 0).
+        { 557, 18341, 70.0f, { 18309, 18311, 18313 }, true, -145.0f, -50.0f },
         { 601, 28684,  40.0f, {} }, // Azjol-Nerub — Krik'thir the Gatewatcher
         { 230, 9019,  166.0f, {} }, // Blackrock Depths — Emperor Dagran Thaurissan
         { 429, 14354,  50.0f, {} }, // Dire Maul East — Pusillin
@@ -106,6 +114,13 @@ bool RoomAggroRegistry::IsMemberEntry(RoomAggroBoss const& boss, uint32 entry)
         return true;
     return std::find(boss.memberEntries.begin(), boss.memberEntries.end(), entry) !=
            boss.memberEntries.end();
+}
+
+bool RoomAggroRegistry::InRoomBand(RoomAggroBoss const& boss, float worldY)
+{
+    if (!boss.hasYBand)
+        return true;
+    return worldY > boss.minY && worldY < boss.maxY;
 }
 
 bool RoomAggroRegistry::IsRoomTrash(RoomAggroBoss const& boss, uint32 entry,
