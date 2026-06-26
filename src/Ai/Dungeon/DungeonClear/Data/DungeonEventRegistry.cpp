@@ -307,6 +307,7 @@ namespace
             RegisterScholomanceEvents(t);
             RegisterDireMaulEvents(t);
             RegisterHellfireRampartsEvents(t);
+            RegisterBloodFurnaceEvents(t);
             return t;
         }();
         return kEvents;

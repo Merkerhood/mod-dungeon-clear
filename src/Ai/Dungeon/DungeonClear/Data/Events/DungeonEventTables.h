@@ -59,7 +59,10 @@
 //  16  Hellfire Ramparts— approach Vazruden (walk onto the platform between the
 //                         two Hellfire Sentries; killing them flies the summoned
 //                         boss down, who has no static spawn)
-//   -- next free: 17 (9 and 10 may be reused)
+//  17  Blood Furnace    — pull Broggok's Cell Door Lever (start the wave event)
+//  18  Blood Furnace    — hold at the lever through the four cell waves until the
+//                         rear gate opens and Broggok becomes attackable
+//   -- next free: 19 (9 and 10 may be reused)
 using EventConditionMap =
     std::unordered_map<uint32, EventConditionRegistry::Condition>;
 
@@ -77,6 +80,7 @@ void RegisterUldamanEvents(std::vector<DungeonEvent>& out);
 void RegisterScholomanceEvents(std::vector<DungeonEvent>& out);
 void RegisterDireMaulEvents(std::vector<DungeonEvent>& out);
 void RegisterHellfireRampartsEvents(std::vector<DungeonEvent>& out);
+void RegisterBloodFurnaceEvents(std::vector<DungeonEvent>& out);
 
 // --- activation conditions (only for dungeons with Conditional events) ----
 void RegisterSharedEventConditions(EventConditionMap& out);
@@ -86,5 +90,6 @@ void RegisterStratholmeConditions(EventConditionMap& out);
 void RegisterUldamanConditions(EventConditionMap& out);
 void RegisterDireMaulConditions(EventConditionMap& out);
 void RegisterHellfireRampartsConditions(EventConditionMap& out);
+void RegisterBloodFurnaceConditions(EventConditionMap& out);
 
 #endif
