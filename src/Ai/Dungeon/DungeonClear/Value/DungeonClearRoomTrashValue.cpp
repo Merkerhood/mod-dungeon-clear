@@ -134,7 +134,8 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
     // a premature "room clear" (set empties while trash is alive, opening the boss
     // gate) names the exact filter that dropped the last candidates.
     uint32 nCand = 0, exDead = 0, exHostile = 0, exTarget = 0, exBossEntry = 0,
-           exRoomPartner = 0, exSphere = 0, exReach = 0, exDoor = 0, exFar = 0;
+           exRoomPartner = 0, exSphere = 0, exReach = 0, exDoor = 0, exFar = 0,
+           exBand = 0;
 
     // Diagnostic histograms: every live candidate within the room radius, bucketed
     // by entry and hostility, so a live "kept=0" names EXACTLY which entries sit
@@ -215,6 +216,18 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
             continue;
         }
 
+        // Some scripts only force-pull adds inside a fixed world-Y corridor, not
+        // the whole radius-sphere (Pandemonius: ROOM_EXIT < Y < ROOM_ENTERANCE —
+        // the adds standing BEHIND him toward the next boss are never pulled). For
+        // those rooms, an add outside the band is not part of the pull and must NOT
+        // be chased: keeping it makes the tank orbit the boss after an unreachable
+        // straggler until the timeout fires. No band -> every Y qualifies.
+        if (!RoomAggroRegistry::InRoomBand(*room, u->GetPositionY()))
+        {
+            ++exBand;
+            continue;
+        }
+
         float const distToBoss = liveBoss->GetExactDist(u);
         if (!RoomAggroRegistry::IsRoomTrash(*room, u->GetEntry(), distToBoss, bossSafe))
         {
@@ -278,13 +291,13 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
 
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] room-trash {}: kept={} of cand={} (boss {} r={:.1f} "
-                 "sphere={:.1f} atBoss={}) excl: far={} sphere={} door={} reach={} "
-                 "partner={} bossEntry={} dead={} hostile={} target={} | "
+                 "sphere={:.1f} atBoss={}) excl: far={} band={} sphere={} door={} "
+                 "reach={} partner={} bossEntry={} dead={} hostile={} target={} | "
                  "near[H]: {} | near[N]: {}",
                  bot->GetName(), next->name, out.size(), nCand, room->bossEntry,
-                 room->radius, bossSafe, atBossNow ? 1 : 0, exFar, exSphere, exDoor,
-                 exReach, exRoomPartner, exBossEntry, exDead, exHostile, exTarget,
-                 histStr(diagHostileNear), histStr(diagNeutralNear));
+                 room->radius, bossSafe, atBossNow ? 1 : 0, exFar, exBand, exSphere,
+                 exDoor, exReach, exRoomPartner, exBossEntry, exDead, exHostile,
+                 exTarget, histStr(diagHostileNear), histStr(diagNeutralNear));
     }
 
     // No-progress give-up valve: if the remaining count hasn't DROPPED within
