@@ -88,6 +88,24 @@ enum class EventStepKind : uint8
                              // gates Done once the leader is on the deep floor.
                              // Anchored+Persistent (the drop is one-way — like the
                              // Serpentis Jump, the bot can't path back up).
+    TeleportParty,           // TELEPORT the whole party (leader + every bot) across a
+                             // navmesh break to a fixed landing, once the leader has
+                             // reached the checkpoint the anchor navigation walked it
+                             // to. For a one-way DIAGONAL drop where the checkpoint and
+                             // landing sit on disconnected mesh islands and the
+                             // horizontal offset rules out both a pure-vertical
+                             // DropInHole (it would fall in the wrong column) and a
+                             // ballistic Jump (big diagonal drops clip/overshoot — the
+                             // source of past drop-down grief). User-sanctioned blunt
+                             // instrument: nobody glides or falls, everyone is simply
+                             // relocated. `x,y,z` is the checkpoint the leader must
+                             // reach; `landX,landY,landZ` the landing. Fully synchronous
+                             // — one RunStep teleports the leader, pulls every follower
+                             // across (PullStrandedFollowersAcross), and returns Done, so
+                             // no action driver is needed (unlike DropInHole). Idempotent:
+                             // Done immediately if the leader is already on the landing,
+                             // so a tick-gap restart never re-teleports. Anchored only
+                             // (one-way — the bot can't path back up).
 };
 
 // One typed primitive. Fields are a shared bag — only those relevant to `kind`
@@ -375,6 +393,15 @@ public:
     // Jump's MoveTo→Jump pair.
     EventBuilder& DropInHole(float overX, float overY, float overZ,
                              float landX, float landY, float landZ);
+    // Teleport the whole party across a navmesh break (see
+    // EventStepKind::TeleportParty). (checkpointX,Y,Z) is the spot the leader must
+    // reach — the objective anchor's navigation drives it there up the ramp; once
+    // there (within `radius`), the leader and every party bot are relocated to
+    // (landX,Y,Z). `radius` defaults generous so the objective arrival always
+    // satisfies the gate (no mid-ramp teleport, no stutter-step closing move).
+    EventBuilder& TeleportParty(float checkpointX, float checkpointY, float checkpointZ,
+                                float landX, float landY, float landZ,
+                                float radius = 12.0f);
 
     DungeonEvent Build() const { return _ev; }
 

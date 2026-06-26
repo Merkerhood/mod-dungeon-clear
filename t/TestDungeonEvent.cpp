@@ -573,6 +573,38 @@ TEST(DungeonEventRegistryTest, WailingCavernsReturnFallEventShape)
     EXPECT_FLOAT_EQ(drop.landZ, -105.83f);
 }
 
+// The Slave Pens (547) post-Mennu drop: a single TeleportParty step that
+// relocates the whole party across a one-way navmesh break (ramp ledge -> lower
+// level). Anchored on the ledge objective, NOT persistent (the teleport is one
+// synchronous tick, idempotent on restart). x/y/z is the ledge checkpoint;
+// landX/Y/Z the lower landing the party is teleported to.
+TEST(DungeonEventRegistryTest, SlavePensDropDownEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(547, 1);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Anchored);
+    EXPECT_EQ(e->orderIndex, 1u);  // between Mennu (bit 0) and Rokmar (bit 1)
+    EXPECT_FALSE(e->persistent);
+    EXPECT_TRUE(e->required);
+
+    ASSERT_EQ(e->steps.size(), 1u);
+    EventStep const& tp = e->steps[0];
+    EXPECT_EQ(tp.kind, EventStepKind::TeleportParty);
+    EXPECT_FLOAT_EQ(tp.x, -186.52f);
+    EXPECT_FLOAT_EQ(tp.y, -412.79f);
+    EXPECT_FLOAT_EQ(tp.z, 55.32f);
+    EXPECT_FLOAT_EQ(tp.landX, -209.02f);
+    EXPECT_FLOAT_EQ(tp.landY, -384.32f);
+    EXPECT_FLOAT_EQ(tp.landZ, 8.53f);
+    // Gate radius is generous so the objective arrival always satisfies it (no
+    // mid-ramp teleport). Must comfortably exceed the objective's 6yd arrive
+    // radius.
+    EXPECT_GT(tp.radius, 6.0f);
+
+    // Anchored, so it is not in the map's conditional set.
+    EXPECT_TRUE(DungeonEventRegistry::Conditional(547).empty());
+}
+
 // Stratholme (329) dead-side "Baron run": the persistent Slaughterhouse chain
 // (eventId 4), anchored at Ramstein's DBC bit 11 (after the ziggurats + Barthilas,
 // before Baron 12). Abominations+Ramstein (one ClearRadius) -> wait+clear undead

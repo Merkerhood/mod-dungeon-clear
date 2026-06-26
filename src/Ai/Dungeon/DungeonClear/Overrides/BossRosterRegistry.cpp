@@ -821,6 +821,38 @@ namespace
                 t.push_back(std::move(p));
             }
 
+            // --- The Slave Pens (map 547) --------------------------------
+            // The auto-roster derives all three bosses (Mennu 17941 / bit 0,
+            // Rokmar 17991 / bit 1, Quagmirran 17942 / bit 2) from their static
+            // spawns, so no boss surgery is needed. But the path from Mennu to
+            // Rokmar crosses a navmesh BREAK: the party climbs a ramp to a ledge
+            // (-186.52, -412.79, 55.32) and must drop ~47yd down to
+            // (-209.02, -384.32, 8.53), which sits on a disconnected mesh island
+            // boss-nav can't route to.
+            //
+            // Add a travel OBJECTIVE at the ledge, ordered between Mennu and
+            // Rokmar. It borrows encounterIndex 1 (Rokmar's bit): the
+            // Objective-before-Boss tie-break in Apply() sorts it AHEAD of Rokmar
+            // at the shared key, so after Mennu (bit 0) the tank visits this
+            // objective and only then Rokmar. Sharing the bit is safe — an
+            // objective is filtered by the cleared-anchor latch, never the
+            // completion mask (NextDungeonBossValue keys the mask to Boss anchors
+            // only), so Rokmar's eventual kill can't retro-complete it. Its
+            // eventId 1 (SlavePensEvents.cpp) teleports the whole party across the
+            // break the instant the tank reaches the ledge.
+            {
+                BossRosterPatch p;
+                p.mapId = 547;
+                p.add = {
+                    MakeObjective(OBJ(1), /*encounterIndex*/ 1, 547,
+                                  "Drop down past Mennu",
+                                  -186.52f, -412.79f, 55.32f,
+                                  /*arriveRadius*/ 6.0f, /*gateEntry*/ 0,
+                                  /*hook*/ 0, /*eventId*/ 1),
+                };
+                t.push_back(std::move(p));
+            }
+
             return t;
         }();
         return kPatches;

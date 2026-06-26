@@ -45,6 +45,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(289));   // Scholomance
     EXPECT_TRUE(BossRosterRegistry::HasPatch(429));   // Dire Maul East
     EXPECT_TRUE(BossRosterRegistry::HasPatch(70));    // Uldaman — altar objectives
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(547));   // Slave Pens — drop objective
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -334,6 +335,40 @@ TEST(BossRosterRegistryTest, IronCladDoorSortsBetweenGilnidAndMrSmite)
     EXPECT_LT(doorIdx, smiteIdx) << "cannon must precede Mr. Smite";
     EXPECT_EQ(out[doorIdx].encounterIndex, 3u);
     EXPECT_EQ(out[doorIdx].eventId, 1u);
+}
+
+// The Slave Pens (547): the post-Mennu drop-down objective shares Rokmar's bit
+// (1); the objective-before-boss tie-break must order it after Mennu (bit 0) and
+// before Rokmar, so the party is teleported across the navmesh break before
+// boss-nav routes to Rokmar. (No boss surgery — all three bosses auto-derive.)
+TEST(BossRosterRegistryTest, SlavePensDropSortsBetweenMennuAndRokmar)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(17941, 0, "Mennu the Betrayer", 547),
+        Boss(17991, 1, "Rokmar the Crackler", 547),
+        Boss(17942, 2, "Quagmirran", 547),
+    };
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(547, base);
+
+    int mennuIdx = -1, dropIdx = -1, rokmarIdx = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 17941)
+            mennuIdx = i;
+        if (out[i].kind == DungeonAnchorKind::Objective)
+            dropIdx = i;
+        if (out[i].entry == 17991)
+            rokmarIdx = i;
+    }
+    ASSERT_GE(dropIdx, 0) << "drop-down objective missing";
+    ASSERT_GE(mennuIdx, 0);
+    ASSERT_GE(rokmarIdx, 0);
+    EXPECT_LT(mennuIdx, dropIdx) << "drop must follow Mennu";
+    EXPECT_LT(dropIdx, rokmarIdx) << "drop must precede Rokmar";
+    EXPECT_EQ(out[dropIdx].encounterIndex, 1u);
+    EXPECT_EQ(out[dropIdx].eventId, 1u);
+    // The three real bosses survive untouched (no remove/re-add).
+    EXPECT_NE(Find(out, 17942), nullptr) << "Quagmirran must remain";
 }
 
 // Dire Maul East: the Ironbark / Conservatory Door objective (orderOverride 40,
