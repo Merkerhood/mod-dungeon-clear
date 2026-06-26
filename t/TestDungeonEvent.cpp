@@ -747,6 +747,46 @@ TEST(DungeonEventConditional, HellfireRampartsApproachVazruden)
     EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*e));
 }
 
+// Blood Furnace (542): Broggok's cell-door event — two CONDITIONAL + REPEATABLE
+// events. Event 1 (condition 17) Use()s the "Cell Door Lever" once boss-nav has
+// parked the tank by it, starting the four cell waves; event 2 (condition 18)
+// holds the tank at the lever spot through the waves until the rear gate opens
+// and Broggok becomes attackable. Both folded under Broggok in the panel.
+TEST(DungeonEventConditional, BloodFurnaceBroggokCellDoor)
+{
+    DungeonEvent const* lever = DungeonEventRegistry::Find(542, 1);
+    ASSERT_NE(lever, nullptr);
+    EXPECT_EQ(lever->activation, EventActivation::Conditional);
+    EXPECT_EQ(lever->conditionId, 17u);
+    EXPECT_TRUE(EventConditionRegistry::Has(17u));
+    EXPECT_TRUE(lever->repeatable);
+    EXPECT_EQ(lever->panelGatesBossEntry, 17380u);   // folded under Broggok
+
+    ASSERT_EQ(lever->steps.size(), 1u);
+    EXPECT_EQ(lever->steps[0].kind, EventStepKind::UseGameObject);
+    EXPECT_EQ(lever->steps[0].goEntry, 181982u);     // Cell Door Lever
+    EXPECT_FLOAT_EQ(lever->steps[0].radius, 35.0f);
+
+    DungeonEvent const* hold = DungeonEventRegistry::Find(542, 2);
+    ASSERT_NE(hold, nullptr);
+    EXPECT_EQ(hold->activation, EventActivation::Conditional);
+    EXPECT_EQ(hold->conditionId, 18u);
+    EXPECT_TRUE(EventConditionRegistry::Has(18u));
+    EXPECT_TRUE(hold->repeatable);
+    EXPECT_EQ(hold->panelGatesBossEntry, 17380u);    // folded under Broggok
+
+    ASSERT_EQ(hold->steps.size(), 1u);
+    EXPECT_EQ(hold->steps[0].kind, EventStepKind::MoveTo);
+    EXPECT_FLOAT_EQ(hold->steps[0].x, 456.56f);
+    EXPECT_FLOAT_EQ(hold->steps[0].y, 54.35f);
+    EXPECT_FLOAT_EQ(hold->steps[0].radius, 6.0f);
+
+    // Two conditional events on the map, neither a room-aggro pre-clear.
+    EXPECT_EQ(DungeonEventRegistry::Conditional(542).size(), 2u);
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*lever));
+    EXPECT_FALSE(DungeonEventRegistry::IsRoomAggroPreClear(*hold));
+}
+
 // Uldaman (70): the Altar of the Keepers — an ANCHORED event on roster objective
 // OBJ(1). Boss-nav delivers the tank into the hall; the event clears the live
 // trash (Stewards / Earthen), centres on the altar, fires the SEND_EVENT to

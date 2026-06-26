@@ -29,6 +29,7 @@ namespace
             RegisterUldamanConditions(m);
             RegisterDireMaulConditions(m);
             RegisterHellfireRampartsConditions(m);
+            RegisterBloodFurnaceConditions(m);
             return m;
         }();
         return kConditions;
