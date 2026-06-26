@@ -275,6 +275,21 @@ EventBuilder& EventBuilder::DropInHole(float overX, float overY, float overZ,
     return *this;
 }
 
+EventBuilder& EventBuilder::TeleportParty(float checkpointX, float checkpointY,
+                                          float checkpointZ, float landX, float landY,
+                                          float landZ, float radius)
+{
+    EventStep& s = Add(EventStepKind::TeleportParty);
+    s.x = checkpointX;
+    s.y = checkpointY;
+    s.z = checkpointZ;
+    s.landX = landX;
+    s.landY = landY;
+    s.landZ = landZ;
+    s.radius = radius;
+    return *this;
+}
+
 // --- The event table ------------------------------------------------------
 // The rows themselves live one-file-per-dungeon under Data/Events/, each
 // exposing a Register<Dungeon>Events appender (declared in DungeonEventTables.h).
@@ -308,6 +323,7 @@ namespace
             RegisterDireMaulEvents(t);
             RegisterHellfireRampartsEvents(t);
             RegisterBloodFurnaceEvents(t);
+            RegisterSlavePensEvents(t);
             return t;
         }();
         return kEvents;

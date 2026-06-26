@@ -95,16 +95,21 @@ namespace
             if (member->GetExactDist(lx, ly, lz) <= DC_JUMP_STRANDED_DIST)
                 continue;                   // already across
 
-            // Land them ON the tank (solid ground it just reached), fanned out a
-            // little so they don't stack on one point. Drop any stale follow
-            // spline first so it can't drag them back toward the lip.
+            // Land them ON the landing, fanned out a little so they don't stack on
+            // one point. Fan around the explicit (lx,ly,lz) rather than the leader's
+            // live position: a TeleportParty leader is relocated by a NearTeleportTo
+            // whose position update can lag a tick (pending ack), so reading its live
+            // coords could scatter the followers back at the checkpoint. (For Jump /
+            // DropInHole the leader is already physically on the landing, so this is
+            // the same point.) Drop any stale follow spline first so it can't drag
+            // them back toward the lip.
             float const angle = leader->GetOrientation() + static_cast<float>(idx) * 0.7f;
             float const off = 1.5f + 0.5f * static_cast<float>(idx);
-            float const tx = leader->GetPositionX() + std::cos(angle) * off;
-            float const ty = leader->GetPositionY() + std::sin(angle) * off;
+            float const tx = lx + std::cos(angle) * off;
+            float const ty = ly + std::sin(angle) * off;
 
             member->GetMotionMaster()->Clear();
-            member->NearTeleportTo(tx, ty, leader->GetPositionZ(), member->GetOrientation(),
+            member->NearTeleportTo(tx, ty, lz, member->GetOrientation(),
                                    /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
             ++idx;
 
@@ -460,6 +465,41 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 bot->NearTeleportTo(step.landX, step.landY, step.landZ,
                                     bot->GetOrientation());
             PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
+            return StepResult::Done;
+        }
+
+        case EventStepKind::TeleportParty:
+        {
+            // User-sanctioned one-way relocation across a navmesh break the bots
+            // cannot path (a big DIAGONAL drop: a pure-vertical DropInHole would land
+            // in the wrong column and a ballistic Jump clips/overshoots). The
+            // objective anchor's navigation walks the leader up the ramp to the
+            // checkpoint; once there, teleport the leader down to the landing and pull
+            // every party bot across to it. Fully synchronous — no action driver, no
+            // mid-fall tick ownership — so it returns Done the same tick it fires.
+            float const radius = step.radius > 0.0f ? step.radius : DC_EVENT_MOVE_RADIUS;
+            // Idempotent: already on the landing (a tick-gap restart before the
+            // objective latched) -> re-pull any straggler and report Done, never
+            // re-teleport the leader.
+            if (bot->GetExactDist(step.landX, step.landY, step.landZ) <= radius)
+            {
+                PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
+                return StepResult::Done;
+            }
+            // The at-objective Hold keeps the leader on the checkpoint; with a
+            // generous gate radius the objective's own arrival always satisfies this,
+            // so the teleport never fires from mid-ramp. (Reached only if combat
+            // somehow displaced the leader; wait for it to settle back.)
+            if (bot->GetExactDist(step.x, step.y, step.z) > radius)
+                return StepResult::Running;
+            bot->GetMotionMaster()->Clear();
+            bot->NearTeleportTo(step.landX, step.landY, step.landZ, bot->GetOrientation());
+            PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[dungeon-clear] {} TeleportParty: ({:.1f},{:.1f},{:.1f}) -> "
+                      "landing ({:.1f},{:.1f},{:.1f})",
+                      bot->GetName(), step.x, step.y, step.z,
+                      step.landX, step.landY, step.landZ);
             return StepResult::Done;
         }
 
