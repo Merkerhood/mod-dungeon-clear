@@ -164,8 +164,25 @@ public:
     DungeonClearAddonHookScript()
         : PlayerScript("DungeonClearAddonHookScript", {
             PLAYERHOOK_ON_BEFORE_SEND_CHAT_MESSAGE,
+            PLAYERHOOK_CAN_PLAYER_USE_GROUP_CHAT,
             PLAYERHOOK_ON_LOGOUT
         }) {}
+
+    // True for the addon's client->server control messages, which ride in as a
+    // party/raid addon chat line of the form "DC\tCMD\t<sub>[\t<param>]". Shared
+    // by the parse hook (OnPlayerBeforeSendChatMessage, which acts on them) and
+    // the relay-block hook (OnPlayerCanUseChat, which stops the core forwarding
+    // them to the rest of the group).
+    static bool IsDcAddonCommand(uint32 type, uint32 lang, std::string const& msg)
+    {
+        if (lang != LANG_ADDON)
+            return false;
+        if (type != CHAT_MSG_PARTY && type != CHAT_MSG_PARTY_LEADER &&
+            type != CHAT_MSG_RAID && type != CHAT_MSG_RAID_LEADER)
+            return false;
+        // "DC\t" (3) + "CMD\t" (4) = 7-byte prefix.
+        return msg.compare(0, 7, "DC\tCMD\t") == 0;
+    }
 
     // Per-run overrides are keyed by the leader tank's GUID; drop them when that
     // player logs out so stale leader GUIDs don't accumulate. A no-op for any
@@ -176,33 +193,31 @@ public:
             DcSettings::ClearRun(player->GetGUID());
     }
 
+    // Block the core from relaying our own control messages to the rest of the
+    // group. We already act on them in OnPlayerBeforeSendChatMessage; returning
+    // false here silently drops the packet. This REPLACES the old "consume"
+    // trick of rewriting `type` to CHAT_MSG_ADDON (= 0xFFFFFFFF): that value has
+    // no case in HandleMessagechatOpcode's `switch (type)`, so every command
+    // fell through to the default and logged
+    // "CHAT: unknown message type 4294967295, lang: 4294967295" — once per
+    // command, and constantly from the addon's status-poll heartbeat.
+    bool OnPlayerCanUseChat(Player* /*player*/, uint32 type, uint32 lang, std::string& msg, Group* /*group*/) override
+    {
+        return !IsDcAddonCommand(type, lang, msg);
+    }
+
     void OnPlayerBeforeSendChatMessage(Player* player, uint32& type, uint32& lang, std::string& msg) override
     {
-        // Only intercept addon messages.
-        if (lang != LANG_ADDON)
-            return;
-
-        // Accept PARTY/PARTY_LEADER (party groups) and RAID/RAID_LEADER (raid
-        // groups). The addon sends on RAID when the player is in a raid so the
+        // Only our addon control messages ("DC\tCMD\t...", on party/raid addon
+        // chat). The addon sends on RAID when the player is in a raid so the
         // command reaches a tank bot in any subgroup — on PARTY it would only
-        // reach the sender's own subgroup.
-        if (type != CHAT_MSG_PARTY && type != CHAT_MSG_PARTY_LEADER &&
-            type != CHAT_MSG_RAID && type != CHAT_MSG_RAID_LEADER)
+        // reach the sender's own subgroup. The matching relay-suppression lives
+        // in OnPlayerCanUseChat above; here we only act on the command.
+        if (!IsDcAddonCommand(type, lang, msg))
             return;
 
-        // Addon messages arrive as "DC\tCMD\t<sub>[\t<param>]".
-        if (msg.size() < 6 || msg.substr(0, 3) != "DC\t")
-            return;
-
-        // Strip the "DC\t" prefix to get the inner payload.
-        std::string const inner = msg.substr(3);
-
-        // Only handle CMD messages; STATUS/BOSS/CHAT are server→client only.
-        if (inner.size() < 4 || inner.substr(0, 4) != "CMD\t")
-            return;
-
-        // Parse "CMD\t<subcommand>[\t<param>]"
-        std::string const cmdPayload = inner.substr(4);
+        // Parse "DC\tCMD\t<subcommand>[\t<param>]" — strip the 7-byte prefix.
+        std::string const cmdPayload = msg.substr(7);
         std::string subCmd;
         std::string param;
 
@@ -225,8 +240,6 @@ public:
         if (subCmd == "set" || subCmd == "reset" || subCmd == "sync")
         {
             HandleSettingsCommand(player, subCmd, param);
-            msg.clear();
-            type = CHAT_MSG_ADDON;
             return;
         }
 
@@ -237,8 +250,6 @@ public:
             std::string whyNot;
             if (!DcSpectator::Toggle(player, &whyNot))
                 SendAddonError(player, whyNot);
-            msg.clear();
-            type = CHAT_MSG_ADDON;
             return;
         }
 
@@ -265,14 +276,10 @@ public:
             return;
         }
 
-        // Dispatch to the tank bot(s) silently (no PlaySound emotes).
+        // Dispatch to the tank bot(s) silently (no PlaySound emotes). Relay
+        // suppression is handled by OnPlayerCanUseChat — see the note there.
         if (!DungeonClearDispatch::DispatchToTankBots(player, action, param))
             SendAddonError(player, "No tank bot found in your group.");
-
-        // Consume the message so the ChatHandler switch doesn't process it
-        // as a real party chat message.
-        msg.clear();
-        type = CHAT_MSG_ADDON;
     }
 };
 
