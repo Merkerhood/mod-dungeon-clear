@@ -12,6 +12,39 @@
 #include "StatsWeightCalculator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
+namespace
+{
+    // RandomItemMgr::CanEquip{Weapon,Armor} reordered their parameters between
+    // playerbots branches: stock master is (clazz, [level,] proto); test-staging
+    // is (proto, clazz[, level]). SFINAE-dispatch to whichever overload links so
+    // the module compiles against either API.
+    template <typename Mgr>
+    auto DcCanEquipWeapon(Mgr& mgr, uint8 clazz, ItemTemplate const* proto, int)
+        -> decltype(mgr.CanEquipWeapon(proto, clazz))
+    {
+        return mgr.CanEquipWeapon(proto, clazz);
+    }
+    template <typename Mgr>
+    auto DcCanEquipWeapon(Mgr& mgr, uint8 clazz, ItemTemplate const* proto, long)
+        -> decltype(mgr.CanEquipWeapon(clazz, proto))
+    {
+        return mgr.CanEquipWeapon(clazz, proto);
+    }
+
+    template <typename Mgr>
+    auto DcCanEquipArmor(Mgr& mgr, uint8 clazz, uint32 level, ItemTemplate const* proto, int)
+        -> decltype(mgr.CanEquipArmor(proto, clazz, level))
+    {
+        return mgr.CanEquipArmor(proto, clazz, level);
+    }
+    template <typename Mgr>
+    auto DcCanEquipArmor(Mgr& mgr, uint8 clazz, uint32 level, ItemTemplate const* proto, long)
+        -> decltype(mgr.CanEquipArmor(clazz, level, proto))
+    {
+        return mgr.CanEquipArmor(clazz, level, proto);
+    }
+}
+
 bool DungeonClearBetterLootRollAction::isUseful()
 {
     // Only intercept self-bots (master == bot). A bot driven for a separate
@@ -101,8 +134,8 @@ RollVote DungeonClearBetterLootRollAction::CalculateFutureVote(ItemTemplate cons
     // Proficiency judged at the item's required level, not the bot's current
     // one — a 35 warrior WILL wear level-42 plate (plate unlocks at 40).
     bool proficient = proto->Class == ITEM_CLASS_WEAPON
-        ? sRandomItemMgr.CanEquipWeapon(bot->getClass(), proto)
-        : sRandomItemMgr.CanEquipArmor(bot->getClass(), proto->RequiredLevel, proto);
+        ? DcCanEquipWeapon(sRandomItemMgr, bot->getClass(), proto, 0)
+        : DcCanEquipArmor(sRandomItemMgr, bot->getClass(), proto->RequiredLevel, proto, 0);
 
     if (!proficient)
         return GREED;  // never their gear, but still vendor/AH value
