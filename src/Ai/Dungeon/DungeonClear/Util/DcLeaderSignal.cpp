@@ -831,17 +831,23 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
                            leader->GetPositionZ());
 
     // Walk BACK along the trail (newest -> oldest) accumulating real walked distance,
-    // exactly like ComputeTrailCamp, and return the first reachable crumb at least
-    // `lag` yards behind the tank. A 3D segment > kJumpGuard is a drag/teleport seam
-    // — stop, nothing beyond it is contiguously "behind" the tank.
+    // exactly like ComputeTrailCamp, and return a point EXACTLY `lag` yards behind
+    // the tank. A 3D segment > kJumpGuard is a drag/teleport seam — stop, nothing
+    // beyond it is contiguously "behind" the tank.
+    //
+    // INTERPOLATE, do not snap to the next crumb: crumbs are recorded only every
+    // ~4yd (RecordBreadcrumb kSpacing), so returning the first crumb at >= lag
+    // overshot the lag by up to one crumb spacing. With the follower's own
+    // kTrailArrival (4yd) hold slack on top, a lag=9 request parked followers ~16yd
+    // from the tank — outside a 15yd PartyMaxSpread — and the tank's between-pulls
+    // gate then waited forever (the observed scout-lag/trail-arrival deadlock at
+    // tank3D~15, lag 9). Interpolating along the crossing segment lands the target
+    // at the true `lag` distance so rest = lag + kTrailArrival stays inside the gate.
     //
     // Reachability (a full PathGenerator build per probe) is deliberately tested
-    // LAZILY: only the crumbs at/past the lag distance are probed on the walk, and
-    // the pre-lag crumbs only as a farthest-first fallback when no post-lag crumb
-    // was reachable (trail shorter than the lag, or every far crumb across a seam).
-    // The previous version probed every crumb as it walked, which cost one navmesh
-    // path build PER CRUMB per follower per scout tick; the selected crumb is
-    // identical either way, but the typical tick now runs exactly one probe.
+    // LAZILY: only the point at/past the lag distance is probed, and the pre-lag
+    // crumbs only as a farthest-first fallback when nothing at the lag was reachable
+    // (trail shorter than the lag, or every far point across a seam).
     constexpr float kJumpGuard = 12.0f;
     std::vector<std::pair<float, Position>> preLag;  // (along, crumb), nearest-first
     Position prev = tankPos;
@@ -849,19 +855,40 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     for (std::size_t i = crumbs.size(); i-- > 0; )
     {
         Position const& c = crumbs[i];
+        Position const before = prev;  // segment start (closer to the tank)
         float const seg = prev.GetExactDist(&c);
         prev = c;
         if (seg > kJumpGuard)
             break;  // discontinuity behind us — stop here
+        float const prevAlong = along;
         along += seg;
         if (along < lag)
         {
             preLag.emplace_back(along, c);
             continue;
         }
-        // Only ever trail to a crumb the follower can reach over a complete
-        // generated path; a crumb across a navmesh seam would straight-line the
-        // move under the map.
+        // This segment reaches the lag mark. If it CROSSES it (prevAlong < lag),
+        // interpolate the exact-lag point on [before -> c] instead of snapping to c;
+        // past the first crossing prevAlong >= lag so we just use the crumb.
+        Position target = c;
+        if (prevAlong < lag && seg > 0.01f)
+        {
+            float const t = (lag - prevAlong) / seg;  // (0,1]
+            target = Position(
+                before.GetPositionX() + (c.GetPositionX() - before.GetPositionX()) * t,
+                before.GetPositionY() + (c.GetPositionY() - before.GetPositionY()) * t,
+                before.GetPositionZ() + (c.GetPositionZ() - before.GetPositionZ()) * t);
+        }
+        // Only ever trail to a point the follower can reach over a complete
+        // generated path; one across a navmesh seam would straight-line under the
+        // map. The interpolated point sits on a contiguous (<= kJumpGuard) walked
+        // segment, so it is reachable whenever the bracketing crumb is; fall back to
+        // the crumb if the snap missed, else keep walking back.
+        if (IsNavReachable(bot, target))
+        {
+            out = target;
+            return true;
+        }
         if (IsNavReachable(bot, c))
         {
             out = c;

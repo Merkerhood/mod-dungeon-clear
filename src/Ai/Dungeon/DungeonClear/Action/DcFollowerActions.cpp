@@ -65,6 +65,13 @@ using namespace DcActionShared;
 
 namespace
 {
+    // Trail-arrival tolerance. A follower gliding up the tank's breadcrumb trail
+    // stops HOLDING once it is within this many yards of its target crumb, so its
+    // true rest distance from the tank is the lag PLUS up to this slack. The
+    // scout-lag spread clamp below must budget for it (see kScoutLagSpreadMargin)
+    // or the followers park just outside the tank's readiness gate and deadlock.
+    constexpr float kTrailArrival = 4.0f;
+
     // True while a continuous escort-spline glide is in flight. The follower trail
     // re-issue guards key off this (NOT the LastMovement wait) so a healthy glide
     // is left to finish and chain seamlessly into the next window, exactly as
@@ -237,8 +244,40 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // gate flips false and the party reverts to the tight follow / camp hold below.
     if (DcLeaderSignal::IsLeaderDynamicScouting(bot))
     {
-        float const lag = DcSettings::GetFloat(bot, "PullDynamicPartyLag");
-        float const toTank = bot->GetExactDist2d(tank);
+        // The scout-lag deliberately PARKS followers `lag` yards behind the tank
+        // (the `toTank <= lag` hold branch below stops them there). But the tank's
+        // own between-pulls gate (DcAdvanceAction::TryBetweenPullsRest ->
+        // IsBetweenPullsReady -> GetSpreadGate) refuses to advance until every
+        // member is within DungeonClear.PartyMaxSpread. If the configured lag
+        // exceeds that spread the two gates deadlock: the followers hold at the lag
+        // ring OUTSIDE the spread the tank requires, so the tank waits forever for a
+        // party that, by design, is never closing — the reported hang when
+        // PartyMaxSpread is lowered toward PullDynamicPartyLag. Never lag farther than
+        // the spread the tank will accept.
+        //
+        // The margin is NOT cosmetic: a follower's true rest distance is the lag
+        // PLUS the trail-arrival slack (it HOLDS as soon as it is within
+        // kTrailArrival of its crumb at `lag` behind the tank — see the arrival
+        // hold below), so it can settle ~lag + kTrailArrival behind a stopped tank.
+        // A bare `lag <= maxSpread` therefore still deadlocked at spread 15 / lag 15
+        // (clamped 12, but resting ~16 > 15). Budget the arrival slack plus a couple
+        // yards of walked-vs-straight / tick jitter so the held follower always
+        // lands strictly inside the gate. At the default 25yd spread / 15yd lag this
+        // is a no-op (15 < 25 - 6).
+        constexpr float kScoutLagSpreadMargin = kTrailArrival + 2.0f;
+        float const maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
+        float const lag =
+            std::min(DcSettings::GetFloat(bot, "PullDynamicPartyLag"),
+                     std::max(2.0f, maxSpread - kScoutLagSpreadMargin));
+        // 3D, NOT 2D: the tank's spread gate (IsPartyReady) measures GetDistance,
+        // which is 3D — so the hold metric here MUST match it or they diverge on a
+        // ramp/incline. A follower directly down-slope of the tank reads a small 2D
+        // gap (it would hold) while its true 3D distance — what the gate enforces —
+        // blows past PartyMaxSpread, and the tank waits forever for a follower that,
+        // measured in 2D, thinks it is already close enough. This is the "worst on
+        // inclines and ramps" deadlock. The trail-point accumulation (GetExactDist,
+        // 3D) and the arrival hold below are already 3D; this was the last 2D read.
+        float const toTank = bot->GetExactDist(tank);
         // Keep the teardown/orphan-reaper bookkeeping live across the whole window
         // so a follow generator we (or a prior tick) installed is still cancelled
         // when the DC tank goes away.
@@ -288,7 +327,6 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // branch) instead of demanding a straight-line gate it can't meet while
             // parked on a curved crumb. The slack is just the path-vs-straight
             // curvature over one lag; a few yards covers it without parking short.
-            constexpr float kTrailArrival = 4.0f;
             if (bot->GetExactDist(&trailPoint) <= kTrailArrival)
             {
                 DcMovement::StopBot(bot, DcMovement::Stop::Hold);
@@ -419,7 +457,6 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // issuing MoveTo to a point we're basically on micro-steps in place
             // (the scout-lag "two steps forward, two back" dance). Let Follow()
             // take it — it early-outs cleanly when in range.
-            constexpr float kTrailArrival = 4.0f;
             if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint) &&
                 bot->GetExactDist(&trailPoint) > kTrailArrival)
             {
