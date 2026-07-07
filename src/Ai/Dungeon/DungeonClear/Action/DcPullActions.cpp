@@ -122,18 +122,13 @@ namespace
     // of flickering in/out and never letting the tank tag.
     constexpr float DC_PULL_SET_RADIUS = 8.0f;
 
+    // Thin context adapter: resolves the pull-context value and delegates every
+    // phase write to DcPullContext::Transition, where the Engage special-case and
+    // the transition invariants live. No phase-write logic remains in this TU.
     void DcSetPullPhase(AiObjectContext* context, DcPullPhase p)
     {
         DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
-        if (p == DcPullPhase::Engage)
-        {
-            // Engage entry also clears the per-pull tag latch; the invariant
-            // lives in DcPullContext::EnterEngage (shared with AbortLeaderPull).
-            pull.EnterEngage(getMSTime());
-            return;
-        }
-        pull.phase = p;
-        pull.phaseSince = getMSTime();
+        pull.Transition(p, getMSTime());
     }
 
     // Why the leader tank can't carry out the pull drag-back right now, or nullptr
@@ -195,7 +190,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // 3, so this just keeps the tank planted (no tag, no camp handshake)
             // until the governor flips the verdict (patrol passed -> LEEROY/ADVANCED)
             // or the wait times out. Followers trail normally (pull mode is off).
-            if (pull.decision == 3u)
+            if (pull.decision == DcPullDecisionCode::PatrolHold)
             {
                 // Hold, not Soft: this branch is only reached at commit range,
                 // i.e. the tank arrives here mid escort-spline glide driven by
@@ -245,13 +240,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                     if (std::optional<Position> ahead = DcPullPlanner::ComputeSafeCamp(
                             botAI, trash, sb, sr, md, clr, drg))
                     {
-                        bool const unset = camp.GetPositionX() == 0.0f &&
-                                           camp.GetPositionY() == 0.0f &&
-                                           camp.GetPositionZ() == 0.0f;
-                        pull.campPublishedMs = now;
-                        if (unset || ahead->GetExactDist2d(trash) + 3.0f <
-                                         camp.GetExactDist2d(trash))
-                            camp = *ahead;
+                        if (!pull.HasCamp() || ahead->GetExactDist2d(trash) + 3.0f <
+                                                   camp.GetExactDist2d(trash))
+                            pull.PublishCamp(*ahead, now);
+                        else
+                            pull.TouchCampOwnership(now);
                     }
                     // Walk to the room trash, skirting the boss's aggro sphere if
                     // the direct line clips it (RoomAggroSkirtPoint) — the same
@@ -272,21 +265,17 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                 if (std::optional<Position> ahead = DcPullPlanner::ComputeSafeCamp(
                         botAI, trash, setback, safeRadius, maxDrag, clrAhead, dragAhead))
                 {
-                    bool const campUnset =
-                        camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
-                        camp.GetPositionZ() == 0.0f;
                     float const candToTrash = ahead->GetExactDist2d(trash);
                     // +3yd hysteresis: only rewrite when the candidate is meaningfully
                     // more forward, so the party isn't churned by tick-to-tick jitter.
                     // A successful camp computation claims ownership for this
-                    // tick even when the hysteresis below keeps the old point —
-                    // "no change" is still an ownership decision, and Advance's
-                    // scout-trailing must not wrestle the camp meanwhile (see
-                    // campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
-                    pull.campPublishedMs = now;
-                    if (campUnset || candToTrash + 3.0f < camp.GetExactDist2d(trash))
+                    // tick even when the hysteresis keeps the old point —
+                    // "no change" is still an ownership decision (TouchCampOwnership),
+                    // and Advance's scout-trailing must not wrestle the camp meanwhile
+                    // (see campPublishedMs / DC_CAMP_PUBLISH_FRESH_MS).
+                    if (!pull.HasCamp() || candToTrash + 3.0f < camp.GetExactDist2d(trash))
                     {
-                        camp = *ahead;
+                        pull.PublishCamp(*ahead, now);
                         DC_PULL_DEBUG("[DC:{}] pull idle: target {} at {:.1f}yd > start "
                                       "range {:.1f} -> party advances to camp "
                                       "({:.1f},{:.1f},{:.1f}) {:.1f}yd from pack while "
@@ -297,6 +286,8 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                                       candToTrash);
                         return false;
                     }
+                    // Hysteresis kept the old camp: still assert ownership this tick.
+                    pull.TouchCampOwnership(now);
                 }
                 DC_PULL_TRACE("[DC:{}] pull idle: target {} at {:.1f}yd > start range "
                               "{:.1f} -> glide closer before committing",
@@ -316,11 +307,11 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             float drag = 0.0f;
             std::optional<Position> camped = DcPullPlanner::ComputeSafeCamp(
                 botAI, trash, setback, safeRadius, maxDrag, clearance, drag);
-            if (camped.has_value())
-                camp = *camped;
-            else
-                camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
-            pull.campPublishedMs = now;
+            pull.PublishCamp(camped.has_value()
+                                 ? *camped
+                                 : Position(bot->GetPositionX(), bot->GetPositionY(),
+                                            bot->GetPositionZ()),
+                             now);
 
             // Record whether this is a line-of-sight pull (ranged pack, camp placed
             // to break LOS) so the addon status line can announce it. Mirrors the
@@ -683,8 +674,7 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
                 if (std::optional<Position> fresh = DcPullPlanner::ComputeSafeCamp(
                         botAI, aggressor, setback, safeRadius, maxDrag, clr, drag))
                 {
-                    camp = *fresh;
-                    pull.campPublishedMs = now;
+                    pull.PublishCamp(*fresh, now);
                     DC_PULL_INFO("[DC:{}] advanced-pull: unplanned aggro while scouting "
                                  "-> fresh camp ({:.1f},{:.1f},{:.1f}) drag {:.1f}yd, "
                                  "party converges", bot->GetName(),
@@ -696,12 +686,10 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
 
         // If the camp was never stamped and none could be computed, fall back to
         // fighting in place rather than dragging the pack to the map origin.
-        if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
-            camp.GetPositionZ() == 0.0f)
-        {
-            camp = Position(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
-            pull.campPublishedMs = now;
-        }
+        if (!pull.HasCamp())
+            pull.PublishCamp(Position(bot->GetPositionX(), bot->GetPositionY(),
+                                      bot->GetPositionZ()),
+                             now);
 
         // Stamp the return-leg length and clear the plant latch: the turn-and-plant
         // gate (below) requires at least half of THIS leg covered, and the debounce
@@ -843,9 +831,9 @@ bool DungeonClearPullManeuverAction::Execute(Event /*event*/)
 
             // The camp IS wherever the fight lands. Re-stamp it (fresh publish) so
             // the party converges on the plant point and the addon panel relocates.
-            camp = Position(bot->GetPositionX(), bot->GetPositionY(),
-                            bot->GetPositionZ());
-            pull.campPublishedMs = now;
+            pull.PublishCamp(Position(bot->GetPositionX(), bot->GetPositionY(),
+                                      bot->GetPositionZ()),
+                             now);
 
             // Turn on the nearest attacker so the tank commits the moment it stops,
             // rather than drifting before stock combat re-acquires (mirrors the

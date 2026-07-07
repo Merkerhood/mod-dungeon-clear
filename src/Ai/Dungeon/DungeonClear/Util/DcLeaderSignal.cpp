@@ -540,8 +540,7 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
     Position const camp = pull.camp;
     // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
     // is nothing to hold at, so let the caller fall back (briefly) to follow.
-    if (camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
-        camp.GetPositionZ() == 0.0f)
+    if (!pull.HasCamp())
         return false;
 
     campOut = camp;
@@ -795,7 +794,7 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
             ? DcEngageGeometry::PullCommitRange(leader, target, DC_PULL_START_RANGE)
             : 0.0f;
         float const lead = DcSettings::GetFloat(leader, "PullDynamicRollInLead");
-        if (DungeonClearMath::ShouldRollInForLeeroy(pull.decision, targetAlive,
+        if (DungeonClearMath::ShouldRollInForLeeroy(static_cast<uint32>(pull.decision), targetAlive,
                                                     tankToTarget, commitRange, lead))
         {
             DC_PULL_TRACE("[DC:{}] scout-lag: leeroy roll-in — tank {:.1f}yd from "

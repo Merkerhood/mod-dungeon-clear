@@ -1376,11 +1376,9 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // or a reset cleared it). Real pulls overwrite it with the computed safe camp.
     if (AI_VALUE(bool, "dungeon clear pull mode current"))
     {
-        Position& camp = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get().camp;
-        bool const campUnset =
-            camp.GetPositionX() == 0.0f && camp.GetPositionY() == 0.0f &&
-            camp.GetPositionZ() == 0.0f;
-        if (campUnset)
+        DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
+        Position& camp = pull.camp;
+        if (!pull.HasCamp())
         {
             // Seed from the trail (setback behind the tank along walked ground)
             // rather than at the tank's feet, for the same monotone-party-motion
