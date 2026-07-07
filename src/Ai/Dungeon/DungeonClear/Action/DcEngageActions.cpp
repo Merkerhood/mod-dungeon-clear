@@ -710,7 +710,7 @@ bool DungeonClearRoomPreClearHoldAction::Execute(Event /*event*/)
     // pull (35) / run event (31) / room-clear (26) / engage trash (25) were all
     // either inactive or returned false. So the choice is purely "hold here" vs
     // "let it fall through to the room-aggro-blind Advance (15), which would creep
-    // at the boss centre via TryDirectPursuit."
+    // at the boss centre via the direct-pursuit shortcut."
     //
     // One legitimate fall-through: the tank has its OWN corpse to loot. The loot
     // pipeline sits BELOW us (rel 8-9) and never drives toward the boss, so defer
@@ -1614,7 +1614,7 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     DungeonFollowerState& follower =
         context->GetValue<DungeonFollowerState&>("dungeon clear follower state")->Get();
 
-    // Progress-aware wedge detection, mirroring Advance's TryPosStuckRecovery and
+    // Progress-aware wedge detection, mirroring Advance's stuck-recovery and
     // sampled BEFORE NextHop so a recovery re-anchor lands before the hop below is
     // computed. The narrow, descending entrance walkways (Scholomance's Iron Gate
     // approach) micro-stop the glide; the old `escort && isMoving()` ride-guard
