@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearTriggers.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <cmath>
 #include <optional>
@@ -46,7 +47,7 @@ namespace
     // DC must be enabled AND not paused for the driving ladder to fire. Pause
     // is a soft stop: `enabled` (and all boss progress) stays set, but every
     // trigger here goes inert so the tank holds exactly as it would under
-    // `dc off`. See DungeonClearPausedValue.
+    // `dc off`. See DcRunState (paused flag).
     //
     // The driving ladder also runs ONLY on the elected leader. In a raid several
     // tanks can have the flag set, but exactly one drives — the others follow it
@@ -55,7 +56,7 @@ namespace
     // short-circuit on the first check. See DcLeaderSignal::FindLeaderTank.
     bool IsEnabled(AiObjectContext* context, Player* bot)
     {
-        if (!AI_VALUE(bool, DcKey::Enabled) || AI_VALUE(bool, DcKey::Paused))
+        if (!DcRun::Of(context).enabled || DcRun::Of(context).paused)
             return false;
         return DcLeaderSignal::IsDungeonClearLeader(bot);
     }
@@ -564,10 +565,10 @@ bool DungeonClearDoorReopenedTrigger::IsActive()
     // Only meaningful while THIS bot's own run is paused for a door (the leader's
     // paused flag). A manual `dc pause` leaves the paused-door GUID empty, so
     // opening some unrelated door never auto-resumes a hand-held pause.
-    if (!AI_VALUE(bool, DcKey::Enabled) || !AI_VALUE(bool, DcKey::Paused))
+    if (!DcRun::Of(context).enabled || !DcRun::Of(context).paused)
         return false;
 
-    ObjectGuid const doorGuid = AI_VALUE(ObjectGuid, DcKey::PausedDoor);
+    ObjectGuid const doorGuid = DcRun::Of(context).pausedDoor;
     if (doorGuid.IsEmpty())
         return false;
 
@@ -776,7 +777,7 @@ bool DungeonClearPullManeuverTrigger::IsActive()
     // GetLeaderCampHold keep the camp hold alive through a pause while a
     // maneuver phase is holding — so the party stays pinned at camp until the
     // drag resolves to Engage, after which the normal paused gates hold the run.
-    if (!AI_VALUE(bool, DcKey::Enabled) || !AI_VALUE(bool, DcKey::PullMode))
+    if (!DcRun::Of(context).enabled || !AI_VALUE(bool, DcKey::PullMode))
         return false;
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;

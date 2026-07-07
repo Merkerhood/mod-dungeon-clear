@@ -4,6 +4,7 @@
  */
 
 #include "NextDungeonBossValue.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -124,7 +125,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     std::unordered_map<uint32, BossLiveState> const liveness = BuildLiveness(map, wantedEntries);
 
     // Check if there is a manually selected boss target override
-    uint32 const selectedEntry = AI_VALUE(uint32, DcKey::SelectedBoss);
+    uint32 const selectedEntry = DcRun::Of(context).selectedBossEntry;
     if (selectedEntry != 0)
     {
         for (DungeonBossInfo const& info : bosses)
@@ -148,7 +149,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 if (invalid)
                 {
                     // Already dead/completed: clear override and drop back to automatic
-                    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
+                    DcRun::Of(context).selectedBossEntry = 0u;
                     break;
                 }
 

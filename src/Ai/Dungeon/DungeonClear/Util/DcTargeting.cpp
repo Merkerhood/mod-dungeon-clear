@@ -4,6 +4,7 @@
  */
 
 #include "DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "DungeonClearUtil.h"   // DcEngageGeometry:: cross-unit calls + DC_PULL_* macros
 
@@ -811,7 +812,7 @@ bool DcTargeting::ResetCompletionLatchesForNewInstance(Player* bot, AiObjectCont
     context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenBosses)->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenDueEvents)->Get().clear();
     context->GetValue<uint32>(DcKey::StickyBoss)->Set(0u);
-    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
+    DcRun::Of(context).selectedBossEntry = 0u;
     context->GetValue<uint32>(DcKey::RunInstance)->Set(instanceId);
     return true;
 }

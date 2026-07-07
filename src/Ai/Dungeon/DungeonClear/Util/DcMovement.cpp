@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
 
@@ -106,7 +107,7 @@ namespace DcMovement
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         if (!ctx)
             return false;
-        return !ctx->GetValue<bool>(DcKey::Paused)->Get();
+        return !DcRun::Of(ctx).paused;
     }
 
     bool SplinePath(PlayerbotAI* botAI, Movement::PointsArray& pts,

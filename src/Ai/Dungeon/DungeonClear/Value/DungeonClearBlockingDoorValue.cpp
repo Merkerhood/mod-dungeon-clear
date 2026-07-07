@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearBlockingDoorValue.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
 #include <cmath>
@@ -99,7 +100,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
 {
     if (!bot || !bot->IsInWorld())
         return ObjectGuid::Empty;
-    if (!AI_VALUE(bool, DcKey::Enabled) || AI_VALUE(bool, DcKey::Paused))
+    if (!DcRun::Of(context).enabled || DcRun::Of(context).paused)
         return ObjectGuid::Empty;
 
     Map* map = bot->GetMap();

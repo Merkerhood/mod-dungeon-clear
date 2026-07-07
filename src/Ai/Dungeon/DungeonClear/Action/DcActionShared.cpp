@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearActions.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
 #include <cmath>
@@ -121,13 +122,14 @@ namespace DcActionShared
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
         Player* bot = botAI->GetBot();
-        ctx->GetValue<bool>(DcKey::Enabled)->Set(false);
+        // One reset clears the whole run-level state — enabled flag, the pause
+        // cluster (paused / reason / auto-paused door), the selected-boss override,
+        // and the two leader-fight latches (leader-combat-since / party-engaged) —
+        // in lockstep. See DcRunState. The pull preference/bool + daze revoke below
+        // are deliberately separate (their pre-run lifetime differs).
+        DcRun::Of(ctx).Reset();
         if (bot)
             DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
-        ctx->GetValue<bool>(DcKey::Paused)->Set(false);
-        ctx->GetValue<std::string&>(DcKey::PauseReason)->Get().clear();
-        ctx->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(ObjectGuid::Empty);
-        ctx->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
         ctx->GetValue<ObjectGuid>(DcKey::EngageTrashTarget)->Set(ObjectGuid::Empty);
         ctx->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
         ctx->GetValue<std::string&>(DcKey::LastSaidReason)->Get().clear();

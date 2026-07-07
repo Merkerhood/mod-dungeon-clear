@@ -4,6 +4,7 @@
  */
 
 #include "DcStatusPublisher.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "DungeonClearUtil.h"   // DcTargeting::GetInstanceScript (until DcTargeting moves)
 
@@ -107,7 +108,7 @@ namespace
         // The set only grows within a run, so its size is a sufficient change key.
         uint32 const cleared =
             static_cast<uint32>(AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).size());
-        uint32 const selected = AI_VALUE(uint32, DcKey::SelectedBoss);
+        uint32 const selected = DcRun::Of(context).selectedBossEntry;
         uint32 const count =
             static_cast<uint32>(AI_VALUE(std::vector<DungeonBossInfo>, DcKey::DungeonBosses).size());
 
@@ -196,7 +197,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     AiObjectContext* context = botAI->GetAiObjectContext();
     Player* bot = botAI->GetBot();
 
-    bool const enabled = AI_VALUE(bool, DcKey::Enabled);
+    bool const enabled = DcRun::Of(context).enabled;
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, DcKey::Skipped);
     std::string const& stall = AI_VALUE(std::string&, DcKey::StallReason);
@@ -208,7 +209,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
     // line — who we're waiting on, what we're heading to, etc.
     std::string stateStr = "off";
     std::string detail;
-    bool const paused = AI_VALUE(bool, DcKey::Paused);
+    bool const paused = DcRun::Of(context).paused;
     // `pullMode` is the behavioral gate (a pull maneuver is actually armed) and
     // drives the state/detail wording below; `pullSetting` is the user's tri-state
     // preference (Off/On/Dynamic) reported to the addon's control. They differ for
@@ -231,7 +232,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         // report the cause; the addon supplies the "boss progress saved"
         // reassurance line. Fall back to a generic hold if no reason was stamped.
         stateStr = "paused";
-        std::string const& pauseReason = AI_VALUE(std::string&, DcKey::PauseReason);
+        std::string const& pauseReason = DcRun::Of(context).pauseReason;
         detail = pauseReason.empty() ? "holding position" : pauseReason;
     }
     else if (enabled && bot && pullMode && DcLeaderSignal::IsPullPhaseHolding(pullPhase))

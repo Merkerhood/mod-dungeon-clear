@@ -29,16 +29,16 @@ namespace DcKey
     inline constexpr char const* DungeonBosses           = "dungeon bosses";
     inline constexpr char const* NextDungeonBoss         = "next dungeon boss";
     inline constexpr char const* LiveBoss                = "dungeon clear live boss";
-    inline constexpr char const* Enabled                 = "dungeon clear enabled";
-    inline constexpr char const* Paused                  = "dungeon clear paused";
-    inline constexpr char const* PauseReason             = "dungeon clear pause reason";
-    inline constexpr char const* PausedDoor              = "dungeon clear paused door";
+    // Leader-owned run-level state (enabled, paused + pause cluster, selected-boss
+    // override, the two leader-fight latches) consolidated into one DcRunState value
+    // — see DcRunState.h. The former standalone "dungeon clear enabled/paused/pause
+    // reason/paused door/selected boss" values were folded in; access via DcRun::Of.
+    inline constexpr char const* RunState                = "dungeon clear run state";
     inline constexpr char const* Skipped                 = "dungeon clear skipped";
     inline constexpr char const* ClearedAnchors          = "dungeon clear cleared anchors";
     inline constexpr char const* SeenBosses              = "dungeon clear seen bosses";
     inline constexpr char const* SeenDueEvents           = "dungeon clear seen due events";
     inline constexpr char const* StickyBoss              = "dungeon clear sticky boss";
-    inline constexpr char const* SelectedBoss            = "dungeon clear selected boss";
     inline constexpr char const* RunInstance             = "dungeon clear run instance";
     inline constexpr char const* StallReason             = "dungeon clear stall reason";
     inline constexpr char const* LastSaidReason          = "dungeon clear last said reason";

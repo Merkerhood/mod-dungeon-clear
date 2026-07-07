@@ -4,6 +4,7 @@
  */
 
 #include "DcPullPlanner.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "DungeonClearUtil.h"   // DC_PULL_* macros + DcTargeting::GetPullTarget (until DcTargeting moves)
 
@@ -506,8 +507,8 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
     // immunity. Gate here (leader election is 250ms-cached, cheap) rather than
     // trusting every caller to be leader-gated. `enabled && !paused` also stops a
     // disabled/paused run from mutating pull state on a stray read.
-    if (!context->GetValue<bool>(DcKey::Enabled)->Get() ||
-        context->GetValue<bool>(DcKey::Paused)->Get() ||
+    if (!DcRun::Of(context).enabled ||
+        DcRun::Of(context).paused ||
         !DcLeaderSignal::IsDungeonClearLeader(bot))
         return;
 

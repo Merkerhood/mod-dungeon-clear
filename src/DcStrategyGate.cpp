@@ -4,6 +4,7 @@
  */
 
 #include "DcStrategyGate.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Map.h"
 #include "ObjectAccessor.h"
@@ -39,7 +40,7 @@ namespace
     {
         AiObjectContext* ctx = botAI->GetAiObjectContext();
 
-        if (ctx->GetValue<bool>(DcKey::Enabled)->Get())
+        if (DcRun::Of(ctx).enabled)
             DcActionShared::DisableDungeonClear(
                 botAI, "Left the dungeon \xe2\x80\x94 dungeon clear disabled.");
 
