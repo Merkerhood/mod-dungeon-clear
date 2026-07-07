@@ -1377,7 +1377,10 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     {
         DcPullContext& pull = context->GetValue<DcPullContext&>("dungeon clear pull context")->Get();
         Position& camp = pull.camp;
-        if (!pull.HasCamp())
+        // Capture the unset state BEFORE seeding: the trail block below adopts the
+        // trailing point unconditionally on the first tick a camp was just seeded.
+        bool const campUnset = !pull.HasCamp();
+        if (campUnset)
         {
             // Seed from the trail (setback behind the tank along walked ground)
             // rather than at the tank's feet, for the same monotone-party-motion
