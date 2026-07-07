@@ -209,12 +209,31 @@ namespace
     constexpr float STR_TIMMY_TEST_RADIUS = 40.0f;   // matches the SmartAI gate
     constexpr float STR_TIMMY_CLEAR_RADIUS = 44.0f;  // clear a touch wider than tested
     constexpr float STR_TIMMY_ZBAND = 12.0f;
+    // Only ARM the event once the tank is in Timmy's corner of the live side.
+    // 60yd is well outside the boss engage range (so the pre-clear owns the
+    // approach before the tank tries to pull passive Timmy) yet close enough that
+    // the near edge of his pack is engage-reachable when it arms. Measured to his
+    // static spawn, so it needs no loaded creature. WHY the gate exists: unlike
+    // the ziggurat conditions (monotonic instance data that only turns true once
+    // the tank is already at the chamber), this is a CREATURE-PRESENCE test that
+    // reads true from the moment the map's grids load — i.e. with the tank still
+    // at the instance entrance. A due conditional event drives immediately, and
+    // the executor's ClearRadius step, evaluated from that far position, finds no
+    // reachable hostile and reports Done — latching the event "complete" before
+    // the tank has moved (the "Timmy room already cleared at the entrance" bug).
+    // Proximity-gating the condition keeps it un-due until the tank is actually
+    // there, exactly like the ziggurats.
+    constexpr float STR_TIMMY_NEAR = 60.0f;
 
-    // DUE while Timmy is present but still gated: any Crimson pack member alive
-    // within 40yd of him. Reads false once they're cleared (he activates) or he's
-    // gone — so the event fires exactly in the "pack still up" window and latches.
+    // DUE while the tank is near Timmy AND he is still gated: any Crimson pack
+    // member alive within 40yd of him. Reads false once they're cleared (he
+    // activates), he's gone, or the tank is not yet in his corner — so the event
+    // fires exactly in the "at Timmy, pack still up" window and latches on clear.
     bool StrTimmyGated(Player* bot, AiObjectContext* /*context*/)
     {
+        if (!bot ||
+            bot->GetDistance(STR_TIMMY_X, STR_TIMMY_Y, STR_TIMMY_Z) > STR_TIMMY_NEAR)
+            return false;  // not in Timmy's corner yet — don't arm from afar
         Creature* timmy = DcTargeting::FindLiveCreatureOnMap(bot, STR_TIMMY);
         if (!timmy)
             return false;  // grid not streamed in yet, or Timmy already dead
