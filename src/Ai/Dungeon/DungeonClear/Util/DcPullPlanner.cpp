@@ -63,22 +63,13 @@
 
 namespace
 {
-    // True only when a COMPLETE navmesh route (PATHFIND_NORMAL) exists from the
-    // bot to `p`. Mirrors ComputeCorridor's gate exactly. The camp helpers pick
-    // points off the breadcrumb trail, but a trail can span a navmesh seam (a
-    // drop-down, a ledge, a doorway) that is short in plan view yet not walkable
-    // in a straight line. The move to such a point falls back to a straight
-    // spline that clips terrain — the "tank runs under the map" symptom. Probing
-    // the candidate with the same PathGenerator the move itself uses guarantees
-    // every committed camp is reachable over a generated path. Bounded cost: one
-    // Detour query per probe, and callers probe only points they would return.
-    bool IsNavReachable(Player* bot, Position const& p)
+    // Camp/trail reachability probe. Now a thin alias for the shared
+    // DcEngageGeometry::IsNavReachable (was a byte-identical file-local twin here
+    // and in DcLeaderSignal). Kept as a local name so the many call sites below
+    // read unchanged.
+    inline bool IsNavReachable(Player* bot, Position const& p)
     {
-        if (!bot)
-            return false;
-        PathGenerator gen(bot);
-        gen.CalculatePath(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
-        return gen.GetPathType() == PATHFIND_NORMAL;
+        return DcEngageGeometry::IsNavReachable(bot, p);
     }
 
     // A pull camp must never sit on the far side of — or inside — a door we have
@@ -850,7 +841,6 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     // neighbour is still within safeRadius. A gap bigger than kJumpGuard means the
     // trail isn't contiguous there (a drag/teleport boundary) — stop, nothing
     // beyond it is really "behind us". Track the farthest point as the fallback.
-    constexpr float kJumpGuard = 12.0f;
     Position best = tankPos;
     float bestClear = clearanceAt(tankPos);
     float bestDrag = 0.0f;
@@ -863,57 +853,56 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
     float bestLosClear = std::numeric_limits<float>::max();
     float bestLosDrag = 0.0f;
     float bestLosAlong = -1.0f;  // <0 => none found
-    Position prev = tankPos;
-    float along = 0.0f;
-    for (std::size_t i = crumbs.size(); i-- > 0; )
-    {
-        Position const& c = crumbs[i];
-        // 3D segment length: this is the real walked distance, and it makes the
-        // discontinuity guard catch a vertical jump (a drop-down / ledge) that a
-        // 2D measure would miss — the trail must stay contiguous in space, not
-        // just in plan view, or a later camp pick lands on the wrong floor.
-        float const seg = prev.GetExactDist(&c);
-        prev = c;
-        if (seg > kJumpGuard)
-            break;  // discontinuity behind us — stop here
-        along += seg;
-        // Only ever return / fall back to a crumb the move can reach over a
-        // complete generated path. A crumb within kJumpGuard but across a
-        // navmesh seam would otherwise be committed and the move to it would
-        // straight-line under the map. Likewise reject a crumb on the far side
-        // of (or inside) a still-shut door: walked-distance "back" along a
-        // doubling-back route can land spatially FORWARD, on ground gated by a
-        // door we have not opened — the navmesh is blind to it.
-        if (!IsNavReachable(bot, c) || CampBlockedByDoor(bot, c))
-            continue;
-        float const clear = clearanceAt(c);
-        float const drag = tankPos.GetExactDist(&c);
-        bool const breaks = breaksLos(c);
-        if (along > bestAlong)  // farthest reachable back so far (fallback)
+    std::optional<Position> accepted;
+    DungeonClearMath::WalkTrailBack(
+        crumbs, tankPos, DungeonClearMath::TrailJumpGuard,
+        [&](DungeonClearMath::TrailStep const& s) -> bool
         {
-            best = c;
-            bestClear = clear;
-            bestDrag = drag;
-            bestAlong = along;
-        }
-        if (breaks && along > bestLosAlong)  // farthest reachable out-of-sight point
-        {
-            bestLos = c;
-            bestLosClear = clear;
-            bestLosDrag = drag;
-            bestLosAlong = along;
-        }
-        // Accept the first point that is far enough back, clears other packs, AND
-        // (for a ranged pull) breaks LOS to the pack.
-        if (along >= setback && clear >= safeRadius && (!losBreak || breaks))
-        {
-            clearanceOut = clear;
-            dragOut = drag;
-            return c;
-        }
-        if (along >= maxDrag)
-            break;
-    }
+            Position const& c = s.crumb;
+            float const along = s.along;
+            // Only ever return / fall back to a crumb the move can reach over a
+            // complete generated path. A crumb within the jump guard but across a
+            // navmesh seam would otherwise be committed and the move to it would
+            // straight-line under the map. Likewise reject a crumb on the far side
+            // of (or inside) a still-shut door: walked-distance "back" along a
+            // doubling-back route can land spatially FORWARD, on ground gated by a
+            // door we have not opened — the navmesh is blind to it. (Note: an
+            // unreachable crumb skips the maxDrag cap below, matching the original
+            // `continue`.)
+            if (!IsNavReachable(bot, c) || CampBlockedByDoor(bot, c))
+                return true;
+            float const clear = clearanceAt(c);
+            float const drag = tankPos.GetExactDist(&c);
+            bool const breaks = breaksLos(c);
+            if (along > bestAlong)  // farthest reachable back so far (fallback)
+            {
+                best = c;
+                bestClear = clear;
+                bestDrag = drag;
+                bestAlong = along;
+            }
+            if (breaks && along > bestLosAlong)  // farthest reachable out-of-sight point
+            {
+                bestLos = c;
+                bestLosClear = clear;
+                bestLosDrag = drag;
+                bestLosAlong = along;
+            }
+            // Accept the first point that is far enough back, clears other packs,
+            // AND (for a ranged pull) breaks LOS to the pack.
+            if (along >= setback && clear >= safeRadius && (!losBreak || breaks))
+            {
+                clearanceOut = clear;
+                dragOut = drag;
+                accepted = c;
+                return false;
+            }
+            if (along >= maxDrag)
+                return false;
+            return true;
+        });
+    if (accepted)
+        return *accepted;
 
     // Ranged pull, no point cleared every gate: take the farthest out-of-sight
     // point we did find (at least half the setback back), since forcing the rangers
@@ -1073,35 +1062,33 @@ std::optional<Position> DcPullPlanner::ComputeTrailCamp(PlayerbotAI* botAI,
     // setback `return`, so the walk used to run to the end of the trail; the
     // cap is live deliberately now, bounding the worst case at a couple of
     // probes instead of the whole 128-crumb buffer.)
-    constexpr float kJumpGuard = 12.0f;
     std::vector<std::pair<float, Position>> preSetback;  // (along, crumb), nearest-first
-    Position prev = tankPos;
-    float along = 0.0f;
-    for (std::size_t i = crumbs.size(); i-- > 0; )
-    {
-        Position const& c = crumbs[i];
-        // 3D segment length (see ComputeSafeCamp): true walked distance, and the
-        // guard catches a vertical drop a 2D measure would treat as contiguous.
-        float const seg = prev.GetExactDist(&c);
-        prev = c;
-        if (seg > kJumpGuard)
-            break;  // discontinuity behind us — stop here
-        along += seg;
-        if (along < setback)
+    std::optional<Position> result;
+    DungeonClearMath::WalkTrailBack(
+        crumbs, tankPos, DungeonClearMath::TrailJumpGuard,
+        [&](DungeonClearMath::TrailStep const& s) -> bool
         {
-            preSetback.emplace_back(along, c);
-            continue;
-        }
-        // Only trail to a crumb the party can reach over a complete generated
-        // path — a seam crumb would make the follower move straight-line under
-        // the map. Also reject a crumb across/inside a still-shut door: on a
-        // doubling-back route walked-distance "back" can land spatially forward,
-        // on door-gated ground the party has not legitimately reached.
-        if (IsNavReachable(bot, c) && !CampBlockedByDoor(bot, c))
-            return c;
-        if (along >= maxDrag)
-            break;  // searched past the cap without a reachable crumb — fall back
-    }
+            if (s.along < setback)
+            {
+                preSetback.emplace_back(s.along, s.crumb);
+                return true;
+            }
+            // Only trail to a crumb the party can reach over a complete generated
+            // path — a seam crumb would make the follower move straight-line under
+            // the map. Also reject a crumb across/inside a still-shut door: on a
+            // doubling-back route walked-distance "back" can land spatially forward,
+            // on door-gated ground the party has not legitimately reached.
+            if (IsNavReachable(bot, s.crumb) && !CampBlockedByDoor(bot, s.crumb))
+            {
+                result = s.crumb;
+                return false;
+            }
+            if (s.along >= maxDrag)
+                return false;  // searched past the cap without a reachable crumb — fall back
+            return true;
+        });
+    if (result)
+        return result;
 
     // Trail too short to reach the full setback (or nothing reachable past it):
     // trail the farthest reachable point we have (the party simply stacks closer

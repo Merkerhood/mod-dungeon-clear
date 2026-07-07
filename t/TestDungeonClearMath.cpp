@@ -931,3 +931,152 @@ TEST(DungeonClearFizzleTest, ZeroMaxHandsOffOnFirstFizzle)
     std::uint32_t count = 0u;
     EXPECT_TRUE(ShouldHandoffFizzledPull(true, false, 0u, count));
 }
+
+// --- WalkTrailBack (Kernel A: the one shared breadcrumb walk-back primitive) --
+
+using DungeonClearMath::TrailStep;
+using DungeonClearMath::TrailJumpGuard;
+using DungeonClearMath::WalkTrailBack;
+
+TEST(DungeonClearWalkTrailBackTest, AccumulatesAlongNewestToOldest)
+{
+    // 4 crumbs at x = 0,4,8,12. Anchor sits on the newest (x=12). The walk must
+    // visit them oldest-index-descending (12 -> 8 -> 4 -> 0) with `along` growing
+    // 0,4,8,12 and `index` counting down 3,2,1,0.
+    std::vector<Position> trail = MakeLine(4);
+    Position const anchor(12.0f, 0.0f, 0.0f, 0.0f);
+    std::vector<std::size_t> indices;
+    std::vector<float> alongs;
+    float const total = WalkTrailBack(trail, anchor, TrailJumpGuard,
+        [&](TrailStep const& s) -> bool
+        {
+            indices.push_back(s.index);
+            alongs.push_back(s.along);
+            return true;
+        });
+    ASSERT_EQ(indices.size(), 4u);
+    EXPECT_EQ(indices[0], 3u);
+    EXPECT_EQ(indices[3], 0u);
+    EXPECT_FLOAT_EQ(alongs[0], 0.0f);   // anchor sits on crumb 3
+    EXPECT_FLOAT_EQ(alongs[1], 4.0f);
+    EXPECT_FLOAT_EQ(alongs[3], 12.0f);
+    EXPECT_FLOAT_EQ(total, 12.0f);
+}
+
+TEST(DungeonClearWalkTrailBackTest, VisitReturningFalseStopsEarly)
+{
+    // The accept predicate accepts the first crumb at least 6yd back and stops
+    // (the camp/scout "first reachable past the setback" shape).
+    std::vector<Position> trail = MakeLine(6);   // x = 0..20
+    Position const anchor(20.0f, 0.0f, 0.0f, 0.0f);
+    std::size_t accepted = DungeonClearMath::TrailRejoinNone;
+    WalkTrailBack(trail, anchor, TrailJumpGuard,
+        [&](TrailStep const& s) -> bool
+        {
+            if (s.along < 6.0f)
+                return true;
+            accepted = s.index;
+            return false;
+        });
+    // Anchor at crumb 5 (x=20); crumb 3 (x=12) is the first at along >= 6 (=8yd).
+    EXPECT_EQ(accepted, 3u);
+}
+
+// Named regression: dc-scout-lag-trail-dance / dc-multihop — INTERPOLATE the
+// exact-lag point instead of snapping to the next crumb. Snapping to the first
+// crumb past lag overshoots by up to one crumb spacing (~4yd), which parked
+// followers outside PartyMaxSpread and deadlocked the between-pulls gate.
+TEST(DungeonClearWalkTrailBackTest, InterpolatesExactLagPointOnCrossingSegment)
+{
+    std::vector<Position> trail = MakeLine(11);          // x = 0..40, spacing 4
+    Position const tank(40.0f, 0.0f, 0.0f, 0.0f);        // anchor on newest crumb
+    float const lag = 9.0f;
+    Position interp;
+    bool crossed = false;
+    WalkTrailBack(trail, tank, TrailJumpGuard,
+        [&](TrailStep const& s) -> bool
+        {
+            if (s.along < lag)
+                return true;
+            // Only the CROSSING segment interpolates; past it PointAt yields the crumb.
+            interp = (s.alongPrev < lag) ? s.PointAt(lag) : s.crumb;
+            crossed = true;
+            return false;
+        });
+    ASSERT_TRUE(crossed);
+    // Exactly 9yd behind the tank at x=40 => x=31 (crumb-snap would give x=28,
+    // 12yd back — the 3yd overshoot the interpolation fix removes).
+    EXPECT_FLOAT_EQ(interp.GetPositionX(), 31.0f);
+    EXPECT_FLOAT_EQ(interp.GetPositionY(), 0.0f);
+    EXPECT_FLOAT_EQ(tank.GetExactDist(&interp), 9.0f);
+}
+
+// Named regression: dc-pull-breadcrumb-seam-undermap — a 2D jump > guard stops
+// the walk so no camp/trail point is chosen across a drag/teleport seam.
+TEST(DungeonClearWalkTrailBackTest, HorizontalSeamStopsWalk)
+{
+    std::vector<Position> trail;
+    trail.emplace_back(0.0f, 0.0f, 0.0f, 0.0f);    // 0
+    trail.emplace_back(4.0f, 0.0f, 0.0f, 0.0f);    // 1
+    trail.emplace_back(8.0f, 0.0f, 0.0f, 0.0f);    // 2
+    trail.emplace_back(25.0f, 0.0f, 0.0f, 0.0f);   // 3 (17yd gap from crumb 2)
+    Position const anchor(25.0f, 0.0f, 0.0f, 0.0f);
+    std::vector<std::size_t> visited;
+    WalkTrailBack(trail, anchor, TrailJumpGuard,
+        [&](TrailStep const& s) -> bool { visited.push_back(s.index); return true; });
+    // Only the newest crumb is contiguous with the anchor; the 17yd gap is a seam.
+    ASSERT_EQ(visited.size(), 1u);
+    EXPECT_EQ(visited[0], 3u);
+}
+
+// Named regression: dc-pull-breadcrumb-seam-undermap (vertical form) — a drop
+// that is short in plan view but > guard in 3D must read as a seam, so a camp
+// pick never lands on the wrong floor ("tank runs under the map").
+TEST(DungeonClearWalkTrailBackTest, VerticalSeamStopsWalkEvenWhen2DContiguous)
+{
+    std::vector<Position> trail;
+    trail.emplace_back(0.0f, 0.0f, 0.0f, 0.0f);    // 0
+    trail.emplace_back(4.0f, 0.0f, 0.0f, 0.0f);    // 1  (lower floor)
+    trail.emplace_back(6.0f, 0.0f, 20.0f, 0.0f);   // 2  (2yd in 2D, +20yd Z: upper floor)
+    Position const anchor(6.0f, 0.0f, 20.0f, 0.0f);
+    std::vector<std::size_t> visited;
+    WalkTrailBack(trail, anchor, TrailJumpGuard,
+        [&](TrailStep const& s) -> bool { visited.push_back(s.index); return true; });
+    // crumb 2 -> crumb 1 is ~20yd in 3D (> guard) though only 2yd in 2D: the walk
+    // stops, so nothing on the lower floor is treated as "behind" the upper camp.
+    ASSERT_EQ(visited.size(), 1u);
+    EXPECT_EQ(visited[0], 2u);
+}
+
+TEST(DungeonClearWalkTrailBackTest, EmptyTrailWalksNothing)
+{
+    std::vector<Position> empty;
+    Position const anchor(0.0f, 0.0f, 0.0f, 0.0f);
+    int count = 0;
+    float const total = WalkTrailBack(empty, anchor, TrailJumpGuard,
+        [&](TrailStep const&) -> bool { ++count; return true; });
+    EXPECT_EQ(count, 0);
+    EXPECT_FLOAT_EQ(total, 0.0f);
+}
+
+TEST(DungeonClearWalkTrailBackTest, PointAtClampsOutsideSegment)
+{
+    // A single crumb 4yd back: PointAt below the segment returns the near end,
+    // above returns the far end (crumb); the exact midpoint interpolates.
+    std::vector<Position> trail = MakeLine(2);        // crumbs at x=0, x=4
+    Position const anchor(4.0f, 0.0f, 0.0f, 0.0f);
+    Position lo, mid, hi;
+    WalkTrailBack(trail, anchor, TrailJumpGuard,
+        [&](TrailStep const& s) -> bool
+        {
+            if (s.index != 0u)
+                return true;                          // segment (x=4)->(x=0), along 0..4
+            lo = s.PointAt(-1.0f);
+            mid = s.PointAt(2.0f);
+            hi = s.PointAt(99.0f);
+            return false;
+        });
+    EXPECT_FLOAT_EQ(lo.GetPositionX(), 4.0f);         // clamped to segStart (near end)
+    EXPECT_FLOAT_EQ(mid.GetPositionX(), 2.0f);        // midpoint
+    EXPECT_FLOAT_EQ(hi.GetPositionX(), 0.0f);         // clamped to crumb (far end)
+}

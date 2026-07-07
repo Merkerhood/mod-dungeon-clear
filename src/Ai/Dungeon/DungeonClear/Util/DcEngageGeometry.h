@@ -183,6 +183,17 @@ public:
     // all read NOT closed.
     static bool IsDoorClosed(GameObject const* go);
 
+    // True only when a COMPLETE navmesh route (PATHFIND_NORMAL) exists from `bot`
+    // to `p`. The camp/trail walk-back pickers choose points off the breadcrumb
+    // trail, but a trail can span a navmesh seam (a drop-down, a ledge, a doorway)
+    // that is short in plan view yet not walkable in a straight line; probing the
+    // candidate with the same PathGenerator the move itself uses guarantees every
+    // committed point is reachable over a generated path, so the move never
+    // straight-lines under the map. Bounded cost: one Detour query per probe, and
+    // callers probe only points they would return. Single shared home for what
+    // were byte-identical file-local twins in DcPullPlanner and DcLeaderSignal.
+    static bool IsNavReachable(Player* bot, Position const& p);
+
     // True if a closed `GAMEOBJECT_TYPE_DOOR` sits on the straight 2D line from
     // `from` to (tx,ty), within `corridorWidth` of it, on the from/target floor
     // (Z), and projecting to the INTERIOR of that chord. Used to veto engaging a

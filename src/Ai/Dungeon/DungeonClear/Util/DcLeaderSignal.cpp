@@ -43,7 +43,6 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Pet.h"
-#include "PathGenerator.h"
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
@@ -62,18 +61,12 @@
 
 namespace
 {
-    // True only when a COMPLETE navmesh route (PATHFIND_NORMAL) exists from the
-    // bot to `p`. The scout-trail picker only returns crumbs the follower can
-    // actually reach over a generated path (a trail can span a navmesh seam that
-    // is short in plan view yet not walkable straight-line). File-local twin of
-    // the same helper in DcPullPlanner.
-    bool IsNavReachable(Player* bot, Position const& p)
+    // Scout-trail reachability probe. Now a thin alias for the shared
+    // DcEngageGeometry::IsNavReachable (was a byte-identical file-local twin here
+    // and in DcPullPlanner). Kept as a local name so the call sites read unchanged.
+    inline bool IsNavReachable(Player* bot, Position const& p)
     {
-        if (!bot)
-            return false;
-        PathGenerator gen(bot);
-        gen.CalculatePath(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
-        return gen.GetPathType() == PATHFIND_NORMAL;
+        return DcEngageGeometry::IsNavReachable(bot, p);
     }
 
     // Leader-election memo. FindLeaderTank is on the hot path: nearly every DC
@@ -846,53 +839,44 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     // LAZILY: only the point at/past the lag distance is probed, and the pre-lag
     // crumbs only as a farthest-first fallback when nothing at the lag was reachable
     // (trail shorter than the lag, or every far point across a seam).
-    constexpr float kJumpGuard = 12.0f;
     std::vector<std::pair<float, Position>> preLag;  // (along, crumb), nearest-first
-    Position prev = tankPos;
-    float along = 0.0f;
-    for (std::size_t i = crumbs.size(); i-- > 0; )
-    {
-        Position const& c = crumbs[i];
-        Position const before = prev;  // segment start (closer to the tank)
-        float const seg = prev.GetExactDist(&c);
-        prev = c;
-        if (seg > kJumpGuard)
-            break;  // discontinuity behind us — stop here
-        float const prevAlong = along;
-        along += seg;
-        if (along < lag)
+    bool found = false;
+    DungeonClearMath::WalkTrailBack(
+        crumbs, tankPos, DungeonClearMath::TrailJumpGuard,
+        [&](DungeonClearMath::TrailStep const& s) -> bool
         {
-            preLag.emplace_back(along, c);
-            continue;
-        }
-        // This segment reaches the lag mark. If it CROSSES it (prevAlong < lag),
-        // interpolate the exact-lag point on [before -> c] instead of snapping to c;
-        // past the first crossing prevAlong >= lag so we just use the crumb.
-        Position target = c;
-        if (prevAlong < lag && seg > 0.01f)
-        {
-            float const t = (lag - prevAlong) / seg;  // (0,1]
-            target = Position(
-                before.GetPositionX() + (c.GetPositionX() - before.GetPositionX()) * t,
-                before.GetPositionY() + (c.GetPositionY() - before.GetPositionY()) * t,
-                before.GetPositionZ() + (c.GetPositionZ() - before.GetPositionZ()) * t);
-        }
-        // Only ever trail to a point the follower can reach over a complete
-        // generated path; one across a navmesh seam would straight-line under the
-        // map. The interpolated point sits on a contiguous (<= kJumpGuard) walked
-        // segment, so it is reachable whenever the bracketing crumb is; fall back to
-        // the crumb if the snap missed, else keep walking back.
-        if (IsNavReachable(bot, target))
-        {
-            out = target;
+            if (s.along < lag)
+            {
+                preLag.emplace_back(s.along, s.crumb);
+                return true;
+            }
+            // This segment reaches the lag mark. If it CROSSES it (alongPrev < lag),
+            // interpolate the exact-lag point on the segment instead of snapping to
+            // the crumb (crumbs are ~4yd apart, so snapping overshoots the lag by up
+            // to one spacing — the scout-lag/trail-arrival deadlock); past the first
+            // crossing alongPrev >= lag and PointAt returns the crumb itself.
+            Position const target = (s.alongPrev < lag) ? s.PointAt(lag) : s.crumb;
+            // Only ever trail to a point the follower can reach over a complete
+            // generated path; one across a navmesh seam would straight-line under
+            // the map. The interpolated point sits on a contiguous walked segment,
+            // so it is reachable whenever the bracketing crumb is; fall back to the
+            // crumb if the snap missed, else keep walking back.
+            if (IsNavReachable(bot, target))
+            {
+                out = target;
+                found = true;
+                return false;
+            }
+            if (IsNavReachable(bot, s.crumb))
+            {
+                out = s.crumb;
+                found = true;
+                return false;
+            }
             return true;
-        }
-        if (IsNavReachable(bot, c))
-        {
-            out = c;
-            return true;
-        }
-    }
+        });
+    if (found)
+        return true;
 
     // Trail shorter than the full lag (or nothing reachable past it): trail the
     // farthest reachable pre-lag crumb (the follower simply stacks a little
@@ -943,31 +927,25 @@ bool DcLeaderSignal::GetLeaderScoutTrail(Player* bot, float lag, std::vector<Pos
     // so the follower rides the centered trail from where it stands up to `lag`
     // behind the tank, never closing past the lag. A 3D segment > kJumpGuard is a
     // drag/teleport seam — stop, nothing beyond it is contiguously behind the tank.
-    constexpr float kJumpGuard = 12.0f;
     int lagIdx = -1;
     int nearIdx = -1;
     float nearDist = std::numeric_limits<float>::max();
-    Position prev = tankPos;
-    float along = 0.0f;
-    for (std::size_t i = crumbs.size(); i-- > 0; )
-    {
-        Position const& c = crumbs[i];
-        float const seg = prev.GetExactDist(&c);
-        prev = c;
-        if (seg > kJumpGuard)
-            break;  // discontinuity behind us — stop here
-        along += seg;
-        if (along < lag)
-            continue;  // still ahead of the lag point — not part of the window
-        if (lagIdx < 0)
-            lagIdx = static_cast<int>(i);
-        float const d = botPos.GetExactDist(&c);
-        if (d < nearDist)
+    DungeonClearMath::WalkTrailBack(
+        crumbs, tankPos, DungeonClearMath::TrailJumpGuard,
+        [&](DungeonClearMath::TrailStep const& s) -> bool
         {
-            nearDist = d;
-            nearIdx = static_cast<int>(i);
-        }
-    }
+            if (s.along < lag)
+                return true;  // still ahead of the lag point — not part of the window
+            if (lagIdx < 0)
+                lagIdx = static_cast<int>(s.index);
+            float const d = botPos.GetExactDist(&s.crumb);
+            if (d < nearDist)
+            {
+                nearDist = d;
+                nearIdx = static_cast<int>(s.index);
+            }
+            return true;
+        });
 
     // No crumb as far back as `lag` (trail shorter than the lag), or the follower
     // is at/ahead of the lag crumb (already caught up): nothing to glide. Let the
@@ -978,7 +956,7 @@ bool DcLeaderSignal::GetLeaderScoutTrail(Player* bot, float lag, std::vector<Pos
     // Follower too far off the trail for a safe straight entry leg to the nearest
     // crumb — fall back to the point step, whose PathGenerator build routes the
     // off-trail approach properly instead of straight-lining it.
-    if (nearDist > kJumpGuard)
+    if (nearDist > DungeonClearMath::TrailJumpGuard)
         return false;
 
     // Build the forward window: live follower position, then the contiguous

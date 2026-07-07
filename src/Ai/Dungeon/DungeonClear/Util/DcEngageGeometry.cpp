@@ -613,6 +613,14 @@ bool DcEngageGeometry::IsDoorClosed(GameObject const* go)
     // portcullises) as closed, parking the tank in front of an open gate.
     return go->GetGoState() == GO_STATE_READY;
 }
+bool DcEngageGeometry::IsNavReachable(Player* bot, Position const& p)
+{
+    if (!bot)
+        return false;
+    PathGenerator gen(bot);
+    gen.CalculatePath(p.GetPositionX(), p.GetPositionY(), p.GetPositionZ());
+    return gen.GetPathType() == PATHFIND_NORMAL;
+}
 bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
                                          float tz, float /*corridorWidth*/)
 {
