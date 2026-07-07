@@ -284,6 +284,85 @@ namespace DungeonClearMath
     // directly above/below (different floor) must not count as a rejoin.
     std::size_t FindTrailRejoin(std::vector<Position> const& crumbs,
                                 Position const& cur, float rejoinRadius);
+
+    // The one shared breadcrumb-trail walk-back primitive (Kernel A). One step of
+    // a backward walk, produced by WalkTrailBack for each crumb newest -> oldest.
+    // `index` is the crumb's index in the source vector. `along` is the
+    // accumulated 3D walked distance from the anchor to `crumb` (the far, away-
+    // from-anchor end of this segment); `alongPrev` is that distance at the near
+    // end `segStart`. `PointAt(d)` returns the point exactly `d` yards back along
+    // THIS segment (linear interpolation, `d` clamped to [alongPrev, along]) — the
+    // ce2e89e scout-lag interpolation fix, now available to every walk-back caller
+    // instead of one. Positions carry Z, so the walk's jump guard (see
+    // WalkTrailBack) and any distance test the caller runs off these fields catch a
+    // vertical seam a 2D measure would miss (the seam-undermap / trail-dance bug
+    // class: "the arrived? test and the target must share a metric").
+    struct TrailStep
+    {
+        std::size_t index;
+        float       alongPrev;
+        float       along;
+        Position    segStart;   // near end (toward the anchor)
+        Position    crumb;      // this crumb (far end, away from the anchor)
+
+        Position PointAt(float d) const
+        {
+            float const span = along - alongPrev;   // == this segment's 3D length
+            if (span <= 0.0001f)
+                return crumb;
+            float t = (d - alongPrev) / span;
+            if (t < 0.0f)
+                t = 0.0f;
+            if (t > 1.0f)
+                t = 1.0f;
+            return Position(
+                segStart.GetPositionX() + (crumb.GetPositionX() - segStart.GetPositionX()) * t,
+                segStart.GetPositionY() + (crumb.GetPositionY() - segStart.GetPositionY()) * t,
+                segStart.GetPositionZ() + (crumb.GetPositionZ() - segStart.GetPositionZ()) * t);
+        }
+    };
+
+    // Walk `crumbs` newest -> oldest starting from `anchor`, accumulating 3D
+    // segment length, and call `visit(step)` for each crumb. Stop when a segment
+    // exceeds `jumpGuard`: a gap that large is a drag / teleport / drop-down seam,
+    // and nothing beyond it is contiguously "behind" the anchor (measuring the
+    // segment in 3D makes the guard catch a vertical drop a 2D measure treats as
+    // contiguous — the "camp/trail lands on the wrong floor" bug). `visit` returns
+    // false to stop the walk early (e.g. the caller accepted a point). Returns the
+    // total distance walked (the last visited step's `along`, or 0 for an empty /
+    // immediately-discontinuous trail). This is the single primitive behind
+    // ComputeSafeCamp, ComputeTrailCamp, GetLeaderScoutTrailPoint and
+    // GetLeaderScoutTrail; each supplies its own acceptance predicate (which may
+    // probe reachability off the map) as `visit`, so the accounting, the jump
+    // guard, and the interpolation live in exactly one tested place.
+    template <class Visit>
+    inline float WalkTrailBack(std::vector<Position> const& crumbs, Position const& anchor,
+                               float jumpGuard, Visit&& visit)
+    {
+        Position prev = anchor;
+        float along = 0.0f;
+        for (std::size_t i = crumbs.size(); i-- > 0; )
+        {
+            Position const& c = crumbs[i];
+            float const seg = prev.GetExactDist(&c);
+            Position const segStart = prev;
+            prev = c;
+            if (seg > jumpGuard)
+                break;
+            float const alongPrev = along;
+            along += seg;
+            TrailStep const step{ i, alongPrev, along, segStart, c };
+            if (!visit(step))
+                break;
+        }
+        return along;
+    }
+
+    // The shared jump-guard threshold for WalkTrailBack: a 3D segment longer than
+    // this is a trail discontinuity. Was re-declared as a local `kJumpGuard = 12`
+    // in each of the four walk-back clones; hoisted here so the four agree by
+    // construction.
+    inline constexpr float TrailJumpGuard = 12.0f;
 }
 
 #endif
