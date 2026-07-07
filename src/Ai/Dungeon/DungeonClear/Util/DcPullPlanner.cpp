@@ -604,7 +604,7 @@ void DcPullPlanner::UpdateDynamicPullMode(PlayerbotAI* botAI, AiObjectContext* c
                               kVerdictGraceMs);
             pull.decisionTarget = ObjectGuid::Empty;
             pull.targetLostSince = 0;
-            apply(false, 0u);
+            apply(false, DcPullDecisionCode::None);
         }
         // HoldNoTarget: within grace — keep verdict, camp hold and daze immunity.
         return;
