@@ -360,9 +360,11 @@ public:
 // pursuers are always path-reachable, so it can never fire there; a combat forced by
 // a script with no unit reference is likewise never touched. Drives
 // DungeonClearBreakStuckCombatAction, which force-clears combat + threat (the same
-// effect as a GM `.combatstop`). Inert the instant anything becomes fightable and
-// outside a live/unpaused DC run. Verdict is the pure
-// DungeonClearMath::IsPhantomCombat + ShouldBreakStuckCombat kernels.
+// effect as a GM `.combatstop`). Inert the instant anything becomes fightable, outside
+// a live/unpaused DC run, and — deliberately — in any RAID zone, where an errant
+// combat drop could reset a boss for the whole raid (the deadlock this recovers is a
+// 5-man problem). Verdict is the pure DungeonClearMath::IsPhantomCombat +
+// ShouldBreakStuckCombat kernels.
 class DungeonClearBreakStuckCombatTrigger : public Trigger
 {
 public:

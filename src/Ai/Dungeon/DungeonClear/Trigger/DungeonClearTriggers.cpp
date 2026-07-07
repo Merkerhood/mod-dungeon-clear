@@ -970,6 +970,20 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
         return false;
     }
 
+    // Never force-clear combat in a RAID zone. A raid encounter is exactly where an
+    // errant combat drop does the most damage (a wrongly-cleared boss reference can
+    // reset the fight for the whole raid), the phantom-combat deadlock this recovers
+    // is a 5-man dungeon-clear problem, and raid bosses routinely hold the raid in
+    // combat with no per-bot reachable target during phase transitions / adds — the
+    // precise shape this would misread. Gate it out entirely rather than trust the
+    // reachability test there.
+    Map* const map = bot->GetMap();
+    if (!map || map->IsRaid())
+    {
+        stuckCombatSinceMs = 0;
+        return false;
+    }
+
     // Confine the force-clear to a live, UNPAUSED DC run this bot participates in.
     // PartyTank resolves to the elected leader (or the leader itself); null means DC
     // is off, paused, or this bot isn't in a DC party — in all three we leave the

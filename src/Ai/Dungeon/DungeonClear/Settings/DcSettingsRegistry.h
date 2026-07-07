@@ -235,9 +235,10 @@ inline constexpr DcSettingDef kDcSettings[] =
     // of a GM `.combatstop`). Keying on REACHABILITY, not distance, is what makes it
     // safe: a fleeing/kiting party's pursuers are always path-reachable, so it never
     // fires there; a bot with combat forced by a script that leaves no unit reference
-    // is likewise never touched. The timeout is LONG by default so an encounter that
-    // intentionally holds the party in combat is never mistaken for a stuck flag; 0
-    // disables the recovery. See DungeonClearBreakStuckCombatTrigger +
+    // is likewise never touched; and it is disabled outright in RAID zones (where an
+    // errant drop could reset a boss). The timeout is LONG by default so an encounter
+    // that intentionally holds the party in combat is never mistaken for a stuck flag;
+    // 0 disables the recovery. See DungeonClearBreakStuckCombatTrigger +
     // DungeonClearMath::ShouldBreakStuckCombat.
     { "StuckCombatTimeout",     DcType::Float, 15,   0, 120,  true  },
 

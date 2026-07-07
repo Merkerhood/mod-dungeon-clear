@@ -774,8 +774,10 @@ DungeonClear.PartyCombatLatch = 3
 #        (the effect of a GM '.combatstop'). It keys on REACHABILITY, not distance, so
 #        it can NEVER fire while a party flees or kites (the pursuers are always path-
 #        reachable) and never touches a script-forced combat that leaves no unit
-#        reference. Kept LONG by default so an encounter that intentionally holds the
-#        party in combat is never mistaken for a stuck flag. Set to 0 to disable it.
+#        reference. It is also disabled outright in RAID zones, where an errant combat
+#        drop could reset a boss for the whole raid. Kept LONG by default so an
+#        encounter that intentionally holds the party in combat is never mistaken for a
+#        stuck flag. Set to 0 to disable it everywhere.
 #
 #        Default: 15
 #
