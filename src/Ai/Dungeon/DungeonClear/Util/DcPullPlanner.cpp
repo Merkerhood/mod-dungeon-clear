@@ -26,7 +26,6 @@
 #include <vector>
 #include "AttackersValue.h"
 #include "CellImpl.h"
-#include "Config.h"
 #include "Creature.h"
 #include "CreatureGroups.h"
 #include "GameObject.h"
