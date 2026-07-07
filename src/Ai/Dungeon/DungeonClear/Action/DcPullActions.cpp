@@ -580,20 +580,20 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
             // is still being fought by the party resets the latch.
             Unit* pulled = pull.pullTarget.IsEmpty()
                 ? nullptr : ObjectAccessor::GetUnit(*bot, pull.pullTarget);
-            if (pulled && pulled->IsAlive() && !pulled->IsInCombat())
+            bool const aliveIdle = pulled && pulled->IsAlive() && !pulled->IsInCombat();
+            // sameTarget compares against the OLD latch before we re-stamp it.
+            bool const sameTarget = aliveIdle && pull.fizzleTarget == pull.pullTarget;
+            bool const handoff = DungeonClearMath::ShouldHandoffFizzledPull(
+                aliveIdle, sameTarget, DC_PULL_FIZZLE_MAX, pull.fizzleCount);
+            if (aliveIdle)
             {
-                if (pull.fizzleTarget == pull.pullTarget)
-                    ++pull.fizzleCount;
-                else
-                {
+                if (!sameTarget)
                     pull.fizzleTarget = pull.pullTarget;
-                    pull.fizzleCount = 1;
-                }
                 // Health and distance discriminate WHY it fizzled: 100% health
                 // means the pack never engaged (or fully reset behind the LOS
                 // corner); reduced health means it fought and silently dropped
                 // combat when its target became unreachable.
-                if (pull.fizzleCount >= DC_PULL_FIZZLE_MAX)
+                if (handoff)
                 {
                     pull.abortTarget = pull.fizzleTarget;
                     DC_PULL_INFO("[DC:{}] advanced-pull: pull of {} fizzled {}x "
@@ -612,10 +612,7 @@ bool DungeonClearPullAction::Execute(Event /*event*/)
                                   DC_PULL_FIZZLE_MAX);
             }
             else
-            {
-                pull.fizzleTarget = ObjectGuid::Empty;
-                pull.fizzleCount = 0;
-            }
+                pull.fizzleTarget = ObjectGuid::Empty;  // count cleared by the kernel
             pull.pullTarget = ObjectGuid::Empty;
 
             DcSetPullPhase(context, DcPullPhase::Idle);
