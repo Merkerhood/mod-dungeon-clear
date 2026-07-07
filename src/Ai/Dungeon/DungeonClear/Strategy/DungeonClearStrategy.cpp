@@ -306,15 +306,18 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
         "dungeon clear assist camp combat",
         { NextAction("dungeon clear assist camp combat", DcRel::AssistCampCombat) }));
 
-    // In-combat regroup for FOLLOWERS: keep the party grouped on the leader tank
-    // during any fight once the leash loosens (advanced/dynamic pull), so a healer
-    // dragged out of LOS/range of the tank closes back in instead of standing idle
-    // while the party dies. Relevance above the stock combat movers (MoveChase ~30)
-    // so it owns the tick over a follower chasing a far target, but BELOW the camp
-    // actions (assist 35, stay-at-camp / pull-maneuver 60) — those own positioning
-    // during an advanced-pull camp, where this trigger stands down anyway. Inert
-    // the instant the bot is back inside the leash / in LOS. See
-    // DungeonClearRegroupCombatTrigger.
+    // In-combat regroup for FOLLOWERS (contribution-gated, Option B): reconnect a
+    // follower to the fight ONLY when the pure kernel says it can't contribute from
+    // where it stands (a DPS with no visible attacker, a healer that can't heal the
+    // tank yet), driving it to a role-correct standoff point with LOS. Relevance is
+    // now BELOW the stock combat movers (MoveChase ~30) and stock critical heals
+    // (30) — the OPPOSITE of the old distance-tether rung: it fires only when stock
+    // movement has no target to chase, so anything stock can do legitimately wins
+    // the tick. Also below the camp actions (assist 35, stay-at-camp / pull-maneuver
+    // 60), which own positioning during an advanced-pull camp where this stands down
+    // anyway. 29 ties AssistCamp (29) but that runs only in the NON-combat engine, so
+    // they never contend. Inert the instant the follower can contribute again. See
+    // DungeonClearRegroupCombatTrigger + DcRegroupDecision.
     triggers.push_back(new TriggerNode(
         "dungeon clear regroup combat",
         { NextAction("dungeon clear regroup combat", DcRel::RegroupCombat) }));

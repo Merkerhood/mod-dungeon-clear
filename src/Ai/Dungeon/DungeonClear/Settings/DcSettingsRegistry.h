@@ -79,16 +79,21 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "RecordDecisions",       DcType::Bool,   0,   0,   1,  true  },
     { "PartyMaxSpread",        DcType::Float, 25,  10,  60,  true  },
 
-    // In-combat regroup: keep followers grouped on the leader tank DURING a fight,
-    // not just on the route. Once the leash loosens (advanced/dynamic pull) a fight
-    // can drift a follower out of the tank's line of sight or far behind, and stock
-    // combat won't pull it back — a healer with no LOS to the tank just stands there
-    // and the party dies. CombatRegroup is the master toggle; CombatRegroupDistance
-    // is the max leash beyond which ANY follower closes back on the tank (a healer
-    // also closes whenever it loses LOS to the tank, inside that distance or not).
-    // See DungeonClearRegroupCombat{Trigger,Action}.
+    // In-combat regroup (contribution-gated, Option B): reconnect a follower to the
+    // fight ONLY when it truly can't contribute from where it stands — a DPS with no
+    // visible attacker, or a healer parked where it couldn't heal the tank when
+    // damage starts — and walk it to a role-correct standoff point with LOS on the
+    // fight (never onto the tank). CombatRegroup is the master toggle.
+    // CombatRegroupDistance is now a HARD OUTER TETHER: past it a follower reconnects
+    // regardless of the contribution test (the drifted-into-nowhere safety net),
+    // bypassing debounce/cooldown. CombatRegroupSlack is subtracted from heal range
+    // in the healer pre-position test (stand a little inside range). CombatRegroup-
+    // Cooldown (seconds) is the re-arm delay after a completed reconnect so the rung
+    // can't flap. See DungeonClearRegroupCombat{Trigger,Action} + DcRegroupDecision.
     { "CombatRegroup",         DcType::Bool,   1,   0,   1,  true  },
-    { "CombatRegroupDistance", DcType::Float, 17,  10,  60,  true  },
+    { "CombatRegroupDistance", DcType::Float, 40,  15, 100,  true  },
+    { "CombatRegroupSlack",    DcType::Float,  8,   0,  20,  true  },
+    { "CombatRegroupCooldown", DcType::Float,  5,   0,  30,  true  },
 
     // Healer LOS reposition. The real fix for a healer that stops healing once
     // the tank is dragged out of line of sight: stock playerbots drops an

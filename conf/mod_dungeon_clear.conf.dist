@@ -181,14 +181,17 @@ DungeonClear.PartyMaxSpread = 25.0
 
 #
 #    DungeonClear.CombatRegroup
-#        1 (default): during combat, keep followers grouped on the leader tank.
-#        A follower that drifts beyond CombatRegroupDistance from the tank closes
-#        back on it, and a HEALER also closes whenever it loses line of sight to
-#        the tank (so it can keep healing). This fixes spread-out parties — common
-#        once advanced/dynamic pull loosens the leash — where a follower (often the
-#        healer) is left out of LOS/range and stock combat never repositions it.
-#        Inert while the party is held passive at an advanced-pull camp (the camp
-#        actions own positioning there). 0 disables, leaving stock combat movement.
+#        1 (default): during combat, reconnect a follower to the fight ONLY when it
+#        truly cannot contribute from where it stands — a DPS with no visible target
+#        (the pack is around a corner / out of sight), or a healer parked where it
+#        could not heal the tank the moment damage starts. It then walks to a
+#        role-correct standoff point WITH line of sight on the fight (a spell-range
+#        ring point for a ranged DPS, a heal-range point near the tank for a healer),
+#        never onto the tank itself. Anything the follower's own combat rotation can
+#        already do wins the tick — this is a fallback reconnector, not a leash, so
+#        it no longer yanks a melee off a kill or interrupts casters at range. Inert
+#        while the party is held passive at an advanced-pull camp (the camp actions
+#        own positioning there). 0 disables, leaving stock combat movement.
 #
 #        Default: 1
 #
@@ -197,15 +200,42 @@ DungeonClear.CombatRegroup = 1
 
 #
 #    DungeonClear.CombatRegroupDistance
-#        Max distance (yards) a follower may drift from the leader tank during
-#        combat before it closes back on the tank (see DungeonClear.CombatRegroup).
-#        Lower keeps the party tighter in fights; higher tolerates more spread.
-#        Has no effect when CombatRegroup = 0.
+#        Hard OUTER TETHER (yards): once a follower drifts this far from the leader
+#        tank it reconnects regardless of the contribution test above — the
+#        drifted-into-nowhere / left-far-behind safety net (bypasses the debounce
+#        and cooldown). Lower snaps a wandering follower back sooner; higher lets a
+#        melee chase a fleeing mob further before it is recalled. Has no effect when
+#        CombatRegroup = 0.
 #
-#        Default: 17.0
+#        Default: 40.0
 #
 
-DungeonClear.CombatRegroupDistance = 17.0
+DungeonClear.CombatRegroupDistance = 40.0
+
+#
+#    DungeonClear.CombatRegroupSlack
+#        Yards subtracted from a healer's heal range in the pre-position test: the
+#        healer reconnects while it is farther than (heal range - slack) from the
+#        tank, so a step of tank movement doesn't drop it straight back out of
+#        range. Higher keeps the healer tighter to the tank. Has no effect when
+#        CombatRegroup = 0.
+#
+#        Default: 8.0
+#
+
+DungeonClear.CombatRegroupSlack = 8.0
+
+#
+#    DungeonClear.CombatRegroupCooldown
+#        Seconds the combat regroup waits before it may re-arm after completing a
+#        reconnect, so it cannot flap the follower on a brief line-of-sight flicker.
+#        The hard outer tether (CombatRegroupDistance) ignores this cooldown. 0
+#        re-arms immediately. Has no effect when CombatRegroup = 0.
+#
+#        Default: 5.0
+#
+
+DungeonClear.CombatRegroupCooldown = 5.0
 
 #
 #    DungeonClear.HealReposition

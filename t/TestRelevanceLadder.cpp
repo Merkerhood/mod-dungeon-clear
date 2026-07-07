@@ -84,6 +84,21 @@ TEST(DungeonClearRelevanceTest, CombatLadderStrictlyDescends)
     EXPECT_GT(DcRel::AssistCampCombat,       DcRel::RegroupCombat);
 }
 
+// Contribution-gated combat regroup (Option B) is pinned BELOW the stock combat
+// movers, unlike the old distance-tether rung that had to sit above them. Stock
+// ACTION_MOVE / MoveChase is 30; the regroup only fires when stock movement has no
+// target to chase, so anything stock can do wins the tick.
+TEST(DungeonClearRelevanceTest, RegroupCombatSitsBelowStockMovers)
+{
+    constexpr float kStockMove = 30.0f;  // ACTION_MOVE / MoveChase (stock playerbots)
+    EXPECT_LT(DcRel::RegroupCombat,    kStockMove);
+    EXPECT_LT(kStockMove,              DcRel::AssistCampCombat);
+    EXPECT_LT(DcRel::AssistCampCombat, DcRel::HealReposition);
+    // And the whole documented chain: RegroupCombat < move < assist < heal-reposition.
+    EXPECT_LT(DcRel::RegroupCombat, DcRel::AssistCampCombat);
+    EXPECT_LT(DcRel::AssistCampCombat, DcRel::HealReposition);
+}
+
 // --- ties, each with the partition that makes them safe -------------------
 
 TEST(DungeonClearRelevanceTest, PartitionedTiesAreEqualByDesign)
@@ -96,6 +111,10 @@ TEST(DungeonClearRelevanceTest, PartitionedTiesAreEqualByDesign)
     EXPECT_FLOAT_EQ(DcRel::BlockingTrash, DcRel::FollowTank);
     // Combat: leader-only (drag) vs follower-only (pin) — role peers.
     EXPECT_FLOAT_EQ(DcRel::PullManeuver, DcRel::StayAtCamp);
+    // Engine-partitioned: RegroupCombat (29) runs ONLY in the combat engine;
+    // AssistCamp (29) ONLY in the non-combat engine. They can never arbitrate on
+    // the same tick, so the shared value is safe (contribution-gate rework).
+    EXPECT_FLOAT_EQ(DcRel::RegroupCombat, DcRel::AssistCamp);
 }
 
 TEST(DungeonClearRelevanceTest, HealRepositionAboveLeaderDriversIsRolePartitioned)

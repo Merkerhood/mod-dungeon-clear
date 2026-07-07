@@ -70,9 +70,19 @@ namespace DcRel
     inline constexpr float PullManeuver           = 60.0f; // leader: drag the pack back to camp
     inline constexpr float StayAtCamp             = 60.0f; // follower: pin at camp (role peer of PullManeuver)
     inline constexpr float AssistCampCombat       = 35.0f; // follower: onto the leader's pack
-    inline constexpr float RegroupCombat          = 33.0f; // follower: close back onto the leash
+    // Contribution-gated combat regroup (Option B). Fires ONLY when the pure kernel
+    // says a follower can't contribute from where it stands (see DcRegroupDecision),
+    // so it no longer needs to out-shout the stock movers — it sits BELOW them
+    // (ACTION_MOVE / MoveChase ~30) and the stock critical heals (30): anything stock
+    // *can* do legitimately wins the tick, and this is the fallback when it can't.
+    // 29 collides numerically with AssistCamp (29, NON-combat engine) — an engine-
+    // partitioned tie (this rung is combat-only), same class as the other asserted
+    // ties; pinned in t/TestRelevanceLadder.cpp. Kept at 29 (not lower) so it stays
+    // above idle/default rungs and above rotation casts that isUseful might mis-report
+    // during an LOS gap.
+    inline constexpr float RegroupCombat          = 29.0f; // follower: contribution-gated reconnect
     // HealReposition (41) also registers in the combat engine, ABOVE AssistCampCombat
-    // (35) / RegroupCombat (33) and the stock reach-heal (40), BELOW the camp owners
+    // (35) / RegroupCombat (29) and the stock reach-heal (40), BELOW the camp owners
     // (60). Healer-only, so it never contends with the leader-only camp owners.
 }
 
