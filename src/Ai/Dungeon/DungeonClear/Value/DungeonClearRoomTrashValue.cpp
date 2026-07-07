@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearRoomTrashValue.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <map>
 #include <optional>
@@ -39,7 +40,7 @@ GuidVector DungeonClearRoomTrashValue::Calculate()
         return out;
 
     // Only meaningful during an active, unpaused run.
-    if (!AI_VALUE(bool, DcKey::Enabled) || AI_VALUE(bool, DcKey::Paused))
+    if (!DcRun::Of(context).enabled || DcRun::Of(context).paused)
     {
         trackedBoss = 0;
         gaveUp = false;

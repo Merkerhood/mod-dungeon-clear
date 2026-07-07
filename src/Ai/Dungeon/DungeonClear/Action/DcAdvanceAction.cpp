@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearActions.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1401,7 +1402,7 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // just parked at. The trigger's IsEnabled gate can't catch an already-queued
     // action, so re-check here and bail before issuing any movement. (Confirmed
     // from a capture: PARK -> auto-pausing -> "advance tick" -> "spline issued".)
-    if (AI_VALUE(bool, DcKey::Paused))
+    if (DcRun::Of(context).paused)
         return false;
 
     // Lay down the breadcrumb trail the advanced pull places its camp from. Only

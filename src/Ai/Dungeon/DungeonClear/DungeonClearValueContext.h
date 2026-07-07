@@ -30,16 +30,12 @@ public:
         creators[DcKey::DungeonBosses] = &DungeonClearValueContext::dungeon_bosses;
         creators[DcKey::NextDungeonBoss] = &DungeonClearValueContext::next_dungeon_boss;
         creators[DcKey::LiveBoss] = &DungeonClearValueContext::dungeon_clear_live_boss;
-        creators[DcKey::Enabled] = &DungeonClearValueContext::dungeon_clear_enabled;
-        creators[DcKey::Paused] = &DungeonClearValueContext::dungeon_clear_paused;
-        creators[DcKey::PauseReason] = &DungeonClearValueContext::dungeon_clear_pause_reason;
-        creators[DcKey::PausedDoor] = &DungeonClearValueContext::dungeon_clear_paused_door;
+        creators[DcKey::RunState] = &DungeonClearValueContext::dungeon_clear_run_state;
         creators[DcKey::Skipped] = &DungeonClearValueContext::dungeon_clear_skipped;
         creators[DcKey::ClearedAnchors] = &DungeonClearValueContext::dungeon_clear_cleared_anchors;
         creators[DcKey::SeenBosses] = &DungeonClearValueContext::dungeon_clear_seen_bosses;
         creators[DcKey::SeenDueEvents] = &DungeonClearValueContext::dungeon_clear_seen_due_events;
         creators[DcKey::StickyBoss] = &DungeonClearValueContext::dungeon_clear_sticky_boss;
-        creators[DcKey::SelectedBoss] = &DungeonClearValueContext::dungeon_clear_selected_boss;
         creators[DcKey::RunInstance] = &DungeonClearValueContext::dungeon_clear_run_instance;
         creators[DcKey::StallReason] = &DungeonClearValueContext::dungeon_clear_stall_reason;
         creators[DcKey::LastSaidReason] = &DungeonClearValueContext::dungeon_clear_last_said_reason;
@@ -74,16 +70,12 @@ private:
     static UntypedValue* dungeon_bosses(PlayerbotAI* ai) { return new DungeonBossesValue(ai); }
     static UntypedValue* next_dungeon_boss(PlayerbotAI* ai) { return new NextDungeonBossValue(ai); }
     static UntypedValue* dungeon_clear_live_boss(PlayerbotAI* ai) { return new DungeonClearLiveBossValue(ai); }
-    static UntypedValue* dungeon_clear_enabled(PlayerbotAI* ai) { return new DungeonClearEnabledValue(ai); }
-    static UntypedValue* dungeon_clear_paused(PlayerbotAI* ai) { return new DungeonClearPausedValue(ai); }
-    static UntypedValue* dungeon_clear_pause_reason(PlayerbotAI* ai) { return new DungeonClearPauseReasonValue(ai); }
-    static UntypedValue* dungeon_clear_paused_door(PlayerbotAI* ai) { return new DungeonClearPausedDoorValue(ai); }
+    static UntypedValue* dungeon_clear_run_state(PlayerbotAI* ai) { return new DungeonClearRunStateValue(ai); }
     static UntypedValue* dungeon_clear_skipped(PlayerbotAI* ai) { return new DungeonClearSkippedValue(ai); }
     static UntypedValue* dungeon_clear_cleared_anchors(PlayerbotAI* ai) { return new DungeonClearClearedAnchorsValue(ai); }
     static UntypedValue* dungeon_clear_seen_bosses(PlayerbotAI* ai) { return new DungeonClearSeenBossesValue(ai); }
     static UntypedValue* dungeon_clear_seen_due_events(PlayerbotAI* ai) { return new DungeonClearSeenDueEventsValue(ai); }
     static UntypedValue* dungeon_clear_sticky_boss(PlayerbotAI* ai) { return new DungeonClearStickyBossValue(ai); }
-    static UntypedValue* dungeon_clear_selected_boss(PlayerbotAI* ai) { return new DungeonClearSelectedBossValue(ai); }
     static UntypedValue* dungeon_clear_run_instance(PlayerbotAI* ai) { return new DungeonClearRunInstanceValue(ai); }
     static UntypedValue* dungeon_clear_stall_reason(PlayerbotAI* ai) { return new DungeonClearStallReasonValue(ai); }
     static UntypedValue* dungeon_clear_last_said_reason(PlayerbotAI* ai) { return new DungeonClearLastSaidReasonValue(ai); }

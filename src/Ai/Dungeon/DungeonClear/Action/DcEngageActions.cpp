@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearActions.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
 #include <cmath>
@@ -540,7 +541,7 @@ bool DungeonClearEngageActionBase::MoveToSkirtingRoomAggro(Unit* target,
 bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
-    if (AI_VALUE(bool, DcKey::Paused))
+    if (DcRun::Of(context).paused)
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
@@ -659,7 +660,7 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
 bool DungeonClearEngageBossAction::Execute(Event /*event*/)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
-    if (AI_VALUE(bool, DcKey::Paused))
+    if (DcRun::Of(context).paused)
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
@@ -690,7 +691,7 @@ bool DungeonClearEngageBossAction::Execute(Event /*event*/)
 bool DungeonClearRoomClearAction::Execute(Event /*event*/)
 {
     // Pause guard — same already-queued-action race as DungeonClearAdvanceAction.
-    if (AI_VALUE(bool, DcKey::Paused))
+    if (DcRun::Of(context).paused)
         return false;
 
     // Nearest remaining room-trash unit (the value already excludes the boss,
@@ -1491,19 +1492,19 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
         // could — auto-pause and force the navigation dead.
         // Set the flag once on transition: the door-blocked trigger gates on
         // !paused, so it won't re-fire and re-announce every tick.
-        if (!AI_VALUE(bool, DcKey::Paused))
+        if (!DcRun::Of(context).paused)
         {
-            context->GetValue<bool>(DcKey::Paused)->Set(true);
+            DcRun::Of(context).paused = true;
             // Record the cause so the status panel shows the door reason rather
             // than a generic hold (manual pause stamps its own reason instead).
-            context->GetValue<std::string&>(DcKey::PauseReason)->Get() =
+            DcRun::Of(context).pauseReason =
                 "a closed door is blocking the path";
             // Stash THIS door's GUID so DungeonClearDoorReopenedTrigger can poll
             // it and auto-resume the instant a player opens it (door is non-null
             // here — the can-open branch above already required it). The null-door
             // fallback path below leaves this empty, so it simply stays manual.
-            context->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(
-                door ? door->GetGUID() : ObjectGuid::Empty);
+            DcRun::Of(context).pausedDoor =
+                door ? door->GetGUID() : ObjectGuid::Empty;
             if (MotionMaster* mm = bot->GetMotionMaster())
                 mm->Clear();
             bot->StopMovingOnCurrentPos();

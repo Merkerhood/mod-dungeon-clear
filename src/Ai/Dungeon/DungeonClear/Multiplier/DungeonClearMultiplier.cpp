@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearMultiplier.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Action.h"
 #include "FollowActions.h"
@@ -101,8 +102,8 @@ float DungeonClearMultiplier::GetValue(Action* action)
             return 0.0f;
     }
 
-    bool const enabled = AI_VALUE(bool, DcKey::Enabled);
-    bool const paused = AI_VALUE(bool, DcKey::Paused);
+    bool const enabled = DcRun::Of(context).enabled;
+    bool const paused = DcRun::Of(context).paused;
 
     // DC off: fully stock behavior, nothing suppressed.
     if (!enabled)

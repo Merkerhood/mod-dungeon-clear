@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearChatActions.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <map>
 #include <optional>
@@ -182,9 +183,9 @@ namespace
         context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
         context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() = DungeonFollowerState{};
 
-        context->GetValue<bool>(DcKey::Paused)->Set(false);
-        context->GetValue<std::string&>(DcKey::PauseReason)->Get().clear();
-        context->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(ObjectGuid::Empty);
+        // Named pause-cluster teardown: paused flag + reason + auto-paused door in
+        // lockstep. Boss progress is deliberately untouched — resume, not fresh run.
+        DcRun::Of(context).OnResume();
         ResetPullTransient(context);
     }
 }
@@ -246,15 +247,15 @@ bool DcOnAction::Execute(Event event)
         botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
 
     // Reset transient state and enable.
-    context->GetValue<bool>(DcKey::Enabled)->Set(true);
+    DcRun::Of(context).enabled = true;
     // Register this tank with the event-driven status pusher so the server
     // begins emitting STATUS packets on state transitions (replacing the
     // addon's old 2s poll). The matching UnmarkActiveTank lives in every
     // disable path: dc off, skip-to-empty, and DisableDungeonClear.
     DcStatusPublisher::MarkActiveTank(bot->GetGUID());
-    context->GetValue<bool>(DcKey::Paused)->Set(false);
-    context->GetValue<std::string&>(DcKey::PauseReason)->Get().clear();
-    context->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(ObjectGuid::Empty);
+    // Named pause-cluster teardown so a fresh run can never start paused / with a
+    // stale reason or auto-paused door. (enabled was just set true above.)
+    DcRun::Of(context).OnResume();
     ResetPullTransient(context);
     // Start the run already in whatever advanced-pull mode was requested. The
     // preference lives in `dungeon clear pull setting` and survives the disabled
@@ -262,7 +263,7 @@ bool DcOnAction::Execute(Event event)
     // moment the run begins (default Off for a bot that never set it). Applied
     // after ResetPullTransient so the On-mode camp seed isn't wiped.
     ApplyPullSetting(bot, context, AI_VALUE(uint32, DcKey::PullSetting));
-    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
+    DcRun::Of(context).selectedBossEntry = 0u;
     context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().clear();
     context->GetValue<std::unordered_set<uint32>&>(DcKey::SeenBosses)->Get().clear();
@@ -349,7 +350,7 @@ bool DcSkipAction::Execute(Event event)
     // the leader). Without this they'd each error "not enabled".
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
-    if (!AI_VALUE(bool, DcKey::Enabled))
+    if (!DcRun::Of(context).enabled)
     {
         botAI->TellError("Dungeon clear is not enabled.");
         return false;
@@ -390,7 +391,7 @@ bool DcSkipAction::Execute(Event event)
 
     // New target gets a clean slate (abort any in-flight pull on the old target).
     ResetPullTransient(context);
-    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(0u);
+    DcRun::Of(context).selectedBossEntry = 0u;
     // New target gets a clean approach FSM: counters, latches, loot-yield anchor,
     // position sentinel + committed boss, and the long-path cache (so the next
     // Advance tick rebuilds the route for the new target) all reset in lockstep.
@@ -414,7 +415,7 @@ bool DcSkipAction::Execute(Event event)
     else
     {
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tSkipped " + current->name + ". No bosses left \xe2\x80\x94 disabling.");
-        context->GetValue<bool>(DcKey::Enabled)->Set(false);
+        DcRun::Of(context).enabled = false;
         DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
     }
 
@@ -432,7 +433,7 @@ bool DcStatusAction::Execute(Event event)
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
-    bool const enabled = AI_VALUE(bool, DcKey::Enabled);
+    bool const enabled = DcRun::Of(context).enabled;
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     auto const& skipped = AI_VALUE(std::unordered_set<uint32>&, DcKey::Skipped);
     std::string const& stall = AI_VALUE(std::string&, DcKey::StallReason);
@@ -847,7 +848,7 @@ bool DcGoAction::Execute(Event event)
     // stay quiet (the command/addon path already targets only the leader).
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
-    if (!AI_VALUE(bool, DcKey::Enabled))
+    if (!DcRun::Of(context).enabled)
     {
         botAI->TellError("Dungeon clear is not enabled. Please enable it first.");
         return false;
@@ -980,11 +981,11 @@ bool DcGoAction::Execute(Event event)
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
     skipped.erase(matched->entry);
 
-    context->GetValue<uint32>(DcKey::SelectedBoss)->Set(matched->entry);
+    DcRun::Of(context).selectedBossEntry = matched->entry;
 
     // Explicitly targeting a boss is a "go now" intent — clear any pause so the
     // tank actually starts moving toward it instead of holding.
-    context->GetValue<bool>(DcKey::Paused)->Set(false);
+    DcRun::Of(context).paused = false;
     // Abort any in-flight pull on the old target before routing to the new one.
     ResetPullTransient(context);
 
@@ -1026,13 +1027,13 @@ bool DcPauseAction::Execute(Event event)
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return true;
 
-    if (!AI_VALUE(bool, DcKey::Enabled))
+    if (!DcRun::Of(context).enabled)
     {
         botAI->TellError("Dungeon clear is not enabled.");
         return false;
     }
 
-    bool const paused = AI_VALUE(bool, DcKey::Paused);
+    bool const paused = DcRun::Of(context).paused;
 
     if (!paused)
     {
@@ -1040,14 +1041,14 @@ bool DcPauseAction::Execute(Event event)
         // follow-tank party-tank lookup all gate on this flag, so the tank
         // stops navigating and followers peel off — exactly like dc off — but
         // all boss progress is preserved for resume.
-        context->GetValue<bool>(DcKey::Paused)->Set(true);
+        DcRun::Of(context).paused = true;
         // Record why so the status panel can distinguish a manual pause from the
         // tank auto-pausing on a door it can't open. Read by BuildStatusPayload.
-        context->GetValue<std::string&>(DcKey::PauseReason)->Get() =
+        DcRun::Of(context).pauseReason =
             "paused at your request";
         // A manual hold is never tied to a door — clear any stale auto-paused
         // door so opening some unrelated door can't auto-resume this pause.
-        context->GetValue<ObjectGuid>(DcKey::PausedDoor)->Set(ObjectGuid::Empty);
+        DcRun::Of(context).pausedDoor = ObjectGuid::Empty;
         // Abort any in-flight pull so the party is released as we hold (the reaper
         // un-passives once the phase is no longer holding). Pull mode itself is
         // kept so resume re-enables the feature.
@@ -1089,7 +1090,7 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
     // the leader via the multiplier / party-tank value.
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
-    if (!AI_VALUE(bool, DcKey::Enabled) || !AI_VALUE(bool, DcKey::Paused))
+    if (!DcRun::Of(context).enabled || !DcRun::Of(context).paused)
         return false;
 
     // Don't unpause straight into a wipe (mirrors `dc on` / the manual resume).
@@ -1124,7 +1125,7 @@ bool DcPullAction::Execute(Event event)
     // Pull mode is settable BEFORE the run starts: when DC is off we just store
     // the preference (no live arming — there's no run to arm) and `dc on` applies
     // it the moment the run begins. When DC is on we apply it live.
-    bool const enabled = AI_VALUE(bool, DcKey::Enabled);
+    bool const enabled = DcRun::Of(context).enabled;
 
     // Tri-state preference: 0 Off, 1 On, 2 Dynamic (see DungeonClearPullSetting-
     // Value). The addon sends an explicit "off"/"on"/"dynamic"; a bare toggle

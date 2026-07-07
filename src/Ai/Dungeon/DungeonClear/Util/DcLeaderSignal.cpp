@@ -59,6 +59,8 @@
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Dungeon/DungeonClear/DcRunState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 namespace
 {
@@ -118,64 +120,44 @@ namespace
         return leader;
     }
 
-    // Leader combat-start stamp. Maps a leader's GUID -> getMSTime() at which its
-    // CURRENT continuous combat began (absent / 0 = not in combat). Maintained
-    // lazily on read: a read observing IsInCombat() with no live stamp records
-    // `now`; a read observing out-of-combat clears it. This lets the threat-lead
-    // window (DungeonClearMath::ShouldReleaseFollower) measure from a FRESH combat
-    // start on the Leeroy / walk-in / general-assist path, which — unlike the
-    // advanced-pull camp — has no pull-phase transition to mark fight start. Same
-    // mutex + lazy-sweep discipline as g_leaderCache; all callers run on the
-    // world/map thread today, but the lock keeps it correct if bot updates ever
-    // move off-thread.
-    constexpr size_t LEADER_COMBAT_SWEEP_SIZE = 256;
-    std::map<ObjectGuid, uint32> g_leaderCombatSince;
-    std::mutex g_leaderCombatMutex;
-
-    // Return (and maintain) the leader's combat-start stamp. 0 while the leader is
-    // out of combat; the millisecond its current combat was first observed once it
-    // is in combat (stable across the fight). MUST be called every tick a leader is
-    // resolved — including ticks where no assist is wanted — so an out-of-combat
-    // window clears the stamp instead of leaving a stale one that would zero the
-    // next fight's lead.
+    // Return (and maintain) the leader's combat-start stamp: 0 while the leader is
+    // out of combat; the getMSTime() its current combat was first observed once it
+    // is in combat (stable across the fight). This lets the threat-lead window
+    // (DungeonClearMath::ShouldReleaseFollower) measure from a FRESH combat start on
+    // the Leeroy / walk-in / general-assist path, which — unlike the advanced-pull
+    // camp — has no pull-phase transition to mark fight start. MUST be called every
+    // tick a leader is resolved — including ticks where no assist is wanted — so an
+    // out-of-combat window clears the stamp instead of leaving a stale one that
+    // would zero the next fight's lead.
+    //
+    // The stamp lives on the leader's own DcRunState (was the g_leaderCombatSince
+    // file-static map + mutex + lazy sweep). No map/mutex is needed: it is a facet
+    // of the leader's run, keyed by the leader implicitly, and every group member
+    // ticks on the same map thread as the leader — the same single-threaded cross-
+    // bot access DcPullContext already relies on. The stamp resets to 0 both here
+    // (out-of-combat read) and on run teardown (DcRunState::Reset).
     uint32 LeaderCombatSince(Player* leader)
     {
         if (!leader)
             return 0;
-        ObjectGuid const guid = leader->GetGUID();
-        bool const inCombat = leader->IsInCombat();
-        uint32 const now = getMSTime();
+        PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+        if (!leaderAI)
+            return 0;
+        DcRunState& run = DcRun::Of(leaderAI);
 
-        std::lock_guard<std::mutex> lock(g_leaderCombatMutex);
-        auto it = g_leaderCombatSince.find(guid);
-        if (!inCombat)
+        if (!leader->IsInCombat())
         {
-            if (it != g_leaderCombatSince.end())
-                g_leaderCombatSince.erase(it);
+            run.leaderCombatSinceMs = 0;
             return 0;
         }
-        if (it != g_leaderCombatSince.end())
-            return it->second;
+        if (run.leaderCombatSinceMs != 0)
+            return run.leaderCombatSinceMs;
 
-        // First in-combat tick: stamp it. Sweep dead / out-of-combat leaders when
-        // the table grows past the bound (leaders that left combat without a read,
-        // disbanded groups), the same lazy janitor g_leaderCache uses.
-        if (g_leaderCombatSince.size() > LEADER_COMBAT_SWEEP_SIZE)
-        {
-            for (auto i = g_leaderCombatSince.begin(); i != g_leaderCombatSince.end();)
-            {
-                Player* p = ObjectAccessor::FindPlayer(i->first);
-                if (!p || !p->IsInCombat())
-                    i = g_leaderCombatSince.erase(i);
-                else
-                    ++i;
-            }
-        }
-        // Never store 0 (it reads as "out of combat"); a leader whose combat began
-        // at getMSTime()==0 latches to 1.
-        uint32 const stamp = now != 0 ? now : 1u;
-        g_leaderCombatSince[guid] = stamp;
-        return stamp;
+        // First in-combat tick: stamp it. Never store 0 (it reads as "out of
+        // combat"); a leader whose combat began at getMSTime()==0 latches to 1.
+        uint32 const now = getMSTime();
+        run.leaderCombatSinceMs = now != 0 ? now : 1u;
+        return run.leaderCombatSinceMs;
     }
 
     // True if ANY living, same-map member of `bot`'s group (the bot itself
@@ -209,19 +191,20 @@ namespace
         return false;
     }
 
-    // Hysteresis latch over AnyGroupMemberInCombat, keyed by leader GUID. See the
-    // PartyCombatLatch registry note: a bare in-combat read is a TOCTOU gate —
-    // combat begins/drops on ticks we don't control, and a single stale/false
-    // reading must not flip the party out of "help" mode. Once ANY member is seen
-    // in combat we stamp the leader's GUID and report engaged for graceMs after
-    // the last positive observation, so a lone false reading (or a one-tick combat
-    // gap from a leashing/repositioning pack) is absorbed instead of snapping the
-    // party back to the far scout-lag ring. The latch is fed every tick the gate
-    // is consulted: every follower evaluates the scout-lag / assist triggers each
-    // tick, so as long as one is alive the leader's combat is observed promptly.
-    std::map<ObjectGuid, uint32> g_partyEngagedLatch;
-    std::mutex g_partyEngagedMutex;
-
+    // Hysteresis latch over AnyGroupMemberInCombat. See the PartyCombatLatch
+    // registry note: a bare in-combat read is a TOCTOU gate — combat begins/drops
+    // on ticks we don't control, and a single stale/false reading must not flip the
+    // party out of "help" mode. Once ANY member is seen in combat we stamp the
+    // leader's run state and report engaged for graceMs after the last positive
+    // observation, so a lone false reading (or a one-tick combat gap from a
+    // leashing/repositioning pack) is absorbed instead of snapping the party back to
+    // the far scout-lag ring. The latch is fed every tick the gate is consulted:
+    // every follower evaluates the scout-lag / assist triggers each tick, so as long
+    // as one is alive the leader's combat is observed promptly.
+    //
+    // The stamp lives on the leader's own DcRunState (was the g_partyEngagedLatch
+    // file-static map + mutex + lazy sweep) — same single-threaded cross-bot access
+    // as LeaderCombatSince above; it resets to 0 on run teardown (DcRunState::Reset).
     bool IsPartyEngagedLatched(Player* leader, uint32 graceMs)
     {
         if (!leader)
@@ -231,34 +214,21 @@ namespace
         if (graceMs == 0)
             return live;
 
-        ObjectGuid const guid = leader->GetGUID();
+        PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+        if (!leaderAI)
+            return live;  // no run state to latch into; instantaneous read
+        DcRunState& run = DcRun::Of(leaderAI);
         uint32 const now = getMSTime();
-        std::lock_guard<std::mutex> lock(g_partyEngagedMutex);
         if (live)
         {
-            g_partyEngagedLatch[guid] = now != 0 ? now : 1u;
+            run.partyEngagedLatchMs = now != 0 ? now : 1u;
             return true;
         }
-        auto it = g_partyEngagedLatch.find(guid);
-        if (it == g_partyEngagedLatch.end())
+        if (run.partyEngagedLatchMs == 0)
             return false;
-        // Sweep the (bounded) table the same lazy way g_leaderCombatSince does.
-        if (g_partyEngagedLatch.size() > LEADER_COMBAT_SWEEP_SIZE)
-        {
-            for (auto i = g_partyEngagedLatch.begin(); i != g_partyEngagedLatch.end();)
-            {
-                if (getMSTimeDiff(i->second, now) >= graceMs)
-                    i = g_partyEngagedLatch.erase(i);
-                else
-                    ++i;
-            }
-            it = g_partyEngagedLatch.find(guid);
-            if (it == g_partyEngagedLatch.end())
-                return false;
-        }
-        if (getMSTimeDiff(it->second, now) < graceMs)
+        if (getMSTimeDiff(run.partyEngagedLatchMs, now) < graceMs)
             return true;
-        g_partyEngagedLatch.erase(it);
+        run.partyEngagedLatchMs = 0;
         return false;
     }
 }
@@ -413,8 +383,8 @@ bool DcLeaderSignal::IsInPausedDungeonClearRun(Player* bot)
         return false;
 
     AiObjectContext* leaderCtx = leaderAI->GetAiObjectContext();
-    return leaderCtx->GetValue<bool>(DcKey::Enabled)->Get() &&
-           leaderCtx->GetValue<bool>(DcKey::Paused)->Get();
+    DcRunState const& run = DcRun::Of(leaderCtx);
+    return run.enabled && run.paused;
 }
 bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
 {
@@ -430,7 +400,7 @@ bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get())
+    if (!DcRun::Of(ctx).enabled)
         return false;
 
     // The leader's active anchored-event step must be a DropInHole.
@@ -487,7 +457,7 @@ bool DcLeaderSignal::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& 
     // from camp — and ReapStrandedPassives would strip their passive — while
     // the tank is still dragging the pack home. Once the phase resolves to
     // Engage/Idle the paused gate takes over and the run holds as usual.
-    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+    if (!DcRun::Of(ctx).enabled ||
         !ctx->GetValue<bool>(DcKey::PullMode)->Get())
         return false;
 
@@ -495,7 +465,7 @@ bool DcLeaderSignal::GetLeaderPullInfo(Player* bot, uint32& phaseOut, Position& 
     if (pull.phase == DcPullPhase::Idle)
         return false;
     if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
-        ctx->GetValue<bool>(DcKey::Paused)->Get())
+        DcRun::Of(ctx).paused)
         return false;
 
     phaseOut = static_cast<uint32>(pull.phase);
@@ -516,7 +486,7 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
+    if (!DcRun::Of(ctx).enabled ||
         !ctx->GetValue<bool>(DcKey::PullMode)->Get())
         return false;
 
@@ -528,7 +498,7 @@ bool DcLeaderSignal::GetLeaderCampHold(Player* bot, Position& campOut, bool& pas
     // GetLeaderPullInfo above; `enabled` stays first so `dc off` still releases
     // everyone instantly.
     if (!IsPullPhaseHolding(static_cast<uint32>(pull.phase)) &&
-        ctx->GetValue<bool>(DcKey::Paused)->Get())
+        DcRun::Of(ctx).paused)
         return false;
     Position const camp = pull.camp;
     // No camp marked yet (pull mode just toggled on, or a reset cleared it): there
@@ -608,8 +578,8 @@ bool DcLeaderSignal::IsLeaderFightAssistWanted(Player* bot)
             return false;
 
         AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-        if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
-            ctx->GetValue<bool>(DcKey::Paused)->Get())
+        if (!DcRun::Of(ctx).enabled ||
+            DcRun::Of(ctx).paused)
             return false;
 
         // General case — no camp in effect (pull mode off, a Leeroy verdict in
@@ -685,8 +655,8 @@ bool DcLeaderSignal::IsLeaderShouldAssistFight(Player* bot)
     if (!botAI)
         return false;
     AiObjectContext* ctx = botAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
-        ctx->GetValue<bool>(DcKey::Paused)->Get())
+    if (!DcRun::Of(ctx).enabled ||
+        DcRun::Of(ctx).paused)
         return false;
 
     // A pull maneuver that is actively holding the party at camp / dragging owns
@@ -726,8 +696,8 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
-        ctx->GetValue<bool>(DcKey::Paused)->Get())
+    if (!DcRun::Of(ctx).enabled ||
+        DcRun::Of(ctx).paused)
         return false;
 
     // Dynamic mode only (pull setting == 2). Off/On have no scouting-then-decide
@@ -1008,8 +978,8 @@ bool DcLeaderSignal::GetLeaderRoomAggroSphere(Player* bot, Position& centerOut,
         return false;
 
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!ctx->GetValue<bool>(DcKey::Enabled)->Get() ||
-        ctx->GetValue<bool>(DcKey::Paused)->Get())
+    if (!DcRun::Of(ctx).enabled ||
+        DcRun::Of(ctx).paused)
         return false;
 
     // Same gate the tank's own skirt uses (RoomAggroSkirtPoint), read off the
