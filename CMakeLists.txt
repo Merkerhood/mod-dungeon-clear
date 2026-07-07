@@ -125,4 +125,6 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    corridor avoids navmesh shortcuts a real player can't follow — e.g. the LBRS
 #    chasm wall-climb. Wired into LongRangePathfinder::BuildCoreFromMesh (now takes
 #    a mapId) and screened in the StridedPathfinder fallback too.)
+# Action/DcHakkar.cpp (Sunken Temple Avatar of Hakkar orchestration split out of
+#   DcEngageActions.cpp — fable2 T2.5)
 # (this comment bumps mtime to force CMake re-glob on next build)
