@@ -11,6 +11,7 @@
 #include "MovementActions.h"
 #include "Position.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 class PlayerbotAI;
@@ -130,11 +131,17 @@ private:
         ChunkedPathfinder::Result const* path = nullptr;    // resolved after EnsureLongPath
         DungeonFollowerState* follower = nullptr;           // long-path follower cursor
         DungeonPathFollower::Hop hop;                       // current hop (single NextHop)
+
+        // Values carried from observation-assembly into the matching effect
+        // handler so the handler need not re-derive them (and cannot drift):
+        uint32 offPathTicks = 0;                 // off-path ticks at a failed Resnap (DoOffPathRebuild log)
+        float  routeDeviation = 0.0f;            // 2D route deviation (DoOffLineRejoin log)
+        std::vector<G3D::Vector3> splineWindow;  // the >=2-pt window (DoIssueSplineWindow)
     };
 
     // A phase step either handles the tick (Execute returns the carried bool)
-    // or falls through to the next phase. Keeps Execute a short, readable ladder
-    // of Try* rungs instead of one 750-line method.
+    // or falls through to the next phase. DoPursue additionally uses Continue to
+    // signal "pursuit abdicated this tick — hand off to the long-path below".
     enum class Step { Continue, ReturnTrue, ReturnFalse };
 
     // Pre-route phases (boss snapshot only).
@@ -143,19 +150,30 @@ private:
     Step TryBetweenPullsRest(AdvanceState const& st);
     Step TryBossNotPresentStall(AdvanceState const& st);
 
-    // Counter-coupled tail, now extracted in declared order. These read/write
-    // the shared approach state, long-path, follower, and hop carried in st.
-    Step TryPosStuckRecovery(AdvanceState& st);
-    Step TryDirectPursuit(AdvanceState& st);
-    Step TryLongPathUnreachable(AdvanceState& st);
-    Step TryOffPathResnap(AdvanceState& st);
+    // Single-observation approach tail (fable2 T2.2 / nav F10). Execute assembles
+    // ONE DungeonClearApproach::Observation across three lazy stages (so the
+    // action still defers the long-path build and NextHop exactly as before),
+    // consults the pure DecideApproach as the sole owner of the ladder order, and
+    // dispatches the verdict to the matching effect handler below. The Fill*
+    // helpers gather the observation (and carry every per-tick bookkeeping side
+    // effect — the stuck/pursuit counters, the off-path Resnap, the escalation
+    // counter). The Do* handlers are pure effects: their guard is the verdict.
+    void FillStuckObs(AdvanceState& st, DungeonClearApproach::Observation& obs);   // Tier A
+    void FillPursuitObs(AdvanceState& st, DungeonClearApproach::Observation& obs); // Tier A
+    void FillPathObs(AdvanceState& st, DungeonClearApproach::Observation& obs);    // Tier B
+    void FillHopObs(AdvanceState& st, DungeonClearApproach::Observation& obs);     // Tier C
+
+    Step DoStuckRecover(AdvanceState& st);
+    Step DoPursue(AdvanceState& st);                 // Continue = hand off to the long-path
+    Step DoLongPathUnreachable(AdvanceState& st);    // PlanRouteWait / FarFromPoly / Swim / Stall
+    Step DoOffPathRebuild(AdvanceState& st);
     Step TryReanchorStaleCursor(AdvanceState& st);   // never terminates; only re-anchors the cursor
-    Step TryHopDoneEscalation(AdvanceState& st);
-    Step TryJumpLeg(AdvanceState& st);
-    Step TryRideLiveGlide(AdvanceState& st);
-    Step TryOffLineRejoin(AdvanceState& st);
-    Step TrySplineWindowIssue(AdvanceState& st);
-    Step TryMoveToFallback(AdvanceState& st);        // terminal: always handles the tick
+    Step DoHopDoneEscalation(AdvanceState& st, DungeonClearApproach::Verdict v);
+    Step DoJumpLeg(AdvanceState& st);
+    Step DoRideLiveGlide(AdvanceState& st);
+    Step DoOffLineRejoin(AdvanceState& st);
+    Step DoIssueSplineWindow(AdvanceState& st);
+    Step DoMoveToFallback(AdvanceState& st);         // terminal: always handles the tick
 };
 
 class DungeonClearEngageTrashAction : public DungeonClearEngageActionBase
