@@ -18,6 +18,7 @@
 #include "ModelIgnoreFlags.h"
 #include "Player.h"
 #include "SharedDefines.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorIndex.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
@@ -202,6 +203,11 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
         // helper folds the type / ignoredByPathing / startOpen-inverted GOState
         // checks; see DcEngageGeometry::IsDoorClosed.
         if (!DcEngageGeometry::IsDoorClosed(go))
+            continue;
+        // Interact-THROUGH gates (Old Hillsbrad's prison door): the objective is
+        // completed from the players' side of the shut door and the event opens
+        // it itself — never flag one as blocking, never pause on it.
+        if (DcEventDoorRegistry::IsNavigationIgnored(go->GetEntry()))
             continue;
         GameObjectTemplate const* tmpl = go->GetGOInfo();
 
