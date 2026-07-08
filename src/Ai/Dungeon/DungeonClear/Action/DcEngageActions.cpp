@@ -1178,6 +1178,31 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
     if (!target || bot->IsWithinDistInMap(target, castRange))
         return false;
 
+    // FINAL WALK-IN: the navmesh thins out at house walls (agent-radius
+    // inflation), so the nav move below can run dry on the nearest mesh point
+    // just OUTSIDE cast reach — and no amount of re-issuing closes the gap,
+    // because NOTHING in the stock movement stack forces its destination
+    // (MoveTo/DoMovePoint/HopTo all pass forceDestination=false; live deadlock:
+    // tank parked ~6-8yd from a wall-side pooled barrel until the step timed
+    // out). Once any move has landed this close but still out of reach, walk
+    // the last yards on a FORCED straight-appended spline to the barrel itself
+    // — a few un-meshed yards of flat house floor.
+    if (bot->GetExactDist(target) <= 15.0f)
+    {
+        SetPhase(context, "objective");
+        if (bot->isMoving())
+            return true;  // a move (nav or forced) is still running — let it land
+        if (!DcMovement::DcMovementAllowed(botAI))
+            return false;
+        DcMovement::ResolveEscortConflict(bot);
+        bot->GetMotionMaster()->Clear();
+        bot->GetMotionMaster()->MovePoint(0, target->GetPositionX(), target->GetPositionY(),
+                                          target->GetPositionZ(), FORCED_MOVEMENT_NONE,
+                                          0.0f, 0.0f, /*generatePath*/ true,
+                                          /*forceDestination*/ true);
+        return true;
+    }
+
     // OWN THE TICK: drive a clean, sustained navigation to the barrel via the DC
     // movement system, so the at-objective StopBot(Hold) — which cancels a plain
     // MovePoint spline every tick — never chops the path and the tank actually

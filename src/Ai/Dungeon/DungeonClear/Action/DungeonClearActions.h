@@ -147,7 +147,11 @@ protected:
     // via the DC movement system, because the normal at-objective StopBot(Hold)
     // cancels a plain MovePoint spline every tick — which crawls over open ground
     // but can never thread a house DOORWAY (the tank stalls at the threshold, "close
-    // but not inside"). Returns false once within cast range, so the caller falls
+    // but not inside"). Also drives the ANCHOR approach while the pooled GO hasn't
+    // streamed in yet, and closes the last yards with a FORCED-destination walk-in:
+    // the navmesh thins at house walls, so a plain nav move can run dry just outside
+    // cast reach and deadlock (nothing else in the movement stack forces its
+    // destination). Returns false once within cast range, so the caller falls
     // through to Drive and RunStep fires the GO.
     bool DriveUseItemOnGO(EventStep const& step);
 };
