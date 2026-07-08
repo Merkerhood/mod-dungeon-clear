@@ -1121,11 +1121,11 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
         return false;
 
     bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
-    // Interaction reach (mirrors the executor's DC_EVENT_GO_USE_RANGE): the plant
-    // is a real item-use whose successful OPEN_LOCK ends in a SendLoot that
-    // range-checks the GO at interaction distance, so the tank must be AT the
-    // barrel — not plinking it from across the house.
-    float const castRange = step.radius > 0.0f ? step.radius : 5.0f;
+    // Interaction reach (mirrors the executor's DC_EVENT_GO_PLANT_REACH — keep in
+    // sync): STRICT world distance, well inside the GO interact box the item-use
+    // range-checks against (live-measured failing at 6.0yd), so the tank plants
+    // from AT the barrel — the forced walk-in below can always deliver that.
+    float const castRange = step.radius > 0.0f ? step.radius : 3.5f;
 
     // Resolve the target GO nearest the step's anchor, capped at 25yd of it (same
     // pick as RunStep's DC_EVENT_GO_ANCHOR_MATCH — keep the two in sync). The cap
@@ -1173,21 +1173,28 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
         return true;
     }
 
-    // Nothing to drive to, or already in cast range -> hand back to Drive; RunStep
-    // fires the GO (or, if the target is not loaded yet, HopTo's the anchor to load it).
-    if (!target || bot->IsWithinDistInMap(target, castRange))
+    if (!target)
+        return false;  // RunStep HopTo's the anchor to load it
+
+    float const gap = bot->GetExactDist(target);
+    bool const los = DungeonEventExecutor::HasGameObjectLos(bot, target);
+
+    // Arrived: strictly in reach AND vmap-visible (RunStep's exact predicate) ->
+    // hand back to Drive; RunStep fires the GO.
+    if (gap <= castRange && los)
         return false;
 
-    // FINAL WALK-IN: the navmesh thins out at house walls (agent-radius
-    // inflation), so the nav move below can run dry on the nearest mesh point
-    // just OUTSIDE cast reach — and no amount of re-issuing closes the gap,
-    // because NOTHING in the stock movement stack forces its destination
-    // (MoveTo/DoMovePoint/HopTo all pass forceDestination=false; live deadlock:
-    // tank parked ~6-8yd from a wall-side pooled barrel until the step timed
-    // out). Once any move has landed this close but still out of reach, walk
-    // the last yards on a FORCED straight-appended spline to the barrel itself
-    // — a few un-meshed yards of flat house floor.
-    if (bot->GetExactDist(target) <= 15.0f)
+    // FINAL WALK-IN — only with LINE OF SIGHT. The navmesh thins out at house
+    // walls (agent-radius inflation), so the nav move below can run dry on the
+    // nearest mesh point just OUTSIDE cast reach — and no amount of re-issuing
+    // closes the gap, because NOTHING in the stock movement stack forces its
+    // destination (MoveTo/DoMovePoint/HopTo all pass forceDestination=false;
+    // live deadlock: tank parked ~6yd out until the step timed out). Once any
+    // move has landed this close but still out of reach, walk the last yards on
+    // a FORCED straight-appended spline to the barrel itself. LOS-gated so this
+    // can never force the tank INTO a wall the barrel sits behind — 3D distance
+    // is blind to thin house walls (second live deadlock).
+    if (gap <= 15.0f && los)
     {
         SetPhase(context, "objective");
         if (bot->isMoving())
@@ -1200,6 +1207,20 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
                                           target->GetPositionZ(), FORCED_MOVEMENT_NONE,
                                           0.0f, 0.0f, /*generatePath*/ true,
                                           /*forceDestination*/ true);
+        return true;
+    }
+
+    // Close but WALLED OFF (no LOS): the barrel is on the other side of a wall,
+    // so never walk (or cast) toward it directly — navigate to the step's anchor
+    // (the house's candidate centroid ~= its interior/doorway area) until the
+    // doorway opens line of sight, then the walk-in above takes over.
+    if (gap <= 15.0f && !los && haveAnchor &&
+        bot->GetExactDist(step.x, step.y, step.z) > 4.0f)
+    {
+        SetPhase(context, "objective");
+        DcMoveTo(bot->GetMapId(), step.x, step.y, step.z, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false,
+                 MovementPriority::MOVEMENT_NORMAL);
         return true;
     }
 

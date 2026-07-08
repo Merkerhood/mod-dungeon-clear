@@ -11,6 +11,7 @@
 
 class Player;
 class Creature;
+class GameObject;
 class AiObjectContext;
 
 // Result of running ONE event step on a tick.
@@ -109,6 +110,15 @@ public:
     // place. The caller is responsible for being in interact range and (if it
     // matters) facing the NPC.
     static bool SelectGossip(Player* bot, Creature* npc, int32 option);
+
+    // Static-geometry (vmap-only) line of sight from the bot to a step's
+    // GameObject, eye-bumped on both ends. Shared by the UseItemOnGO RunStep and
+    // its approach driver (DriveUseItemOnGO) so "arrived" means the SAME thing in
+    // both: in reach AND visible. Vmap-only because the check must see through
+    // other dynamic GOs but never through a house wall — a bot standing within
+    // cast reach of a barrel on the FAR SIDE of a wall would otherwise spam-cast
+    // through it forever (live deadlock).
+    static bool HasGameObjectLos(Player* bot, GameObject* go);
 
     // --- Conditional activation (milestone 2) ----------------------------
 

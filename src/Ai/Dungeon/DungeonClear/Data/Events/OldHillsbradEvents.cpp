@@ -155,10 +155,11 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
             // Real item-use per barrel (the pack of bombs is the barrel lock's KEY
             // ITEM: spell 32744 is OPEN_LOCK vs lock 1682, so only the item-use
             // cast hits and fires the SmartAI SPELLHIT — the Deadmines-cannon
-            // rule). Tight cast reach (executor default 5yd interaction distance)
-            // forces the tank to walk INTO each house rather than plink distant
-            // barrels from the first one; the step latches Done on the barrel
-            // leaving GO_READY (a landed plant activates the goober for 86400s).
+            // rule). Tight cast reach (executor default 3.5yd strict + vmap LOS —
+            // the GO interact box live-failed at 6.0yd, and a wall between tank
+            // and barrel must never count as arrived) forces the tank to walk
+            // INTO each house; the step latches Done on the barrel leaving
+            // GO_READY (a landed plant activates the goober for 86400s).
             // One step per HOUSE, anchored on the house's pooled-candidate
             // centroid (see the pooling note above) — the executor finds whichever
             // of the 3 candidate spots this instance rolled. 120s per step: the

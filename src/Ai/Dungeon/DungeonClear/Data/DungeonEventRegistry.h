@@ -429,10 +429,12 @@ public:
     // full item-use cast path (granting the item first if the bags lack it;
     // `spellId` is the item's use-spell, kept for validation and logging), so its
     // SmartAI SPELLHIT fires (the Durnholde barrel-bomb). `radius` is the CAST
-    // REACH (0 => 5yd interaction distance — the landed OPEN_LOCK range-checks the
-    // GO, and the tight reach makes the tank fire the barrel it is AT, not distant
-    // ones). The approach INTO the house is driven tick-owning (DriveUseItemOnGO)
-    // so the tank threads the doorway.
+    // REACH (0 => 3.5yd STRICT world distance — the landed OPEN_LOCK range-checks
+    // the GO's interact box, live-measured failing at 6yd; arrival additionally
+    // requires vmap LINE OF SIGHT so a barrel across a thin wall never reads as
+    // reachable). The approach INTO the house is driven tick-owning
+    // (DriveUseItemOnGO), which threads the doorway, detours to the anchor when
+    // the barrel is walled off, and force-walks the final un-meshed yards.
     EventBuilder& UseItemOnGO(uint32 itemId, uint32 spellId, uint32 goEntry,
                               float x, float y, float z, float radius = 0.0f);
     // Drop the party down a narrow vertical hole (see EventStepKind::DropInHole).

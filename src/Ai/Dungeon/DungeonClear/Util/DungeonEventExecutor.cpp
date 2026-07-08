@@ -16,6 +16,8 @@
 #include "GossipDef.h"
 #include "Group.h"
 #include "InstanceScript.h"
+#include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
@@ -50,6 +52,13 @@ namespace
     // Range from which a creature can be gossiped (mirrors the core's
     // GetNPCIfCanInteractWith INTERACTION_DISTANCE check; kept a hair tighter).
     constexpr float DC_EVENT_GOSSIP_RANGE = 5.0f;
+    // UseItemOnGO cast reach: STRICT world distance (never the object-size-
+    // inflated IsWithinDistInMap, which passes at ~6yd+ where the item use
+    // already fails). The real gate is GameObject::IsAtInteractDistance — the
+    // barrel's model box grown by ~5yd, which live-measured failing at 6.0yd
+    // and passing at 5.5 (per-barrel, orientation-dependent). 3.5yd sits well
+    // inside every box; the driver's forced walk-in can always deliver it.
+    constexpr float DC_EVENT_GO_PLANT_REACH = 3.5f;
     // UseItemOnGO target pick: a candidate GO counts as "the step's GO" only
     // within this of the step's (x,y,z) anchor. POOLED spawns make this load-
     // bearing (Old Hillsbrad's barrels: 5 pools of 3 candidate positions each,
@@ -152,6 +161,22 @@ bool DungeonEventExecutor::IsOnDropLanding(Player* bot, EventStep const& step)
     bool const fallSplineRunning =
         mm && mm->GetCurrentMovementGeneratorType() == EFFECT_MOTION_TYPE;
     return !fallSplineRunning && bot->GetPositionZ() < step.z - 15.0f;
+}
+
+bool DungeonEventExecutor::HasGameObjectLos(Player* bot, GameObject* go)
+{
+    if (!bot || !go)
+        return false;
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+    // Eye-bumped, vmap-only ray (same pattern as FindStandoffPoint): sees over
+    // floor clutter and through dynamic GOs, never through a house wall.
+    return map->isInLineOfSight(bot->GetPositionX(), bot->GetPositionY(),
+                                bot->GetPositionZ() + 2.0f, go->GetPositionX(),
+                                go->GetPositionY(), go->GetPositionZ() + 1.0f,
+                                bot->GetPhaseMask(), LINEOFSIGHT_CHECK_VMAP,
+                                VMAP::ModelIgnoreFlags::Nothing);
 }
 
 bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option)
@@ -659,10 +684,11 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
 
             bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
             // Interaction reach: the successful OPEN_LOCK ends in Player::SendLoot,
-            // which range-checks the GO at interaction distance — from farther out
-            // the SPELLHIT may land but the goober never activates (and our success
-            // latch below never trips). Matches DC_EVENT_GO_USE_RANGE.
-            float const castRange = step.radius > 0.0f ? step.radius : DC_EVENT_GO_USE_RANGE;
+            // which range-checks against the GO's interact box — from farther out
+            // the cast fails silently, the goober never activates, and the success
+            // latch below never trips (live: a tank parked at 6.0yd spam-cast for
+            // 151s). STRICT world distance + LOS; see DC_EVENT_GO_PLANT_REACH.
+            float const castRange = step.radius > 0.0f ? step.radius : DC_EVENT_GO_PLANT_REACH;
 
             std::list<GameObject*> gos;
             bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
@@ -699,7 +725,14 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             if (target->getLootState() != GO_READY)
                 return StepResult::Done;
 
-            if (!bot->IsWithinDistInMap(target, castRange))
+            // Arrived = strictly in reach AND vmap-visible. The LOS half is load-
+            // bearing: a tank within reach of a barrel on the FAR SIDE of a wall
+            // (thin house walls; 3D distance ignores them) would otherwise
+            // spam-cast through the wall forever — the cast fails silently and
+            // the latch never trips. DriveUseItemOnGO uses the same predicate,
+            // and while it is active it owns the approach; the HopTo here is only
+            // the fallback when the driver isn't in the loop.
+            if (bot->GetExactDist(target) > castRange || !HasGameObjectLos(bot, target))
             {
                 HopTo(bot, target->GetPositionX(), target->GetPositionY(),
                       target->GetPositionZ());
