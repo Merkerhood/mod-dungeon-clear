@@ -800,24 +800,33 @@ namespace
     // included) so the party keeps up when the escortee mounts and rides off. Old
     // Hillsbrad's Thrall gallops to Tarren Mill at 1.6x and his npc_escortAI HARD-
     // RESETS him if no party member stays within 100yd (DEFAULT_MAX_PLAYER_DISTANCE)
-    // — so without this the ride resets the escort every time. Never slows the party
-    // below normal (floored at 1.0) and never touches a human (client desync).
-    // Idempotent per tick: only re-sends when the rate actually changed, so it is a
-    // no-op for an un-mounted escort (Wailing Caverns' Disciple, always rate 1.0).
+    // — so without this the ride resets the escort every time. Never touches a
+    // human (client desync).
+    //
+    // rate > 1: FORCE-match every bot (the keep-up requirement outranks whatever
+    // speed auras they carry). rate <= 1: RESTORE via UpdateSpeed, which recomputes
+    // the rate from the bot's real auras — dropping the non-aura escort boost while
+    // PRESERVING a legitimate speed buff (Cheetah, Ghost Wolf), which a flat
+    // SetSpeed(1.0) would stomp every tick for the whole unmounted escort. Both
+    // paths are idempotent per tick (SetSpeed early-outs on an unchanged rate), so
+    // this is a no-op for an un-mounted escort (Wailing Caverns' Disciple).
     void ApplyEscortPartyRunSpeed(Player* leader, float rate)
     {
         if (!leader)
             return;
-        if (rate < 1.0f)
-            rate = 1.0f;
-        auto boost = [rate](Player* p)
+        auto apply = [rate](Player* p)
         {
             if (!p || !p->IsInWorld() || !GET_PLAYERBOT_AI(p))
                 return;
-            if (std::fabs(p->GetSpeedRate(MOVE_RUN) - rate) > 0.01f)
-                p->SetSpeed(MOVE_RUN, rate, /*forced*/ true);
+            if (rate > 1.01f)
+            {
+                if (std::fabs(p->GetSpeedRate(MOVE_RUN) - rate) > 0.01f)
+                    p->SetSpeed(MOVE_RUN, rate, /*forced*/ true);
+            }
+            else
+                p->UpdateSpeed(MOVE_RUN, /*forced*/ true);
         };
-        boost(leader);
+        apply(leader);
         Group* group = leader->GetGroup();
         if (!group)
             return;
@@ -828,7 +837,7 @@ namespace
                 continue;
             if (member->GetMapId() != leader->GetMapId())
                 continue;
-            boost(member);
+            apply(member);
         }
     }
 
@@ -1112,7 +1121,11 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
         return false;
 
     bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
-    float const castRange = step.radius > 0.0f ? step.radius : 8.0f;
+    // Interaction reach (mirrors the executor's DC_EVENT_GO_USE_RANGE): the plant
+    // is a real item-use whose successful OPEN_LOCK ends in a SendLoot that
+    // range-checks the GO at interaction distance, so the tank must be AT the
+    // barrel — not plinking it from across the house.
+    float const castRange = step.radius > 0.0f ? step.radius : 5.0f;
 
     // Resolve the target GO nearest the step's anchor (same pick as RunStep — the
     // anchor sits on the specific barrel, so five same-entry barrels stay distinct).
@@ -1132,6 +1145,12 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
             target = g;
         }
     }
+
+    // Already planted (a landed plant leaves the goober GO_ACTIVATED for its
+    // 86400s autoclose) -> don't walk to it at all; RunStep's success latch
+    // reports the step Done from wherever the tank stands.
+    if (target && target->getLootState() != GO_READY)
+        return false;
 
     // Nothing to drive to, or already in cast range -> hand back to Drive; RunStep
     // fires the GO (or, if the target is not loaded yet, HopTo's the anchor to load it).

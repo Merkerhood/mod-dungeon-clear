@@ -120,17 +120,21 @@ enum class EventStepKind : uint8
                              // so a tick-gap restart never re-teleports. Anchored only
                              // (one-way — the bot can't path back up).
     UseItemOnGO,             // USE a quest item ON a positioned GameObject: grant the
-                             // item (itemId) if the bags lack it, then fire its use-
-                             // spell (spellId) AT the GO of goEntry nearest (x,y,z),
-                             // TRIGGERED, so the GO's SmartAI SMART_EVENT_SPELLHIT
+                             // item (itemId) if the bags lack it, then USE it (the full
+                             // CastItemUseSpell path) AT the GO of goEntry nearest
+                             // (x,y,z), so the GO's SmartAI SMART_EVENT_SPELLHIT
                              // fires. This is the "plant a bomb on a barrel" mechanic
                              // (Old Hillsbrad's Durnholde barrels — item 25853, spell
-                             // 32744, GO 182589 — whose SmartAI counts a spellhit, not
-                             // a Use()). Distinct from UseGameObject (Use()s the GO —
-                             // never delivers a SPELLHIT) and UseItem (self-cast — no
-                             // GO target). The (x,y,z) anchor picks a SPECIFIC GO, so
-                             // five same-entry barrels are hit as five DISTINCT GOs.
-                             // One-shot: cast and Done (the GO does not change state).
+                             // 32744, GO 182589). The use-spell is OPEN_LOCK against
+                             // the GO's ITEM lock, so it only hits when cast FROM the
+                             // key item — the Deadmines-cannon gotcha; a bare or
+                             // triggered CastSpell never registers. Distinct from
+                             // UseGameObject (Use()s the GO — never delivers a
+                             // SPELLHIT) and UseItem (self-cast — no GO target). The
+                             // (x,y,z) anchor picks a SPECIFIC GO, so five same-entry
+                             // barrels are hit as five DISTINCT GOs. Done once the GO
+                             // leaves GO_READY (the landed plant Uses the goober — a
+                             // stable per-GO success latch, idempotent across restarts).
 };
 
 // One typed primitive. Fields are a shared bag — only those relevant to `kind`
@@ -421,11 +425,14 @@ public:
                                  float threatZBand = 20.0f, float searchRadius = 80.0f,
                                  int32 doneDataId = -1, uint32 doneDataMin = 0);
     // Use a quest item ON a positioned GameObject (see EventStepKind::UseItemOnGO):
-    // approach the `goEntry` GO nearest (x,y,z), then cast `spellId` (granting
-    // `itemId` first for the cast-item context) AT it, so its SmartAI SPELLHIT fires
-    // (the Durnholde barrel-bomb). `radius` is the CAST REACH (0 => ~8yd — tight so
-    // the tank fires the barrel it is AT, not distant ones). The approach INTO the
-    // house is driven tick-owning (DriveUseItemOnGO) so the tank threads the doorway.
+    // approach the `goEntry` GO nearest (x,y,z), then USE `itemId` on it via the
+    // full item-use cast path (granting the item first if the bags lack it;
+    // `spellId` is the item's use-spell, kept for validation and logging), so its
+    // SmartAI SPELLHIT fires (the Durnholde barrel-bomb). `radius` is the CAST
+    // REACH (0 => 5yd interaction distance — the landed OPEN_LOCK range-checks the
+    // GO, and the tight reach makes the tank fire the barrel it is AT, not distant
+    // ones). The approach INTO the house is driven tick-owning (DriveUseItemOnGO)
+    // so the tank threads the doorway.
     EventBuilder& UseItemOnGO(uint32 itemId, uint32 spellId, uint32 goEntry,
                               float x, float y, float z, float radius = 0.0f);
     // Drop the party down a narrow vertical hole (see EventStepKind::DropInHole).

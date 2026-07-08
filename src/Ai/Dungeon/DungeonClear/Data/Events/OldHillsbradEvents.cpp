@@ -137,9 +137,13 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
             // is generous because the exact anchor spot is blocked ~13yd out (the
             // tank can't stand on it), so we treat "near the courtyard" as arrived.
             .MoveTo(OH_KEEP_X, OH_KEEP_Y, OH_KEEP_Z, /*radius*/ 30.0f)
-            // Spell-only (the barrel's SmartAI SPELLHIT does the SetData — one count
-            // each). Tight cast reach (executor default 8yd) forces the tank to walk
-            // INTO each house rather than plink distant barrels from the first one.
+            // Real item-use per barrel (the pack of bombs is the barrel lock's KEY
+            // ITEM: spell 32744 is OPEN_LOCK vs lock 1682, so only the item-use
+            // cast hits and fires the SmartAI SPELLHIT — the Deadmines-cannon
+            // rule). Tight cast reach (executor default 5yd interaction distance)
+            // forces the tank to walk INTO each house rather than plink distant
+            // barrels from the first one; the step latches Done on the barrel
+            // leaving GO_READY (a landed plant activates the goober for 86400s).
             .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2119.21f, 42.49f, 53.78f)
             .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2108.03f, 54.95f, 53.65f)
             .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, 2100.11f, 43.54f, 53.56f)

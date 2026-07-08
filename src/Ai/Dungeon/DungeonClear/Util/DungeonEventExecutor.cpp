@@ -29,7 +29,10 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 namespace
 {
@@ -543,6 +546,28 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             bot->GetMotionMaster()->Clear();
             bot->NearTeleportTo(step.landX, step.landY, step.landZ, bot->GetOrientation());
             PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
+            // The leader just moved a long way in zero ticks: every cached route
+            // artifact — the long-path polyline, its follower cursor, and any
+            // in-flight async build (submitted from the PRE-teleport position) —
+            // now describes the wrong start. Left alone, the next Advance re-enters
+            // the stale polyline with a straight opening spline back toward the
+            // old cursor and the tank sprints the wrong way (seen live: post-Brazen
+            // drop-off, tank ran back toward the Old Hillsbrad entrance until a
+            // stray mob interrupted it). Invalidate it all; EnsureLongPath rebuilds
+            // from the post-teleport position (and its start-drift guard discards
+            // any result the old position already baked).
+            {
+                DcApproachState& appr =
+                    context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+                appr.longPathTargetEntry = 0;
+                appr.longPathExpiresMs = 0;
+                appr.pendingPathJob = 0;   // orphaned result reaped by the mailbox sweep
+                appr.pendingPathSinceMs = 0;
+                context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
+                context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() =
+                    DungeonFollowerState{};
+                context->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
+            }
             LOG_DEBUG("playerbots.dungeonclear",
                       "[dungeon-clear] {} TeleportParty: ({:.1f},{:.1f},{:.1f}) -> "
                       "landing ({:.1f},{:.1f},{:.1f})",
@@ -605,19 +630,28 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
         case EventStepKind::UseItemOnGO:
         {
             // Plant a bomb on the barrel the step's (x,y,z) anchor sits on. The
-            // barrel's only interaction is SMART_EVENT_SPELLHIT of the bomb spell
-            // (a plain Use() does nothing), so we cast the spell AT the GO, triggered.
-            // The approach INTO the house is driven tick-owning (DriveUseItemOnGO);
-            // this RunStep resolves the target and fires once the tank is at it.
+            // barrel's only interaction is SMART_EVENT_SPELLHIT of the bomb spell,
+            // and that spell (32744) is SPELL_EFFECT_OPEN_LOCK against the barrel's
+            // ITEM lock (1682, key = the bomb pack) — the exact Deadmines-cannon
+            // shape: the cast only reaches the GO when fired FROM the key item via
+            // the full item-use path (CastItemUseSpell). A bare/triggered
+            // CastSpell(go, spellId) does not reproduce the item-use cast and never
+            // registers. The approach INTO the house is driven tick-owning
+            // (DriveUseItemOnGO); this RunStep resolves the target and fires once
+            // the tank is at it.
             //
             // Target the goEntry GO NEAREST THE ANCHOR (not nearest the tank): the
             // party bombs one barrel per house and the barrels share an entry, so an
             // anchor-relative pick keeps five barrels five DISTINCT targets.
-            if (step.spellId == 0 || step.goEntry == 0)
-                return StepResult::Done;
+            if (step.itemId == 0 || step.spellId == 0 || step.goEntry == 0)
+                return StepResult::Done;  // mis-authored step: skip loudly in review, not a stall
 
             bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
-            float const castRange = step.radius > 0.0f ? step.radius : 8.0f;
+            // Interaction reach: the successful OPEN_LOCK ends in Player::SendLoot,
+            // which range-checks the GO at interaction distance — from farther out
+            // the SPELLHIT may land but the goober never activates (and our success
+            // latch below never trips). Matches DC_EVENT_GO_USE_RANGE.
+            float const castRange = step.radius > 0.0f ? step.radius : DC_EVENT_GO_USE_RANGE;
 
             std::list<GameObject*> gos;
             bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
@@ -642,6 +676,15 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                     HopTo(bot, step.x, step.y, step.z);
                 return StepResult::Running;
             }
+
+            // SUCCESS LATCH: a landed plant Uses the goober (OPEN_LOCK -> SendLoot
+            // -> SetLootState(GO_ACTIVATED)), and the barrel's 86400s autoclose
+            // keeps it activated for the rest of the run — so "left GO_READY" is a
+            // stable, per-barrel "this one is planted". Also makes the step
+            // idempotent across an event restart.
+            if (target->getLootState() != GO_READY)
+                return StepResult::Done;
+
             if (!bot->IsWithinDistInMap(target, castRange))
             {
                 HopTo(bot, target->GetPositionX(), target->GetPositionY(),
@@ -649,22 +692,32 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                 return StepResult::Running;
             }
 
-            // At the barrel. Grant the quest item so the cast carries its item
-            // context (bots never ran the questline that awards it), then fire the
-            // bomb spell AT the GO — the SmartAI SPELLHIT counts it.
+            // The plant cast (item use, ~2s "Opening") is already in flight — let
+            // it finish; re-casting every tick would interrupt it forever.
+            if (bot->IsNonMeleeSpellCast(false))
+                return StepResult::Running;
+
+            // At the barrel. Grant the quest item (bots never ran the questline
+            // that awards it) and USE it on the GO — the item-use cast supplies the
+            // lock's key context, the spell hits, and the SmartAI SPELLHIT counts it.
             Item* item = step.itemId ? bot->GetItemByEntry(step.itemId) : nullptr;
             if (step.itemId && !item)
             {
                 bot->AddItem(step.itemId, 1);
                 item = bot->GetItemByEntry(step.itemId);
             }
+            if (!item)
+                return StepResult::Running;  // bags full this tick — retry
             LOG_INFO("playerbots.dungeonclear",
-                     "[dungeon-clear] {} event-step UseItemOnGO: cast {} on GO {} '{}' "
-                     "(dist {:.1f})",
-                     bot->GetName(), step.spellId, target->GetGUID().ToString(),
-                     target->GetName(), bot->GetExactDist(target));
-            bot->CastSpell(target, step.spellId, /*triggered*/ true, item);
-            return StepResult::Done;
+                     "[dungeon-clear] {} event-step UseItemOnGO: use item {} (spell {}) "
+                     "on GO {} '{}' (dist {:.1f})",
+                     bot->GetName(), step.itemId, step.spellId,
+                     target->GetGUID().ToString(), target->GetName(),
+                     bot->GetExactDist(target));
+            SpellCastTargets goTargets;
+            goTargets.SetGOTarget(target);
+            bot->CastItemUseSpell(item, goTargets, 0, 0);
+            return StepResult::Running;  // the lootState latch above confirms + advances
         }
 
         default:

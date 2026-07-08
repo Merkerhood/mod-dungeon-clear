@@ -158,6 +158,28 @@ namespace DcActionShared
         ctx->GetValue<bool>(DcKey::PullMode)->Set(false);
         if (bot)
             DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
+        // Escort mounted-ride safety net: the escort driver speed-matches party
+        // BOTS to a mounted escortee (Old Hillsbrad's Thrall, 1.6x) and restores
+        // them when the leg ends — but a `dc off` / party-death disable mid-ride
+        // routes through HERE, after which the driver never runs again and the
+        // boost would be stranded until some aura recalc happens to rewrite the
+        // rate. Mirror the daze-immunity revoke above: recompute every party bot's
+        // run speed from its real auras (UpdateSpeed drops the non-aura escort
+        // boost and is a no-op when the rate is already correct).
+        if (bot)
+        {
+            auto unboost = [](Player* p)
+            {
+                if (p && p->IsInWorld() && GET_PLAYERBOT_AI(p))
+                    p->UpdateSpeed(MOVE_RUN, /*forced*/ true);
+            };
+            unboost(bot);
+            if (Group* group = bot->GetGroup())
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                    if (Player* member = ref->GetSource(); member && member != bot &&
+                                                           member->GetMapId() == bot->GetMapId())
+                        unboost(member);
+        }
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
         botAI->DoSpecificAction("dc status", Event(), true);
     }
@@ -274,6 +296,13 @@ namespace DcActionShared
         uint32& pendingSince = appr.pendingPathSinceMs;
         uint32 const now = getMSTime();
 
+        // Mid-teleport (NearTeleportTo ack still pending), the bot's readable
+        // position is the PRE-teleport one — any route submitted or built from it
+        // starts in the wrong place (the post-Brazen wrong-direction sprint).
+        // Wait the tick or two until the ack lands and the position is real.
+        if (bot->IsBeingTeleported())
+            return;
+
         bool const asyncEnabled = DcSettings::GetBool(bot, "AsyncPathfinding");
 
         // ---- 1. Drain a completed async build ----
@@ -313,9 +342,15 @@ namespace DcActionShared
             pendingJob = 0;
             pendingSince = 0;
 
-            // Discard a result the world has moved past (boss changed, or the
-            // bot zoned) — installing it would route toward the wrong target.
-            bool const stale = (jobEntry != target.entry) || (jobMap != bot->GetMapId());
+            // Discard a result the world has moved past: boss changed, the bot
+            // zoned, or the bot was RELOCATED since submit (TeleportParty / event
+            // repositioning) so the route's start is no longer where the bot is —
+            // installing that one re-enters the polyline with a straight opening
+            // spline back toward the old start and the tank sprints the wrong way.
+            bool const startDrifted =
+                bot->GetExactDist(&appr.pendingPathStartPos) > DC_ASYNC_PATH_START_DRIFT_MAX;
+            bool const stale = (jobEntry != target.entry) || (jobMap != bot->GetMapId()) ||
+                               startDrifted;
             if (!stale)
             {
                 ChunkedPathfinder::Result built = LongRangePathfinder::Finalize(bot, raw);
@@ -336,8 +371,10 @@ namespace DcActionShared
                 return;
             }
             LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] discarded stale async path (built for boss {} map {}, now boss {} map {})",
-                      bot->GetName(), jobEntry, jobMap, target.entry, bot->GetMapId());
+                      "[DC:{}] discarded stale async path (built for boss {} map {}, now boss {} "
+                      "map {}, start drift {:.0f}yd)",
+                      bot->GetName(), jobEntry, jobMap, target.entry, bot->GetMapId(),
+                      bot->GetExactDist(&appr.pendingPathStartPos));
             // fall through to re-evaluate need and maybe resubmit
         }
 
@@ -440,6 +477,7 @@ namespace DcActionShared
             bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
             target.x, target.y, target.z);
         pendingSince = now;
+        appr.pendingPathStartPos = bot->GetPosition();  // drain-time start-drift baseline
 
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] async path submitted job={} -> {} ({})",

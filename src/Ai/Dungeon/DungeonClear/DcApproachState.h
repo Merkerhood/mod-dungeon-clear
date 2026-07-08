@@ -103,6 +103,10 @@ struct DcApproachState
     uint32 longPathExpiresMs   = 0;  // cache TTL deadline (getMSTime); 0 = force rebuild
     uint64 pendingPathJob      = 0;  // in-flight async build job id (0 = none)
     uint32 pendingPathSinceMs  = 0;  // when the pending job was submitted (watchdog)
+    Position pendingPathStartPos;    // bot pos at submit; a result whose start the
+                                     // bot has since left far behind (teleport /
+                                     // event relocation mid-build) is stale and
+                                     // discarded at drain instead of installed
 
     // Follower-cursor snapshot at the last install / TTL re-arm. EnsureLongPath
     // defers the TTL rebuild while the cursor has advanced past this baseline
