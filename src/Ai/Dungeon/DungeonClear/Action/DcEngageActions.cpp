@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "Creature.h"
+#include "CreatureAI.h"
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "Group.h"
@@ -795,8 +797,63 @@ namespace
     // trips this). Generous so a brief stutter never mis-fires.
     constexpr uint32 DC_ESCORT_DEAD_AIR_MS = 15000;
 
+    // How long the escortee must be combat-wedged (in combat, yet zero attackers
+    // and zero valid attack targets on its threat list) before the driver force-
+    // clears its combat. Long enough that a real fight's transition gaps (wave
+    // spawn delay, target mid-death) never trip it; short enough to beat the
+    // dead-air watchdog so the wedge self-heals instead of stalling the run.
+    constexpr uint32 DC_ESCORT_COMBAT_WEDGE_MS = 5000;
+
+    // Mirror the escortee's run speed onto every BOT in the party (the leader
+    // included) so the party keeps up when the escortee mounts and rides off. Old
+    // Hillsbrad's Thrall gallops to Tarren Mill at 1.6x and his npc_escortAI HARD-
+    // RESETS him if no party member stays within 100yd (DEFAULT_MAX_PLAYER_DISTANCE)
+    // — so without this the ride resets the escort every time. Never touches a
+    // human (client desync).
+    //
+    // rate > 1: FORCE-match every bot (the keep-up requirement outranks whatever
+    // speed auras they carry). rate <= 1: RESTORE via UpdateSpeed, which recomputes
+    // the rate from the bot's real auras — dropping the non-aura escort boost while
+    // PRESERVING a legitimate speed buff (Cheetah, Ghost Wolf), which a flat
+    // SetSpeed(1.0) would stomp every tick for the whole unmounted escort. Both
+    // paths are idempotent per tick (SetSpeed early-outs on an unchanged rate), so
+    // this is a no-op for an un-mounted escort (Wailing Caverns' Disciple).
+    void ApplyEscortPartyRunSpeed(Player* leader, float rate)
+    {
+        if (!leader)
+            return;
+        auto apply = [rate](Player* p)
+        {
+            if (!p || !p->IsInWorld() || !GET_PLAYERBOT_AI(p))
+                return;
+            if (rate > 1.01f)
+            {
+                if (std::fabs(p->GetSpeedRate(MOVE_RUN) - rate) > 0.01f)
+                    p->SetSpeed(MOVE_RUN, rate, /*forced*/ true);
+            }
+            else
+                p->UpdateSpeed(MOVE_RUN, /*forced*/ true);
+        };
+        apply(leader);
+        Group* group = leader->GetGroup();
+        if (!group)
+            return;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member == leader)
+                continue;
+            if (member->GetMapId() != leader->GetMapId())
+                continue;
+            apply(member);
+        }
+    }
+
     // True once the escort's final boss exists (grid scan) or its encounter bit
-    // is set — mirrors the RunStep gate so the action and the gate agree.
+    // is set — mirrors the RunStep gate so the action and the gate agree. Also
+    // completes on the map's monotonic progress counter reaching a threshold
+    // (Old Hillsbrad's Thrall escort ends on DATA_ESCORT_PROGRESS == FINISHED,
+    // not on a boss going live).
     bool EscortComplete(Player* bot, EventStep const& step)
     {
         if (step.escortDoneEntry &&
@@ -807,6 +864,13 @@ namespace
             InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
             if (inst && (inst->GetCompletedEncounterMask() &
                          (1u << static_cast<uint32>(step.escortDoneBit))))
+                return true;
+        }
+        if (step.instanceDataId >= 0)
+        {
+            InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+            if (inst && inst->GetData(static_cast<uint32>(step.instanceDataId)) >=
+                            step.instanceDataMin)
                 return true;
         }
         return false;
@@ -868,21 +932,89 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
     // Final boss exists -> escort is over. Don't own the tick: the caller falls
     // through to Drive, whose RunStep gate returns Done and latches the objective.
     if (EscortComplete(bot, step))
+    {
+        ApplyEscortPartyRunSpeed(bot, 1.0f);  // drop any mounted-ride speed boost
         return false;
+    }
 
     float const searchR = step.radius > 0.0f ? step.radius : 80.0f;
     Creature* escortee = bot->FindNearestCreature(step.creatureEntry, searchR, /*alive*/ true);
 
     // Escortee absent (died and mid-respawn, or briefly out of the grid). Hold and
     // let the watchdog flag a genuine never-returns stall; the start branch below
-    // re-runs the gossip once he reappears idle at spawn.
+    // re-runs the gossip once he reappears idle at spawn. Drop any ride boost so a
+    // brief loss mid-ride can't strand a bot at 1.6x.
     if (!escortee)
     {
+        ApplyEscortPartyRunSpeed(bot, 1.0f);
         DcMovement::StopBot(bot, DcMovement::Stop::Hold);
         SetPhase(context, "escort");
         EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ false, "the escort");
         return true;
     }
+
+    // Keep the party at the escortee's pace so a mounted ride never outruns it (and
+    // resets his npc_escortAI). Mirrors his live run rate: 1.0 on foot, 1.6 mounted.
+    ApplyEscortPartyRunSpeed(bot, escortee->GetSpeedRate(MOVE_RUN));
+
+    // COMBAT-WEDGE UNSTICK — upstream azerothcore-wotlk#25617: at the Durnholde
+    // armory, Thrall's scripted Knockout (spell 32890) on the UNATTACKABLE
+    // Durnholde Armorer drags him into combat with a unit nobody can hit or
+    // kill; escort AIs never advance waypoints while in combat, so his script
+    // deadlocks there. Detect the wedge generically instead of hardcoding the
+    // armorer: the escortee has been IN COMBAT for a debounced 5s with NO
+    // attacker and NO valid attack target on its threat list — a real fight
+    // (ambush waves, Skarloc, the Epoch adds) always has one of the two, which
+    // resets the clock every tick. Then clear BOTH sides' combat and evade the
+    // escortee, whose escort-AI EnterEvadeMode override resumes the waypoint
+    // path from where it stopped. Gated to progress-driven escorts
+    // (instanceDataId >= 0) so the WC Mutanus escort stays untouched.
+    if (step.instanceDataId >= 0 && escortee->IsInCombat())
+    {
+        bool anyValid = !escortee->getAttackers().empty();
+        std::vector<Unit*> wedgedTargets;
+        if (!anyValid)
+        {
+            for (ThreatReference const* ref : escortee->GetThreatMgr().GetUnsortedThreatList())
+            {
+                Unit* t = ref->GetVictim();
+                if (!t)
+                    continue;
+                if (escortee->IsValidAttackTarget(t))
+                {
+                    anyValid = true;
+                    break;
+                }
+                wedgedTargets.push_back(t);
+            }
+        }
+        if (anyValid)
+            prog.escortCombatWedgeMs = 0;
+        else if (!prog.escortCombatWedgeMs)
+            prog.escortCombatWedgeMs = now;
+        else if (getMSTimeDiff(prog.escortCombatWedgeMs, now) >= DC_ESCORT_COMBAT_WEDGE_MS)
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {}: escortee {} combat-wedged with {} unattackable "
+                     "target(s) (upstream #25617) -> clearing combat and resuming the escort",
+                     bot->GetName(), escortee->GetName(), wedgedTargets.size());
+            for (Unit* t : wedgedTargets)
+            {
+                t->GetThreatMgr().ClearAllThreat();
+                t->CombatStop(true);
+            }
+            escortee->GetThreatMgr().ClearAllThreat();
+            escortee->CombatStop(true);
+            if (escortee->AI())
+                escortee->AI()->EnterEvadeMode();
+            prog.escortCombatWedgeMs = 0;
+            prog.escortProgressMs = now;  // unsticking IS progress
+            ClearStall(context);
+            return true;
+        }
+    }
+    else
+        prog.escortCombatWedgeMs = 0;
 
     // (Re)start: idle at spawn (never started, or reset to idle after dying). Walk
     // to gossip range and start his scripted escort. Folded into the step (not a
@@ -907,6 +1039,41 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
                      "[dungeon-clear] {} started the escort of {} (gossip option {})",
                      bot->GetName(), escortee->GetName(), step.gossipOption);
         prog.escortProgressMs = now;  // starting the escort IS progress
+        ClearStall(context);
+        return true;
+    }
+
+    // RESUME a paused, gossip-offering escortee. Old Hillsbrad's Thrall is not the
+    // WC idle-faction model: he keeps his real faction (1747) the whole way and
+    // instead raises UNIT_NPC_FLAG_GOSSIP at every checkpoint — freed from his cell,
+    // after Skarloc, outside the barn, at Taretha — and again after a death-reset
+    // (his AI repositions him to the last checkpoint, paused, awaiting a re-talk).
+    // Selecting his gossip routes by the instance's progress (release / mount-up /
+    // start-the-waves / Epoch cutscene), advances DATA_ESCORT_PROGRESS, and clears
+    // the flag — so this fires once per checkpoint and never loops. Gated on this
+    // being a progress-completed escort (instanceDataId >= 0) so the boss-gated WC
+    // escort is entirely unaffected. Requires him STILL so a mid-walk gossip (which
+    // is a no-op / could interrupt his path) is never attempted.
+    if (step.instanceDataId >= 0 && step.gossipOption >= 0 &&
+        escortee->HasNpcFlag(UNIT_NPC_FLAG_GOSSIP) && !escortee->isMoving())
+    {
+        SetPhase(context, "escort");
+        if (!bot->IsWithinDistInMap(escortee, 5.0f))
+        {
+            DcMoveTo(bot->GetMapId(), escortee->GetPositionX(), escortee->GetPositionY(),
+                     escortee->GetPositionZ(), /*idle*/ false, /*react*/ false,
+                     /*normal_only*/ false, /*exact_waypoint*/ false,
+                     MovementPriority::MOVEMENT_NORMAL);
+            EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ true, escortee->GetName());
+            return true;
+        }
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+        if (DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {} resumed the escort of {} at a checkpoint "
+                     "(gossip option {})",
+                     bot->GetName(), escortee->GetName(), step.gossipOption);
+        prog.escortProgressMs = now;  // resuming IS progress
         ClearStall(context);
         return true;
     }
@@ -1015,6 +1182,127 @@ bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
     return true;
 }
 
+bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
+{
+    if (!bot || step.goEntry == 0)
+        return false;
+
+    bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
+    // Interaction reach (mirrors the executor's DC_EVENT_GO_PLANT_REACH — keep in
+    // sync): STRICT world distance, well inside the GO interact box the item-use
+    // range-checks against (live-measured failing at 6.0yd), so the tank plants
+    // from AT the barrel — the forced walk-in below can always deliver that.
+    float const castRange = step.radius > 0.0f ? step.radius : 3.5f;
+
+    // Resolve the target GO nearest the step's anchor, capped at 25yd of it (same
+    // pick as RunStep's DC_EVENT_GO_ANCHOR_MATCH — keep the two in sync). The cap
+    // matters for POOLED spawns (Old Hillsbrad: one barrel per house, at a random
+    // one of 3 candidate spots ≤21yd from the house-centroid anchor, neighbour
+    // house ≥38yd): without it a scan that only sees a neighbour's barrel matches
+    // it and this driver walks the tank to the wrong house.
+    std::list<GameObject*> gos;
+    bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
+    GameObject* target = nullptr;
+    float best = 1e18f;
+    for (GameObject* g : gos)
+    {
+        if (!g)
+            continue;
+        float const d = haveAnchor ? g->GetExactDist(step.x, step.y, step.z)
+                                   : g->GetExactDist(bot);
+        if (haveAnchor && d > 25.0f)
+            continue;  // another house's barrel — never this step's target
+        if (d < best)
+        {
+            best = d;
+            target = g;
+        }
+    }
+
+    // Already planted (a landed plant leaves the goober GO_ACTIVATED for its
+    // 86400s autoclose) -> don't walk to it at all; RunStep's success latch
+    // reports the step Done from wherever the tank stands.
+    if (target && target->getLootState() != GO_READY)
+        return false;
+
+    // The step's GO isn't in scan range yet (a far house whose grid hasn't
+    // streamed in): OWN THE TICK and drive the ANCHOR approach with the same
+    // sustained navigation, instead of handing back to the Hold+HopTo path whose
+    // per-tick stop/re-issue stutter-walks the whole 170yd to Durnholde's north
+    // houses. Once at the anchor with still no GO, hand back so RunStep (and its
+    // step timeout) own the "pooled spawn missing" case.
+    if (!target && haveAnchor && bot->GetExactDist(step.x, step.y, step.z) > 6.0f)
+    {
+        SetPhase(context, "objective");
+        DcMoveTo(bot->GetMapId(), step.x, step.y, step.z, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false,
+                 MovementPriority::MOVEMENT_NORMAL);
+        return true;
+    }
+
+    if (!target)
+        return false;  // RunStep HopTo's the anchor to load it
+
+    float const gap = bot->GetExactDist(target);
+    bool const los = DungeonEventExecutor::HasGameObjectLos(bot, target);
+
+    // Arrived: strictly in reach AND vmap-visible (RunStep's exact predicate) ->
+    // hand back to Drive; RunStep fires the GO.
+    if (gap <= castRange && los)
+        return false;
+
+    // FINAL WALK-IN — only with LINE OF SIGHT. The navmesh thins out at house
+    // walls (agent-radius inflation), so the nav move below can run dry on the
+    // nearest mesh point just OUTSIDE cast reach — and no amount of re-issuing
+    // closes the gap, because NOTHING in the stock movement stack forces its
+    // destination (MoveTo/DoMovePoint/HopTo all pass forceDestination=false;
+    // live deadlock: tank parked ~6yd out until the step timed out). Once any
+    // move has landed this close but still out of reach, walk the last yards on
+    // a FORCED straight-appended spline to the barrel itself. LOS-gated so this
+    // can never force the tank INTO a wall the barrel sits behind — 3D distance
+    // is blind to thin house walls (second live deadlock).
+    if (gap <= 15.0f && los)
+    {
+        SetPhase(context, "objective");
+        if (bot->isMoving())
+            return true;  // a move (nav or forced) is still running — let it land
+        if (!DcMovement::DcMovementAllowed(botAI))
+            return false;
+        DcMovement::ResolveEscortConflict(bot);
+        bot->GetMotionMaster()->Clear();
+        bot->GetMotionMaster()->MovePoint(0, target->GetPositionX(), target->GetPositionY(),
+                                          target->GetPositionZ(), FORCED_MOVEMENT_NONE,
+                                          0.0f, 0.0f, /*generatePath*/ true,
+                                          /*forceDestination*/ true);
+        return true;
+    }
+
+    // Close but WALLED OFF (no LOS): the barrel is on the other side of a wall,
+    // so never walk (or cast) toward it directly — navigate to the step's anchor
+    // (the house's candidate centroid ~= its interior/doorway area) until the
+    // doorway opens line of sight, then the walk-in above takes over.
+    if (gap <= 15.0f && !los && haveAnchor &&
+        bot->GetExactDist(step.x, step.y, step.z) > 4.0f)
+    {
+        SetPhase(context, "objective");
+        DcMoveTo(bot->GetMapId(), step.x, step.y, step.z, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false,
+                 MovementPriority::MOVEMENT_NORMAL);
+        return true;
+    }
+
+    // OWN THE TICK: drive a clean, sustained navigation to the barrel via the DC
+    // movement system, so the at-objective StopBot(Hold) — which cancels a plain
+    // MovePoint spline every tick — never chops the path and the tank actually
+    // threads the house doorway to the barrel inside.
+    SetPhase(context, "objective");
+    DcMoveTo(bot->GetMapId(), target->GetPositionX(), target->GetPositionY(),
+             target->GetPositionZ(), /*idle*/ false, /*react*/ false,
+             /*normal_only*/ false, /*exact_waypoint*/ false,
+             MovementPriority::MOVEMENT_NORMAL);
+    return true;
+}
+
 bool DcObjectiveArriveAction::Execute(Event /*event*/)
 {
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
@@ -1095,6 +1383,16 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
             else if (step.kind == EventStepKind::DropInHole)
             {
                 if (DriveDropInHole(step))
+                    return true;
+            }
+            // UseItemOnGO: OWN THE TICK to drive the approach to the target GO with
+            // a sustained spline. Without this the StopBot(Hold) below cancels the
+            // approach every tick and the tank can't thread a house doorway to a
+            // barrel inside (it stalls "close but not inside"). Returns false once in
+            // cast range, so we fall through to Drive and RunStep fires the GO.
+            else if (step.kind == EventStepKind::UseItemOnGO)
+            {
+                if (DriveUseItemOnGO(step))
                     return true;
             }
         }

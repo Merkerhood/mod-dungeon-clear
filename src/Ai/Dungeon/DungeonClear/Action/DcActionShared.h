@@ -70,6 +70,17 @@ namespace DcActionShared
     // TryTake before this fires, and far above any real build time.
     inline constexpr uint32 DC_ASYNC_PATH_PENDING_TIMEOUT_MS = 5 * 1000;
 
+    // How far the bot may have moved from the position an async path job was
+    // SUBMITTED from before the finished result is stale-discarded at drain
+    // instead of installed. A pending window is sub-second, so honest movement
+    // stays a few yards; only a relocation the polyline can't know about — a
+    // TeleportParty landing, an event repositioning the leader — exceeds this.
+    // Installing such a route re-enters it with a straight opening spline back
+    // toward the pre-relocation start and the tank sprints the wrong way (the
+    // post-Brazen wrong-direction run in Old Hillsbrad). Discarding falls
+    // through to an immediate resubmit from the live position.
+    inline constexpr float DC_ASYNC_PATH_START_DRIFT_MAX = 40.0f;
+
     // Commit-timeout for the loot yield, shared by the tank's advance yield and
     // the follower's follow-tank yield. After a pull the tank holds until the
     // WHOLE party has finished looting (see the advance loot-yield block), and

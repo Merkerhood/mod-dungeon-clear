@@ -119,6 +119,22 @@ enum class EventStepKind : uint8
                              // Done immediately if the leader is already on the landing,
                              // so a tick-gap restart never re-teleports. Anchored only
                              // (one-way — the bot can't path back up).
+    UseItemOnGO,             // USE a quest item ON a positioned GameObject: grant the
+                             // item (itemId) if the bags lack it, then USE it (the full
+                             // CastItemUseSpell path) AT the GO of goEntry nearest
+                             // (x,y,z), so the GO's SmartAI SMART_EVENT_SPELLHIT
+                             // fires. This is the "plant a bomb on a barrel" mechanic
+                             // (Old Hillsbrad's Durnholde barrels — item 25853, spell
+                             // 32744, GO 182589). The use-spell is OPEN_LOCK against
+                             // the GO's ITEM lock, so it only hits when cast FROM the
+                             // key item — the Deadmines-cannon gotcha; a bare or
+                             // triggered CastSpell never registers. Distinct from
+                             // UseGameObject (Use()s the GO — never delivers a
+                             // SPELLHIT) and UseItem (self-cast — no GO target). The
+                             // (x,y,z) anchor picks a SPECIFIC GO, so five same-entry
+                             // barrels are hit as five DISTINCT GOs. Done once the GO
+                             // leaves GO_READY (the landed plant Uses the goober — a
+                             // stable per-GO success latch, idempotent across restarts).
 };
 
 // One typed primitive. Fields are a shared bag — only those relevant to `kind`
@@ -389,14 +405,38 @@ public:
     EventBuilder& Wait(uint32 durationMs);
     EventBuilder& Custom(uint32 hookId);
     // Protect a moving escortee (see EventStepKind::EscortCreature). `escortee` is
-    // the NPC entry, `startGossipOption` the menu option that starts its scripted
-    // escort (re-run on self-heal), `doneEntry`/`doneBit` the final boss whose
-    // existence/kill completes the step. The geometry knobs carry sensible
-    // defaults; `searchRadius` is the live-escortee grid scan radius.
+    // the NPC entry, `startGossipOption` the menu option that starts (and, when the
+    // escortee re-offers a gossip mid-route, RESUMES) its scripted escort, and
+    // `doneEntry`/`doneBit` the final boss whose existence/kill completes the step.
+    //
+    // `doneDataId`/`doneDataMin` are an ALTERNATIVE completion gate for an escort
+    // whose end is not marked by a boss going live but by the map's monotonic
+    // progress counter reaching a value (Old Hillsbrad's whole Thrall escort — one
+    // step from freeing him through Epoch Hunter's death — completes when
+    // DATA_ESCORT_PROGRESS reaches FINISHED). -1 => unused (boss-entry gate only).
+    // The two gates are OR'd: either satisfies completion.
+    //
+    // The geometry knobs carry sensible defaults; `searchRadius` is the live-
+    // escortee grid scan radius (widen it for a mounted escort that outpaces the
+    // party so the escortee is never lost off-grid).
     EventBuilder& EscortCreature(uint32 escortee, int32 startGossipOption,
                                  uint32 doneEntry, int32 doneBit,
                                  float standoff = 5.0f, float threatRadius = 18.0f,
-                                 float threatZBand = 20.0f, float searchRadius = 80.0f);
+                                 float threatZBand = 20.0f, float searchRadius = 80.0f,
+                                 int32 doneDataId = -1, uint32 doneDataMin = 0);
+    // Use a quest item ON a positioned GameObject (see EventStepKind::UseItemOnGO):
+    // approach the `goEntry` GO nearest (x,y,z), then USE `itemId` on it via the
+    // full item-use cast path (granting the item first if the bags lack it;
+    // `spellId` is the item's use-spell, kept for validation and logging), so its
+    // SmartAI SPELLHIT fires (the Durnholde barrel-bomb). `radius` is the CAST
+    // REACH (0 => 3.5yd STRICT world distance — the landed OPEN_LOCK range-checks
+    // the GO's interact box, live-measured failing at 6yd; arrival additionally
+    // requires vmap LINE OF SIGHT so a barrel across a thin wall never reads as
+    // reachable). The approach INTO the house is driven tick-owning
+    // (DriveUseItemOnGO), which threads the doorway, detours to the anchor when
+    // the barrel is walled off, and force-walks the final un-meshed yards.
+    EventBuilder& UseItemOnGO(uint32 itemId, uint32 spellId, uint32 goEntry,
+                              float x, float y, float z, float radius = 0.0f);
     // Drop the party down a narrow vertical hole (see EventStepKind::DropInHole).
     // (overX,overY,overZ) is the over-hole nudge target the leader glides to (a
     // point whose column is open straight to the deep floor — NOT the lip, whose

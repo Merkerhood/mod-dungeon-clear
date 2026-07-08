@@ -36,6 +36,25 @@ namespace DcEventDoorRegistry
         }
     }
 
+    // Doors NAVIGATION must ignore entirely: never flagged as a corridor
+    // blocker, never opened, never a reason to park or auto-pause. These are
+    // interact-THROUGH gates — the run's objective is completed from the
+    // players' side of the shut door (a gossip through the bars), after which
+    // the event script opens the door itself. Flagging one as blocking is
+    // always wrong: the route intentionally ends beside it, and the pause
+    // machinery would halt a run that needs nothing from the door at all.
+    inline bool IsNavigationIgnored(uint32 goEntry)
+    {
+        switch (goEntry)
+        {
+            case 184393:  // Old Hillsbrad — Thrall's Prison Door (gossip through
+                          // the gate; his script opens it via EVENT_OPEN_DOORS)
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // The MIRROR-IMAGE special case: door gameobjects carrying NO lock at all
     // (template lockId 0) that a player nonetheless opens by simply clicking
     // them — ordinary traversal gates the dungeon expects you to walk through.

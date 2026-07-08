@@ -6,6 +6,7 @@
 #include "DungeonEventExecutor.h"
 
 #include <cmath>
+#include <list>
 #include <optional>
 #include <unordered_set>
 
@@ -15,6 +16,8 @@
 #include "GossipDef.h"
 #include "Group.h"
 #include "InstanceScript.h"
+#include "Map.h"
+#include "ModelIgnoreFlags.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
@@ -28,7 +31,10 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
+#include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 namespace
 {
@@ -46,6 +52,24 @@ namespace
     // Range from which a creature can be gossiped (mirrors the core's
     // GetNPCIfCanInteractWith INTERACTION_DISTANCE check; kept a hair tighter).
     constexpr float DC_EVENT_GOSSIP_RANGE = 5.0f;
+    // UseItemOnGO cast reach: STRICT world distance (never the object-size-
+    // inflated IsWithinDistInMap, which passes at ~6yd+ where the item use
+    // already fails). The real gate is GameObject::IsAtInteractDistance — the
+    // barrel's model box grown by ~5yd, which live-measured failing at 6.0yd
+    // and passing at 5.5 (per-barrel, orientation-dependent). 3.5yd sits well
+    // inside every box; the driver's forced walk-in can always deliver it.
+    constexpr float DC_EVENT_GO_PLANT_REACH = 3.5f;
+    // UseItemOnGO target pick: a candidate GO counts as "the step's GO" only
+    // within this of the step's (x,y,z) anchor. POOLED spawns make this load-
+    // bearing (Old Hillsbrad's barrels: 5 pools of 3 candidate positions each,
+    // max_limit 1 — ONE barrel per house at a random spot ≤21yd from the house
+    // centroid the step anchors on, while the nearest NEIGHBOUR house's barrel
+    // is ≥38yd away). Without the cap, a mid-approach scan that only sees a
+    // neighbour's already-planted barrel matches it and the step false-latches
+    // Done (live: steps 2-3 insta-Done'd on house 1's barrel and the run
+    // stalled at 3/5 plants). No candidate within the cap = "not loaded /
+    // not spawned yet" -> keep walking to the anchor.
+    constexpr float DC_EVENT_GO_ANCHOR_MATCH = 25.0f;
     // How far out a Gossip step ACQUIRES its (unique) NPC in order to walk to it.
     // Deliberately wide: the freed crew can settle well beyond the gossip range
     // (the ZulFarrak crew descend to the temple floor), and the approach must
@@ -139,6 +163,22 @@ bool DungeonEventExecutor::IsOnDropLanding(Player* bot, EventStep const& step)
     return !fallSplineRunning && bot->GetPositionZ() < step.z - 15.0f;
 }
 
+bool DungeonEventExecutor::HasGameObjectLos(Player* bot, GameObject* go)
+{
+    if (!bot || !go)
+        return false;
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+    // Eye-bumped, vmap-only ray (same pattern as FindStandoffPoint): sees over
+    // floor clutter and through dynamic GOs, never through a house wall.
+    return map->isInLineOfSight(bot->GetPositionX(), bot->GetPositionY(),
+                                bot->GetPositionZ() + 2.0f, go->GetPositionX(),
+                                go->GetPositionY(), go->GetPositionZ() + 1.0f,
+                                bot->GetPhaseMask(), LINEOFSIGHT_CHECK_VMAP,
+                                VMAP::ModelIgnoreFlags::Nothing);
+}
+
 bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option)
 {
     if (!bot || !npc)
@@ -159,11 +199,39 @@ bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option
     // Send the NPC's OWN guid: HandleGossipSelectOptionOpcode rejects the select
     // unless the packet guid equals the open menu's sender GUID, and a real bot's
     // master isn't targeting this NPC. See the Gossip step note below.
-    WorldPacket select;
-    select << npc->GetGUID() << menu.GetMenuId()
-           << static_cast<uint32>(option);
-    select << std::string();  // no coded box
-    bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+    auto sendSelect = [&](uint32 menuId, uint32 opt)
+    {
+        WorldPacket select;
+        select << npc->GetGUID() << menuId << opt;
+        select << std::string();  // no coded box
+        bot->GetSession()->HandleGossipSelectOptionOpcode(select);
+    };
+
+    // Capture the id BEFORE selecting: the select rebuilds PlayerTalkClass's menu
+    // in place (opening a submenu), so `menu.GetMenuId()` would already read the
+    // submenu's id afterward.
+    uint32 lastMenuId = menu.GetMenuId();
+    sendSelect(lastMenuId, static_cast<uint32>(option));
+
+    // DRILL DOWN through submenus: some scripted NPCs put the option that fires
+    // their action behind one or more nested gossip menus (Old Hillsbrad's Thrall,
+    // post-Skarloc: menu 7830 -> 7829 -> 7831, and only 7831's option triggers his
+    // DoAction). A single select would just open the next submenu into
+    // PlayerTalkClass and never reach the terminal option — so keep selecting
+    // option 0 of whatever menu is now open until it CLOSES (the terminal select
+    // ClearGossipMenuFor's it). Bounded, and bails if the menu stops changing, so a
+    // self-referential menu can't loop. A plain single-level gossip (the common
+    // case) closes on the first select and skips the loop entirely.
+    for (int guard = 0; guard < 6; ++guard)
+    {
+        GossipMenu& sub = bot->PlayerTalkClass->GetGossipMenu();
+        if (sub.GetMenuItems().empty() || !sub.GetItem(0))
+            break;  // menu closed -> the terminal option fired
+        if (sub.GetMenuId() == lastMenuId)
+            break;  // no new submenu opened -> nothing more to drill
+        lastMenuId = sub.GetMenuId();
+        sendSelect(sub.GetMenuId(), 0);
+    }
     return true;
 }
 
@@ -436,6 +504,17 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                              (1u << static_cast<uint32>(step.escortDoneBit))))
                     return StepResult::Done;
             }
+            // Instance-data completion (Old Hillsbrad's Thrall escort ends not on a
+            // boss going live but on the map's monotonic progress counter reaching
+            // FINISHED). Monotonic, so a >= gate can't be missed while the engine is
+            // dormant in combat.
+            if (step.instanceDataId >= 0)
+            {
+                InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+                if (inst && inst->GetData(static_cast<uint32>(step.instanceDataId)) >=
+                                step.instanceDataMin)
+                    return StepResult::Done;
+            }
             return StepResult::Running;
         }
 
@@ -503,6 +582,28 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             bot->GetMotionMaster()->Clear();
             bot->NearTeleportTo(step.landX, step.landY, step.landZ, bot->GetOrientation());
             PullStrandedFollowersAcross(bot, step.landX, step.landY, step.landZ);
+            // The leader just moved a long way in zero ticks: every cached route
+            // artifact — the long-path polyline, its follower cursor, and any
+            // in-flight async build (submitted from the PRE-teleport position) —
+            // now describes the wrong start. Left alone, the next Advance re-enters
+            // the stale polyline with a straight opening spline back toward the
+            // old cursor and the tank sprints the wrong way (seen live: post-Brazen
+            // drop-off, tank ran back toward the Old Hillsbrad entrance until a
+            // stray mob interrupted it). Invalidate it all; EnsureLongPath rebuilds
+            // from the post-teleport position (and its start-drift guard discards
+            // any result the old position already baked).
+            {
+                DcApproachState& appr =
+                    context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+                appr.longPathTargetEntry = 0;
+                appr.longPathExpiresMs = 0;
+                appr.pendingPathJob = 0;   // orphaned result reaped by the mailbox sweep
+                appr.pendingPathSinceMs = 0;
+                context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
+                context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() =
+                    DungeonFollowerState{};
+                context->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
+            }
             LOG_DEBUG("playerbots.dungeonclear",
                       "[dungeon-clear] {} TeleportParty: ({:.1f},{:.1f},{:.1f}) -> "
                       "landing ({:.1f},{:.1f},{:.1f})",
@@ -560,6 +661,110 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             targets.SetUnitTarget(bot);
             bot->CastItemUseSpell(item, targets, 0, 0);
             return StepResult::Done;
+        }
+
+        case EventStepKind::UseItemOnGO:
+        {
+            // Plant a bomb on the barrel the step's (x,y,z) anchor sits on. The
+            // barrel's only interaction is SMART_EVENT_SPELLHIT of the bomb spell,
+            // and that spell (32744) is SPELL_EFFECT_OPEN_LOCK against the barrel's
+            // ITEM lock (1682, key = the bomb pack) — the exact Deadmines-cannon
+            // shape: the cast only reaches the GO when fired FROM the key item via
+            // the full item-use path (CastItemUseSpell). A bare/triggered
+            // CastSpell(go, spellId) does not reproduce the item-use cast and never
+            // registers. The approach INTO the house is driven tick-owning
+            // (DriveUseItemOnGO); this RunStep resolves the target and fires once
+            // the tank is at it.
+            //
+            // Target the goEntry GO NEAREST THE ANCHOR (not nearest the tank): the
+            // party bombs one barrel per house and the barrels share an entry, so an
+            // anchor-relative pick keeps five barrels five DISTINCT targets.
+            if (step.itemId == 0 || step.spellId == 0 || step.goEntry == 0)
+                return StepResult::Done;  // mis-authored step: skip loudly in review, not a stall
+
+            bool const haveAnchor = step.x != 0.0f || step.y != 0.0f || step.z != 0.0f;
+            // Interaction reach: the successful OPEN_LOCK ends in Player::SendLoot,
+            // which range-checks against the GO's interact box — from farther out
+            // the cast fails silently, the goober never activates, and the success
+            // latch below never trips (live: a tank parked at 6.0yd spam-cast for
+            // 151s). STRICT world distance + LOS; see DC_EVENT_GO_PLANT_REACH.
+            float const castRange = step.radius > 0.0f ? step.radius : DC_EVENT_GO_PLANT_REACH;
+
+            std::list<GameObject*> gos;
+            bot->GetGameObjectListWithEntryInGrid(gos, step.goEntry, 80.0f);
+            GameObject* target = nullptr;
+            float best = 1e18f;
+            for (GameObject* g : gos)
+            {
+                if (!g)
+                    continue;
+                float const d = haveAnchor ? g->GetExactDist(step.x, step.y, step.z)
+                                           : g->GetExactDist(bot);
+                if (haveAnchor && d > DC_EVENT_GO_ANCHOR_MATCH)
+                    continue;  // some OTHER house's barrel — never this step's target
+                if (d < best)
+                {
+                    best = d;
+                    target = g;
+                }
+            }
+            if (!target)
+            {
+                // The step's GO isn't in grid range (or its pooled spawn isn't
+                // loaded) — walk toward the anchor to load it.
+                if (haveAnchor)
+                    HopTo(bot, step.x, step.y, step.z);
+                return StepResult::Running;
+            }
+
+            // SUCCESS LATCH: a landed plant Uses the goober (OPEN_LOCK -> SendLoot
+            // -> SetLootState(GO_ACTIVATED)), and the barrel's 86400s autoclose
+            // keeps it activated for the rest of the run — so "left GO_READY" is a
+            // stable, per-barrel "this one is planted". Also makes the step
+            // idempotent across an event restart.
+            if (target->getLootState() != GO_READY)
+                return StepResult::Done;
+
+            // Arrived = strictly in reach AND vmap-visible. The LOS half is load-
+            // bearing: a tank within reach of a barrel on the FAR SIDE of a wall
+            // (thin house walls; 3D distance ignores them) would otherwise
+            // spam-cast through the wall forever — the cast fails silently and
+            // the latch never trips. DriveUseItemOnGO uses the same predicate,
+            // and while it is active it owns the approach; the HopTo here is only
+            // the fallback when the driver isn't in the loop.
+            if (bot->GetExactDist(target) > castRange || !HasGameObjectLos(bot, target))
+            {
+                HopTo(bot, target->GetPositionX(), target->GetPositionY(),
+                      target->GetPositionZ());
+                return StepResult::Running;
+            }
+
+            // The plant cast (item use, ~2s "Opening") is already in flight — let
+            // it finish; re-casting every tick would interrupt it forever.
+            if (bot->IsNonMeleeSpellCast(false))
+                return StepResult::Running;
+
+            // At the barrel. Grant the quest item (bots never ran the questline
+            // that awards it) and USE it on the GO — the item-use cast supplies the
+            // lock's key context, the spell hits, and the SmartAI SPELLHIT counts it.
+            Item* item = step.itemId ? bot->GetItemByEntry(step.itemId) : nullptr;
+            if (step.itemId && !item)
+            {
+                bot->AddItem(step.itemId, 1);
+                item = bot->GetItemByEntry(step.itemId);
+            }
+            if (!item)
+                return StepResult::Running;  // bags full this tick — retry
+            LOG_INFO("playerbots.dungeonclear",
+                     "[dungeon-clear] {} event-step UseItemOnGO: use item {} (spell {}) "
+                     "on GO {} '{}' (dist {:.1f})",
+                     bot->GetName(), step.itemId, step.spellId,
+                     target->GetGUID().ToString(), target->GetName(),
+                     bot->GetExactDist(target));
+            SpellCastTargets goTargets;
+            goTargets.SetGOTarget(target);
+            bot->CastItemUseSpell(item, goTargets, 0, 0);
+            return StepResult::Running;  // the lootState latch above confirms + advances
         }
 
         default:
