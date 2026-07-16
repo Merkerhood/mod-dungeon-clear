@@ -27,7 +27,7 @@ namespace DcSmartRestDecision
         if (!m.isManaUser)
             return 0.0f;
         if (m.isBot)
-            return kReleasePct;
+            return kManaReleasePct;
         float const trigger = ManaTriggerPct(m, in);
         return trigger > 0.0f ? trigger + kHumanReleaseMarginPct : 0.0f;
     }
