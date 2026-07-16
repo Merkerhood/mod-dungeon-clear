@@ -122,7 +122,7 @@ namespace DcSmartRest
         {
             run.smartRestSinceMs = now;
             LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] smart rest: latched — party resting to full ({} member(s) below trigger)",
+                     "[DC:{}] smart rest: latched — party resting up ({} member(s) below trigger)",
                      leader->GetName(), verdict.blockers.size());
         }
         else if (!verdict.latched && run.smartRestLatched)

@@ -15,8 +15,9 @@
 // anyone is below RestHealthPct/RestManaPct and rests back up to that same
 // value), which produces constant micro-rests. Smart Rest splits the two ends:
 // a LOW, role-based trigger (DPS/tank mana, healer mana, any-role HP) latches a
-// party-wide rest, and the release bar is FULL health and mana — fewer, longer
-// rests. Between rests eating/drinking is fully suppressed (the multiplier's
+// party-wide rest, and the release bar is full health but only a near-full mana
+// (the last sliver tops off free while walking) — fewer, longer rests. Between
+// rests eating/drinking is fully suppressed (the multiplier's
 // job, keyed off this latch).
 //
 // Extracted engine-free so it is unit-testable in isolation, mirroring
@@ -27,11 +28,20 @@
 
 namespace DcSmartRestDecision
 {
-    // Release bar for BOT members: "full", float-safe. GetHealthPct/GetPowerPct
-    // return 100.0f exactly when full (cur/max with cur==max), but a buff or
-    // aura shifting the max pool mid-rest could strand a bot at 99.x forever —
-    // half a percent of slack costs nothing perceptible.
+    // HP release bar for BOT members: "full", float-safe. GetHealthPct/
+    // GetPowerPct return 100.0f exactly when full (cur/max with cur==max), but a
+    // buff or aura shifting the max pool mid-rest could strand a bot at 99.x
+    // forever — half a percent of slack costs nothing perceptible.
     constexpr float kReleasePct = 99.5f;
+
+    // Mana release bar for BOT members: deliberately short of full. The last
+    // sliver of mana regenerates for free while the party walks to the next
+    // pack, so holding the whole party at rest to claw back the final ~10% just
+    // burns real time for no combat benefit. 90% stays far above every mana
+    // trigger (DPS 10 / healer 40), so hysteresis holds — a release can never
+    // instantly re-latch. HP keeps the full kReleasePct bar (a low HP bar would
+    // send bots into the next pull hurt).
+    constexpr float kManaReleasePct = 90.0f;
 
     // Release bar for HUMAN members: their role trigger plus this margin. A
     // human can't be forced to drink, so demanding kReleasePct of them would
@@ -72,11 +82,11 @@ namespace DcSmartRestDecision
     // The member's mana trigger for its role. 0 = that dimension disabled.
     float ManaTriggerPct(Member const& m, Inputs const& in);
 
-    // Release bars for one member: bots rest to kReleasePct on every applicable
-    // dimension (a full rest is a full rest, even on a dimension whose trigger
-    // is disabled); humans only owe trigger + margin, and owe nothing on a
-    // disabled dimension (bar 0 — any value passes). Mana bar is 0 for
-    // non-mana users.
+    // Release bars for one member: bots rest to kReleasePct on HP and
+    // kManaReleasePct on mana, on every applicable dimension even one whose
+    // trigger is disabled (a rest is a rest); humans only owe trigger + margin,
+    // and owe nothing on a disabled dimension (bar 0 — any value passes). Mana
+    // bar is 0 for non-mana users.
     float HpReleaseBar(Member const& m, Inputs const& in);
     float ManaReleaseBar(Member const& m, Inputs const& in);
 

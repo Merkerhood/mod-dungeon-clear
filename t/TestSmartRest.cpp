@@ -12,6 +12,7 @@ using DcSmartRestDecision::Inputs;
 using DcSmartRestDecision::Member;
 using DcSmartRestDecision::Result;
 using DcSmartRestDecision::kHumanReleaseMarginPct;
+using DcSmartRestDecision::kManaReleasePct;
 using DcSmartRestDecision::kReleasePct;
 
 namespace
@@ -180,30 +181,41 @@ TEST(DcSmartRestTest, NotRearmedBlocksLatch)
 
 // ---- holding / releasing the latch ----------------------------------------------
 
-TEST(DcSmartRestTest, LatchedHoldsUntilBotsFull)
+TEST(DcSmartRestTest, LatchedHoldsUntilBotsRested)
 {
     auto party = BaseParty();
-    party[2].manaPct = 98.0f;  // still drinking
+    party[2].manaPct = 85.0f;  // still drinking, short of the 90 mana bar
     Result const r = Decide(LatchedInputs(), party);
     EXPECT_TRUE(r.latched);
     ASSERT_EQ(r.blockers.size(), 1u);
     EXPECT_EQ(r.blockers[0], 2u);
 }
 
-TEST(DcSmartRestTest, ReleaseEpsilon)
+TEST(DcSmartRestTest, BotManaReleasesAtBarNotFull)
 {
+    // The last ~10% of mana tops off for free while walking to the next pack,
+    // so a bot at the 90 mana bar releases without clawing back to full.
     auto party = BaseParty();
     for (Member& m : party)
-    {
+        m.manaPct = kManaReleasePct;
+    EXPECT_FALSE(Decide(LatchedInputs(), party).latched);  // 90 releases
+
+    party[2].manaPct = kManaReleasePct - 0.1f;
+    EXPECT_TRUE(Decide(LatchedInputs(), party).latched);   // just under holds
+}
+
+TEST(DcSmartRestTest, BotHpReleaseEpsilon)
+{
+    // HP keeps the full float-safe bar (kReleasePct), independent of mana.
+    auto party = BaseParty();
+    for (Member& m : party)
         m.hpPct = kReleasePct;
-        m.manaPct = kReleasePct;
-    }
     EXPECT_FALSE(Decide(LatchedInputs(), party).latched);  // 99.5 releases
 
-    party[2].manaPct = 99.4f;
+    party[2].hpPct = 99.4f;
     EXPECT_TRUE(Decide(LatchedInputs(), party).latched);   // 99.4 holds
 
-    party[2].manaPct = 100.0f;
+    party[2].hpPct = 100.0f;
     EXPECT_FALSE(Decide(LatchedInputs(), party).latched);  // 100.0 releases
 }
 
@@ -262,14 +274,14 @@ TEST(DcSmartRestTest, HumanOwesNothingOnDisabledDimension)
     EXPECT_FALSE(Decide(in, party).latched);
 }
 
-TEST(DcSmartRestTest, BotsStillRestToFullOnDisabledDimension)
+TEST(DcSmartRestTest, BotsStillRestToBarOnDisabledDimension)
 {
-    // A full rest is a full rest: even with the mana trigger disabled, a bot
-    // mid-drink holds the latch until full.
+    // A rest is a rest: even with the mana trigger disabled, a bot mid-drink
+    // holds the latch until it reaches the mana release bar.
     Inputs in = LatchedInputs();
     in.dpsManaTriggerPct = 0.0f;
     auto party = BaseParty();
-    party[2].manaPct = 80.0f;
+    party[2].manaPct = 80.0f;  // below the 90 bar
     EXPECT_TRUE(Decide(in, party).latched);
 }
 

@@ -297,7 +297,7 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         {
             stateStr = "resting";
             std::string const who = DcSmartRest::DescribeWait(bot);
-            detail = who.empty() ? "Resting the party to full." : (who + ".");
+            detail = who.empty() ? "Resting the party." : (who + ".");
         }
         // Status display must use the SAME spread the advance gate enforces, or
         // the tank parks at the limit while still reporting "En route" instead
