@@ -69,6 +69,15 @@ struct DcRunState
     // Set by DcGoAction, cleared by dc on / dc off / dc skip.
     uint32      selectedBossEntry = 0;
 
+    // Wait at Boss (DungeonClear.WaitAtBoss): GUID of the last boss the run
+    // auto-paused at for the human's go-ahead, stamped AT PAUSE TIME by the
+    // engage-boss gate so each boss waits exactly once per run. Deliberately
+    // NOT part of OnResume's pause-cluster clear — the stamp is what stops the
+    // gate from re-pausing the instant the human resumes. Cleared only by the
+    // full Reset() (a fresh run earns a fresh heads-up at every boss).
+    // See DcWaitAtBossDecision.h for the whole design.
+    ObjectGuid  waitedBossGuid;
+
     // === cross-bot leader-fight signals (were the g_* file-static maps) ============
     // Both are keyed, in the old design, by the LEADER's GUID and only ever read/
     // written for the resolved leader — i.e. they are facets of the leader's run.

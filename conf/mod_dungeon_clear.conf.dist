@@ -223,6 +223,23 @@ DungeonClear.SmartRestDpsManaPct = 10
 DungeonClear.SmartRestHealerManaPct = 40
 
 #
+#    DungeonClear.WaitAtBoss
+#        Auto-pause the run right before every boss pull and wait for you to
+#        resume (the addon's Pause/Resume button, or `dc pause`). The pause
+#        lands only after everything else is ready — room pre-cleared, loot
+#        done, Smart Rest top-off finished — so resuming pulls immediately.
+#        Each boss waits once per run; resuming, `dc go`, or re-approaching
+#        after the wait never re-pauses the same boss. Overridable per run
+#        from the companion addon.
+#            0 = off (the tank pulls bosses unprompted)
+#            1 = on
+#
+#        Default: 0
+#
+
+DungeonClear.WaitAtBoss = 0
+
+#
 #    DungeonClear.PartyMaxSpread
 #        Max distance (yards) the tank may lead a party member while clearing
 #        before it holds its advance and waits for everyone to catch up. Lower

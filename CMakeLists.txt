@@ -153,4 +153,9 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    — enter on role-based low triggers, release at full hp/mana — edge-pinned
 #    by t/TestSmartRest; DcSmartRest is the engine glue owning the DcRunState
 #    latch fields + the cross-bot IsLatched read.)
+# Util/DcWaitAtBossDecision.{h,cpp}
+#   (Wait at Boss: pure pre-pull hold kernel — auto-pause the run right before
+#    a boss pull and hold for the human's resume, once per boss per run via the
+#    DcRunState::waitedBossGuid stamp; edge-pinned by t/TestWaitAtBoss. The gate
+#    lives in DungeonClearEngageBossAction just before EngageDirect.)
 # (this comment bumps mtime to force CMake re-glob on next build)

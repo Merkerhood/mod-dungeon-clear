@@ -84,6 +84,12 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "SmartRestDpsManaPct",    DcType::UInt,  10,   0, 100,  true  },
     { "SmartRestHealerManaPct", DcType::UInt,  40,   0, 100,  true  },
 
+    // Wait at Boss: auto-pause the run at the moment the tank would commit a
+    // boss pull and hold for the human's resume (the addon Pause/Resume button
+    // or `dc pause`), so the party can prepare instead of the tank rushing in
+    // unannounced. Once per boss per run. See DcWaitAtBossDecision.h.
+    { "WaitAtBoss",             DcType::Bool,   0,   0,   1,  true  },
+
     { "PreventBotRelease",     DcType::Bool,   1,   0,   1,  true  },
 
     // Diagnostics: record every boss-approach decision (the pure DecideApproach
