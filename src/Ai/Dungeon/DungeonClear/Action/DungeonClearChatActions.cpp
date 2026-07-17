@@ -1035,6 +1035,19 @@ bool DcPauseAction::Execute(Event event)
 
     bool const paused = DcRun::Of(context).paused;
 
+    // Explicit intent ("dc pause pause" / "dc pause resume", sent by the addon
+    // button): a bare `dc pause` is a stateless TOGGLE, which races the
+    // auto-pause sites — a click aimed at "Pause" that lands just after the run
+    // auto-paused (door, wait-at-boss) reads the flipped flag and RESUMES, and
+    // vice versa. With an intent that already holds, do nothing but re-push
+    // status so the addon's button label resyncs. Chat stays a plain toggle.
+    std::string const intent = event.getParam();
+    if ((intent == "pause" && paused) || (intent == "resume" && !paused))
+    {
+        botAI->DoSpecificAction("dc status", event, true);
+        return true;
+    }
+
     if (!paused)
     {
         // Pause: hold in place. The driving ladder, the multiplier, and the
