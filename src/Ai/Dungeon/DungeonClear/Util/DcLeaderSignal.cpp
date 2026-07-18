@@ -450,6 +450,54 @@ bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
     // hold releases exactly when the followers are already down on the landing.
     return ev->steps[prog.stepIndex].kind == EventStepKind::DropInHole;
 }
+
+Creature* DcLeaderSignal::GetLeaderEscortee(Player* bot)
+{
+    if (!bot)
+        return nullptr;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader)
+        return nullptr;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return nullptr;
+
+    // Only while the leader's clear is actively running and unpaused — mirrors the
+    // party-tank / follow semantics so a paused run stops treating the escortee as
+    // a heal target too.
+    AiObjectContext* ctx = leaderAI->GetAiObjectContext();
+    if (!DcRun::Of(ctx).enabled || DcRun::Of(ctx).paused)
+        return nullptr;
+
+    // The leader's active anchored-event step must be an EscortCreature.
+    std::optional<DungeonBossInfo> const next =
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+    if (!next.has_value() || next->kind != DungeonAnchorKind::Objective || !next->eventId)
+        return nullptr;
+
+    DungeonEvent const* ev = DungeonEventRegistry::Find(next->mapId, next->eventId);
+    if (!ev)
+        return nullptr;
+
+    DungeonEventProgress const& prog =
+        ctx->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+    if (prog.eventId != ev->id || prog.stepIndex >= ev->steps.size())
+        return nullptr;
+
+    EventStep const& step = ev->steps[prog.stepIndex];
+    if (step.kind != EventStepKind::EscortCreature || !step.creatureEntry)
+        return nullptr;
+
+    // Find the escortee near the REQUESTING bot (the would-be healer): the caller
+    // still range/LOS-gates it, but scanning from `bot` keeps the reposition mover
+    // working off a creature it can actually path to. Generous radius so a healer
+    // trailing the mounted Tarren Mill ride still resolves him.
+    float const searchR = step.radius > 0.0f ? step.radius : 100.0f;
+    return bot->FindNearestCreature(step.creatureEntry, searchR, /*alive*/ true);
+}
+
 bool DcLeaderSignal::IsPullPhaseHolding(uint32 phase)
 {
     return phase == static_cast<uint32>(DcPullPhase::Forming) ||

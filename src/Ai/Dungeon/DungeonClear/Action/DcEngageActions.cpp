@@ -55,6 +55,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBreadcrumb.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -1292,6 +1293,58 @@ bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
     return true;
 }
 
+namespace
+{
+    // Is `p` below the given HP / mana rest floors? A non-mana class (warrior /
+    // rogue tank) has GetMaxPower(POWER_MANA) == 0 and is never held on mana. A
+    // 0 threshold means "don't gate on this resource".
+    bool BotBelowRest(Player* p, float minHpPct, float minMpPct)
+    {
+        if (!p)
+            return false;
+        if (minHpPct > 0.0f && p->GetHealthPct() < minHpPct)
+            return true;
+        if (minMpPct > 0.0f && p->GetMaxPower(POWER_MANA) > 0 &&
+            p->GetPowerPct(POWER_MANA) < minMpPct)
+            return true;
+        return false;
+    }
+}
+
+DungeonClearEngageActionBase::EventRest DungeonClearEngageActionBase::EventRestDecision()
+{
+    // Combat owns its own ticks, and an in-flight plant/gossip cast must never be
+    // interrupted mid-channel — in either state the tank keeps driving/fighting.
+    if (!bot || bot->IsInCombat() || bot->IsNonMeleeSpellCast(false))
+        return EventRest::None;
+
+    if (DcSmartRest::Enabled(bot))
+    {
+        // SmartRest owns the whole decision. Refresh the party-wide hysteresis
+        // latch here — this is its one update site during an event (the between-
+        // pulls gate that normally drives it is dormant inside a set-piece), and
+        // UpdateLatch is idempotent within a tick. While latched everyone tops to
+        // full, so the tank rests until it hits 100/100; once it's full but a
+        // groupmate isn't, hold in place so the party finishes.
+        bool const latched = DcSmartRest::UpdateLatch(bot, context);
+        if (!latched)
+            return EventRest::None;
+        return BotBelowRest(bot, 100.0f, 100.0f) ? EventRest::Yield : EventRest::Hold;
+    }
+
+    // Legacy per-target rest: the run set RestHealthPct / RestManaPct. Spread is
+    // the cohesion gate's job, so measure rest ONLY (effectively-infinite spread).
+    float const minHp = DcPartyState::RestMinHpPct(bot);
+    float const minMp = DcPartyState::RestMinMpPct(bot);
+    if (minHp <= 0.0f && minMp <= 0.0f)
+        return EventRest::None;  // no rest target configured -> never pause
+    if (BotBelowRest(bot, minHp, minMp))
+        return EventRest::Yield;
+    if (!DcPartyState::IsPartyReady(bot, minHp, minMp, /*maxSpread*/ 100000.0f))
+        return EventRest::Hold;
+    return EventRest::None;
+}
+
 bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
 {
     if (!bot || step.goEntry == 0)
@@ -1335,6 +1388,32 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
     if (target && target->getLootState() != GO_READY)
         return false;
 
+    // PARTY-COHESION GATE. Unlike the normal advance (spread gate) and the escort
+    // (speed-match + slot-follow), this drive had NO cohesion discipline: the tank
+    // sprinted house-to-house — the ~170yd Old Hillsbrad courtyard->prison-yard leg
+    // especially — leaving followers pinned on courtyard guards while the status
+    // panel (which reads this very spread gate) reported "Waiting for the party to
+    // recover". That contradiction ("mod says it can't continue, yet the tank runs
+    // off alone to plant") is the reported bug. Hold at the current spot whenever
+    // the party is out of spread so the group closes up, then resume — a natural
+    // leapfrog at each house boundary. Spread-only (minHp/minMp = 0): HP/mana
+    // recovery is Smart Rest's job at boss pulls, not between barrels. A lone/duo
+    // tank passes trivially (IsPartyReady is vacuously true with no stragglers) so
+    // this never self-deadlocks. Applied ONLY to the sustained TRAVEL legs below —
+    // never the final in-reach plant or the doorway-threading detour — so a tank
+    // essentially at a barrel always completes the plant even if the party lags.
+    auto partyLagging = [&]() -> bool
+    {
+        float const maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
+        return !DcPartyState::IsPartyReady(bot, /*minHp*/ 0.0f, /*minMp*/ 0.0f, maxSpread);
+    };
+    auto holdForParty = [&]() -> bool
+    {
+        SetPhase(context, "objective");
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        return true;
+    };
+
     // The step's GO isn't in scan range yet (a far house whose grid hasn't
     // streamed in): OWN THE TICK and drive the ANCHOR approach with the same
     // sustained navigation, instead of handing back to the Hold+HopTo path whose
@@ -1343,7 +1422,10 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
     // step timeout) own the "pooled spawn missing" case.
     if (!target && haveAnchor && bot->GetExactDist(step.x, step.y, step.z) > 6.0f)
     {
+        if (partyLagging())
+            return holdForParty();
         SetPhase(context, "objective");
+        DcRecordBreadcrumb(context, bot);  // followers inherit the centered trail
         DcMoveTo(bot->GetMapId(), step.x, step.y, step.z, /*idle*/ false, /*react*/ false,
                  /*normal_only*/ false, /*exact_waypoint*/ false,
                  MovementPriority::MOVEMENT_NORMAL);
@@ -1401,11 +1483,17 @@ bool DungeonClearEngageActionBase::DriveUseItemOnGO(EventStep const& step)
         return true;
     }
 
+    // Sustained travel leg to a known-but-distant barrel: keep the party together
+    // (see the cohesion gate above) before committing to the walk.
+    if (partyLagging())
+        return holdForParty();
+
     // OWN THE TICK: drive a clean, sustained navigation to the barrel via the DC
     // movement system, so the at-objective StopBot(Hold) — which cancels a plain
     // MovePoint spline every tick — never chops the path and the tank actually
     // threads the house doorway to the barrel inside.
     SetPhase(context, "objective");
+    DcRecordBreadcrumb(context, bot);  // followers inherit the centered trail
     DcMoveTo(bot->GetMapId(), target->GetPositionX(), target->GetPositionY(),
              target->GetPositionZ(), /*idle*/ false, /*react*/ false,
              /*normal_only*/ false, /*exact_waypoint*/ false,
@@ -1502,6 +1590,29 @@ bool DcObjectiveArriveAction::Execute(Event /*event*/)
             // cast range, so we fall through to Drive and RunStep fires the GO.
             else if (step.kind == EventStepKind::UseItemOnGO)
             {
+                // Recover between barrels. DriveUseItemOnGO owns the tick at
+                // DcRel::AtObjective (30) — above the NeedsRest triggers (26.5) —
+                // so without this the tank bombs all five houses on empty mana,
+                // never drinking on the ~170yd courtyard->prison-yard run. When
+                // out of combat and a rest is warranted, either YIELD the tick so
+                // the tank's own drink/food (26.5) runs, or HOLD in place while the
+                // rest of the party tops off. The drive resumes automatically once
+                // everyone is recovered. See EventRestDecision.
+                switch (EventRestDecision())
+                {
+                    case EventRest::Yield:
+                        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                        SetPhase(context, "objective");
+                        ClearStall(context);
+                        return false;  // NeedsRest (26.5) wins -> the tank drinks/eats
+                    case EventRest::Hold:
+                        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+                        SetPhase(context, "objective");
+                        ClearStall(context);
+                        return true;   // own the tick; wait for the party to recover
+                    case EventRest::None:
+                        break;
+                }
                 if (DriveUseItemOnGO(step))
                     return true;
             }

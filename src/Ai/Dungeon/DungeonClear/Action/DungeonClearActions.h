@@ -163,6 +163,26 @@ protected:
     // destination). Returns false once within cast range, so the caller falls
     // through to Drive and RunStep fires the GO.
     bool DriveUseItemOnGO(EventStep const& step);
+
+    // Recovery verdict for a long non-combat set-piece (the Old Hillsbrad barrel
+    // run). The objective drive owns the tick at DcRel::AtObjective (30), which
+    // sits ABOVE the NeedsRest triggers (26.5) — so without an explicit yield the
+    // tank would bomb all five houses without ever drinking, sprinting between
+    // barrels on empty mana. The travel-leg drivers consult this each out-of-
+    // combat tick:
+    //   - Yield : the TANK itself is below its rest target -> the caller returns
+    //             false so its own drink/food action (rel 26.5) wins the tick.
+    //   - Hold  : the tank is topped but the PARTY is still recovering -> stop in
+    //             place and own the tick so followers close up and drink (never
+    //             yield here, or Advance/engage-trash would drag the tank off the
+    //             event when its own rest trigger is inert).
+    //   - None  : nobody needs to rest -> drive on.
+    // In SmartRest mode this also keeps the party-wide hysteresis latch fresh: the
+    // between-pulls gate that normally drives UpdateLatch never runs inside an
+    // event. Never fires mid-cast (won't interrupt an in-flight plant/gossip) or
+    // in combat (the combat engine owns those ticks). See EventRestDecision.
+    enum class EventRest { None, Yield, Hold };
+    EventRest EventRestDecision();
 };
 
 class DungeonClearAdvanceAction : public DcMovementAction

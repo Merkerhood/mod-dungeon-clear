@@ -158,4 +158,17 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    a boss pull and hold for the human's resume, once per boss per run via the
 #    DcRunState::waitedBossGuid stamp; edge-pinned by t/TestWaitAtBoss. The gate
 #    lives in DungeonClearEngageBossAction just before EngageDirect.)
+# Value/DungeonClearPartyMemberToHealValue.{h,cpp}
+#   (decorator over the stock `party member to heal` value, registered under the
+#    same name so it fronts it: delegates to stock, then folds the DC escortee
+#    into the heal candidate set while an escort is live — so the healer heals
+#    Thrall / the Disciple / any escortee exactly like a party member. Paired with
+#    DcLeaderSignal::GetLeaderEscortee (generic active-EscortCreature-step lookup)
+#    and the escortee fold-in on DungeonClearHealTargetValue (reposition mover).)
+# Util/DcBreadcrumb.h
+#   (RecordBreadcrumb hoisted out of DcAdvanceAction.cpp so the item-on-GO
+#    objective drive records the centered trail too — followers inherit it during
+#    the Old Hillsbrad barrel run. Paired with a party-cohesion spread gate in
+#    DriveUseItemOnGO so the tank waits for the party between houses instead of
+#    sprinting off while the panel reports "waiting".)
 # (this comment bumps mtime to force CMake re-glob on next build)

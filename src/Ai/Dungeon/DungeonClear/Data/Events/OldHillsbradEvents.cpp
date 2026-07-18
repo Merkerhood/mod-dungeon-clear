@@ -97,6 +97,16 @@ namespace
     constexpr float OH_HOUSE2_X = 2165.47f, OH_HOUSE2_Y = 252.75f, OH_HOUSE2_Z = 53.75f;  // pool 1164
     constexpr float OH_HOUSE1_X = 2213.15f, OH_HOUSE1_Y = 257.25f, OH_HOUSE1_Z = 53.81f;  // pool 1163
 
+    // Post-barrel muster point — OUTSIDE the last (house-1) building. Planting the
+    // 5th bomb sets that house ablaze; the party was parking ON the last barrel
+    // inside it, where the fire ground-damage both hurt them and suppressed
+    // food/drink (rest can't tick while taking damage), deadlocking the run. A
+    // MoveTo here walks everyone clear of the fire into the open yard before Drake
+    // spawns — Drake is then engaged from this safe spot.
+    constexpr float OH_MUSTER_X = 2174.63f;
+    constexpr float OH_MUSTER_Y = 220.60f;
+    constexpr float OH_MUSTER_Z = 52.88f;
+
     // Objective (3) anchor: OUTSIDE Thrall's prison gate, on the players' side.
     // Thrall spawns INSIDE the cell (2231.90, 120.00, 82.30) behind the closed
     // Prison Door (GO 184393 at 2230.56, 118.12, 83.05), and the intended flow is
@@ -184,6 +194,13 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out)
                 .Timeout(120000)
             .UseItemOnGO(OH_ITEM_BOMBS, OH_SPELL_PLANT, OH_GO_BARREL, OH_HOUSE1_X, OH_HOUSE1_Y, OH_HOUSE1_Z)
                 .Timeout(120000)
+            // The 5th plant torched house 1; walk the party out into the open yard
+            // (OH_MUSTER) before Drake spawns so nobody parks in the fire (which
+            // both damaged them and blocked drinking, deadlocking the run). Drake
+            // is engaged from here. Generous radius/timeout: the muster point is a
+            // ~50yd walk back from the last barrel, possibly through guard fights.
+            .MoveTo(OH_MUSTER_X, OH_MUSTER_Y, OH_MUSTER_Z, /*radius*/ 6.0f)
+                .Timeout(60000)
             .WaitForSpawn(NPC_LT_DRAKE, /*wantAlive*/ true, /*timeout*/ 60000)
             .KillCreatureEngage(NPC_LT_DRAKE, /*count*/ 1, /*searchRadius*/ 200.0f)
             .Build());

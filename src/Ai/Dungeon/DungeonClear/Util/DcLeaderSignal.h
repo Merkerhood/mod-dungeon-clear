@@ -11,6 +11,7 @@
 
 #include <vector>
 
+class Creature;
 class Player;
 
 class DcLeaderSignal
@@ -68,6 +69,19 @@ public:
     // DropInHole and the leader has not yet landed) — no manual flag to go stale.
     // False for the leader itself and off runs. Pass any group member.
     static bool IsLeaderDroppingInHole(Player* bot);
+
+    // The live NPC the group is currently escorting, or nullptr when no escort is
+    // active. Resolves `bot`'s elected leader, confirms its active anchored-event
+    // step is an EscortCreature on an enabled, unpaused run, and returns that
+    // step's escortee creature found near `bot` (alive). This is the "treat the
+    // escortee as a party member" hook: the heal-target machinery folds the result
+    // into its candidate set so a healer heals the escortee (Old Hillsbrad's
+    // Thrall, Wailing Caverns' Disciple, any future escort) exactly as it heals a
+    // teammate — reusing the whole stock heal rotation. Generic (keyed off the
+    // active EscortCreature step, not a hardcoded entry); pass any group member.
+    // Returns nullptr for off/paused runs, no active escort, or the escortee not
+    // being in range of `bot`.
+    static Creature* GetLeaderEscortee(Player* bot);
 
     // --- Advanced pulls -----------------------------------------------------
     // True for the "holding" pull phases (Forming/Advancing/Returning) during

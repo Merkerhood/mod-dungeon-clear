@@ -10,6 +10,9 @@
 {"name":"house4 to house3 centroid","map":560,"sx":2074.34,"sy":71.89,"sz":53.84,"tx":2067.37,"ty":116.14,"tz":54.50,"expectReachable":true}
 {"name":"house3 to house2 centroid (the long NE walk)","map":560,"sx":2067.37,"sy":116.14,"sz":54.50,"tx":2165.47,"ty":252.75,"tz":53.75,"expectReachable":true}
 {"name":"house2 to house1 centroid","map":560,"sx":2165.47,"sy":252.75,"sz":53.75,"tx":2213.15,"ty":257.25,"tz":53.81,"expectReachable":true}
+# after the 5th plant, muster OUTSIDE the now-burning house1 (clear of the fire)
+# before Drake spawns — the party is driven here from the last barrel
+{"name":"house1 to post-barrel muster","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2174.63,"ty":220.60,"tz":52.88,"expectReachable":true}
 # every pooled candidate spot, from its own house centroid (pool group in name)
 {"name":"house5 candidate 2119/42","map":560,"sx":2109.12,"sy":46.99,"sz":53.66,"tx":2119.21,"ty":42.49,"tz":53.78,"expectReachable":true}
 {"name":"house5 candidate 2100/44","map":560,"sx":2109.12,"sy":46.99,"sz":53.66,"tx":2100.11,"ty":43.54,"tz":53.56,"expectReachable":true}

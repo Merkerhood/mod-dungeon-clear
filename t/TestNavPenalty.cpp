@@ -13,8 +13,26 @@ TEST(DcNavPenaltyRegistry, ReportsMapsWithVolumes)
 {
     EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(229));   // Lower Blackrock Spire
     EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(556));   // Sethekk Halls
+    EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(560));   // Old Hillsbrad Foothills
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(0));     // no rows
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(230));   // BRD — no rows
+}
+
+TEST(DcNavPenaltyRegistry, PenalizesTheOldHillsbradSnag)
+{
+    // The reported wedge spots on the courtyard->prison-yard leg: each dead
+    // centre of its ~6yd box, so all must be taxed.
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(560, 2130.57f, 144.23f, 70.16f), 1.0f);
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(560, 2126.99f, 150.99f, 64.74f), 1.0f);
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(560, 2135.76f, 126.73f, 75.28f), 1.0f);
+
+    // Clear of the consolidated box in X: untaxed, so the leg either side of the
+    // bad stretch routes at base cost.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(560, 2155.0f, 144.23f, 70.16f), 1.0f);
+
+    // Inside the box's X/Y footprint but well below its Z band: a route on another
+    // floor is untouched.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(560, 2130.57f, 144.23f, 50.0f), 1.0f);
 }
 
 TEST(DcNavPenaltyRegistry, PenalizesTheSethekkBackDoorRamp)
