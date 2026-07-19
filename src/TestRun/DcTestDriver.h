@@ -45,9 +45,24 @@ namespace DcTestDriver
     // this as the issuing GM for Start().
     Player* Get();
 
-    // Kick off the headless login if the driver isn't online yet. Returns
-    // true when Get() is already usable; false with *whyPending set while the
-    // login is in flight or misconfigured (unknown character name).
+    // Why the driver isn't usable yet — callers that can wait (the plan
+    // scheduler) need to tell "the login is in flight, retry shortly" apart
+    // from "this will never come up", which retrying can't fix.
+    enum class Readiness
+    {
+        Ready,         // Get() is usable now
+        PendingLogin,  // headless login issued/in flight — retry shortly
+        Unavailable,   // no such character / config empty — retrying won't help
+    };
+
+    // Kick off the headless login if the driver isn't online yet, and report
+    // which of the three states we're in. *why is set for the two non-Ready
+    // cases.
+    Readiness Ensure(std::string* why);
+
+    // Ensure() for callers that need the driver right now (`.dc test start`,
+    // which provisions immediately): true when Get() is usable, false with
+    // *whyPending set otherwise.
     bool EnsureOnline(std::string* whyPending);
 
     // Poll the async login and run the one-time initialization (mgr +

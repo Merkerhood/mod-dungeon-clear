@@ -10,6 +10,8 @@
 #include "TestRun/DcTestPlan.h"
 
 using DcTestPlan::Counters;
+using DcTestPlan::DriverWait;
+using DcTestPlan::DriverWaitVerdict;
 using DcTestPlan::IsFinished;
 using DcTestPlan::LaunchesWanted;
 using DcTestPlan::ParseResult;
@@ -173,4 +175,34 @@ TEST(DcTestPlanParseTest, UnknownOptionFails)
     ParseResult const r = ParseStartArgs("deadmines total=10 bogus=1");
     EXPECT_FALSE(r.ok);
     EXPECT_NE(r.err.find("bogus"), std::string::npos);
+}
+
+// ---- DriverWaitVerdict -----------------------------------------------------------
+//
+// A console/dashboard plan start registers the plan on the same click that
+// kicks the headless driver's login off, so "no issuing GM yet" is the normal
+// first-tick state — the scheduler must wait it out rather than fail the plan.
+
+TEST(DcTestPlanDriverWaitTest, WaitsWhileLoginIsInFlight)
+{
+    EXPECT_EQ(DriverWaitVerdict(true, 0, 120000), DriverWait::Wait);
+    EXPECT_EQ(DriverWaitVerdict(true, 119999, 120000), DriverWait::Wait);
+}
+
+TEST(DcTestPlanDriverWaitTest, AbortsOnceTheWaitCapIsReached)
+{
+    EXPECT_EQ(DriverWaitVerdict(true, 120000, 120000), DriverWait::Abort);
+    EXPECT_EQ(DriverWaitVerdict(true, 999999, 120000), DriverWait::Abort);
+}
+
+// An unresolvable driver (no such character, empty config name) can't be fixed
+// by retrying, so it fails the plan immediately instead of parking it.
+TEST(DcTestPlanDriverWaitTest, AbortsImmediatelyWhenTheDriverCannotComeUp)
+{
+    EXPECT_EQ(DriverWaitVerdict(false, 0, 120000), DriverWait::Abort);
+}
+
+TEST(DcTestPlanDriverWaitTest, ZeroCapDisablesWaiting)
+{
+    EXPECT_EQ(DriverWaitVerdict(true, 0, 0), DriverWait::Abort);
 }
