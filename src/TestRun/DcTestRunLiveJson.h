@@ -30,6 +30,21 @@ namespace DcTestRunLive
         std::string detail;
     };
 
+    // One party member's live position for the dashboard map overlay. Kept as a
+    // compact numeric record (short keys, 1-decimal coords) and emitted in its
+    // own "bots" array — deliberately NOT folded into the human-readable
+    // "recent" timeline, so streaming per-tick coordinates never floods the
+    // status lines the dashboard/logs render as text.
+    struct BotPos
+    {
+        std::string role;              // "tank" / "healer" / "dps"
+        std::uint8_t classId = 0;
+        float x = 0.f;
+        float y = 0.f;
+        float z = 0.f;
+        bool alive = true;
+    };
+
     struct RunSnapshot
     {
         std::string runId;
@@ -41,6 +56,8 @@ namespace DcTestRunLive
         std::uint32_t elapsedS = 0;
         std::uint32_t bossesKilled = 0;
         std::uint32_t bossesTotal = 0;
+        std::int32_t mapId = -1;           // party's current map; -1 = none resolved
+        std::vector<BotPos> bots;          // per-member positions (may be empty)
         std::vector<StatusEntry> recent;   // already trimmed to <=8 by the caller
     };
 

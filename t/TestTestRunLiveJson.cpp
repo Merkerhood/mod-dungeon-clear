@@ -7,6 +7,7 @@
 
 #include "TestRun/DcTestRunLiveJson.h"
 
+using DcTestRunLive::BotPos;
 using DcTestRunLive::Build;
 using DcTestRunLive::RunSnapshot;
 using DcTestRunLive::StatusEntry;
@@ -82,4 +83,37 @@ TEST(DcTestRunLiveJsonTest, RecentEntriesAreJsonEscaped)
     EXPECT_NE(json.find("\\n"), std::string::npos);
     EXPECT_EQ(json.find('\n'), std::string::npos);  // no raw newline leaked
     EXPECT_NE(json.find("\"t\":10"), std::string::npos);
+}
+
+// ---- no bots: empty array + mapId still emitted ----------------------------------
+
+TEST(DcTestRunLiveJsonTest, NoBotsEmitsEmptyArrayAndDefaultMap)
+{
+    RunSnapshot s = Sample("tr-1", "deadmines");  // leaves mapId=-1, bots empty
+    std::string const json = Build(1700000000ull, {s});
+    EXPECT_NE(json.find("\"mapId\":-1"), std::string::npos);
+    EXPECT_NE(json.find("\"bots\":[]"), std::string::npos);
+}
+
+// ---- bot positions: compact keys, 1-decimal coords, no timeline pollution --------
+
+TEST(DcTestRunLiveJsonTest, BotPositionsAreCompactAndOutsideRecent)
+{
+    RunSnapshot s = Sample("tr-1", "ragefire");
+    s.mapId = 389;
+    s.bots.push_back(BotPos{"tank", 1, -123.456f, 42.0f, -60.19f, true});
+    s.bots.push_back(BotPos{"healer", 5, 10.0f, -5.5f, 1.0f, false});
+
+    std::string const json = Build(1700000000ull, {s});
+
+    EXPECT_NE(json.find("\"mapId\":389"), std::string::npos);
+    // Short keys + 1-decimal rounding (not the full float noise).
+    EXPECT_NE(json.find("\"role\":\"tank\",\"cls\":1,\"x\":-123.5,\"y\":42.0,\"z\":-60.2,\"alive\":true"),
+              std::string::npos);
+    EXPECT_NE(json.find("\"role\":\"healer\",\"cls\":5,\"x\":10.0,\"y\":-5.5,\"z\":1.0,\"alive\":false"),
+              std::string::npos);
+    // Positions live in their own array, never spilled into the human-readable
+    // "recent" timeline (which stays empty for this snapshot).
+    EXPECT_NE(json.find("\"bots\":["), std::string::npos);
+    EXPECT_NE(json.find("\"recent\":[]"), std::string::npos);
 }
