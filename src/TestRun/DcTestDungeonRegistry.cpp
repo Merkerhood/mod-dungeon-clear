@@ -9,7 +9,7 @@
 #include <fstream>
 #include <sstream>
 
-#include "Config.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
 #include "TestRun/DcTestRunRecord.h"
 
@@ -123,11 +123,11 @@ namespace DcTestDungeonRegistry
         using DcTestRunRecord::EscapeJson;
         std::ostringstream s;
         s << "{\"limits\":{\"maxConcurrent\":"
-          << sConfigMgr->GetOption<std::uint32_t>("DungeonClear.TestRun.MaxConcurrent", 8)
+          << DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxConcurrent")
           << ",\"maxPlans\":"
-          << sConfigMgr->GetOption<std::uint32_t>("DungeonClear.TestRun.MaxPlans", 2)
+          << DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxPlans")
           << ",\"planMaxTotal\":"
-          << sConfigMgr->GetOption<std::uint32_t>("DungeonClear.TestRun.Plan.MaxTotal", 500)
+          << DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.Plan.MaxTotal")
           << "},\"dungeons\":[";
         bool first = true;
         for (Row const& row : All())

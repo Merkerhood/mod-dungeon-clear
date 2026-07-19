@@ -9,13 +9,14 @@
 #include <fstream>
 #include <limits>
 
-#include "Config.h"
 #include "ObjectGuid.h"
 #include "Player.h"
 
 #include "Playerbots.h"
 #include "PlayerbotAIConfig.h"
 #include "PlayerbotMgr.h"
+
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
 #include "TestRun/DcTestComp.h"
 #include "TestRun/DcTestDungeonRegistry.h"
@@ -65,7 +66,7 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
         return fail(StartErr::NoMgr, "no playerbot manager on this account");
 
     // Concurrency cap (0 = unlimited). World-thread read, no lock.
-    uint32 const maxConcurrent = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxConcurrent", 8);
+    uint32 const maxConcurrent = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxConcurrent");
     if (maxConcurrent != 0 && _runs.size() >= maxConcurrent)
         return fail(StartErr::CapHit,
                     "max concurrent test runs reached (" + std::to_string(maxConcurrent) +
@@ -173,7 +174,7 @@ std::string DcTestRunManager::StatusText() const
     if (_runs.empty())
         return "no test runs active";
 
-    uint32 const maxConcurrent = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxConcurrent", 8);
+    uint32 const maxConcurrent = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxConcurrent");
     std::string out = std::to_string(_runs.size()) +
                       (_runs.size() == 1 ? " test run active" : " test runs active") + " (max " +
                       (maxConcurrent == 0 ? std::string("unlimited") : std::to_string(maxConcurrent)) +
@@ -185,7 +186,7 @@ std::string DcTestRunManager::StatusText() const
 
 uint32 DcTestRunManager::CapHeadroom() const
 {
-    uint32 const maxConcurrent = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxConcurrent", 8);
+    uint32 const maxConcurrent = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxConcurrent");
     if (maxConcurrent == 0)
         return std::numeric_limits<uint32>::max();
     return maxConcurrent > _runs.size() ? maxConcurrent - static_cast<uint32>(_runs.size()) : 0;

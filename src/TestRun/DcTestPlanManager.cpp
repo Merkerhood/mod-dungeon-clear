@@ -9,11 +9,12 @@
 #include <ctime>
 
 #include "Chat.h"
-#include "Config.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
 #include "StringFormat.h"
+
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
 #include "TestRun/DcTestDriver.h"
 #include "TestRun/DcTestDungeonRegistry.h"
@@ -63,12 +64,12 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
         return fail("unknown dungeon '" + spec.dungeonToken + "' — see .dc test list");
     spec.dungeonToken = row->token;  // canonicalize a mapId argument to the token
 
-    uint32 const maxPlans = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxPlans", 2);
+    uint32 const maxPlans = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxPlans");
     if (maxPlans != 0 && _plans.size() >= maxPlans)
         return fail("max active test plans reached (" + std::to_string(maxPlans) +
                     ") — .dc test plan stop <planId> first");
 
-    uint32 const maxTotal = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.Plan.MaxTotal", 500);
+    uint32 const maxTotal = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.Plan.MaxTotal");
     if (spec.total > maxTotal)
         return fail("total=" + std::to_string(spec.total) + " exceeds the cap (" +
                     std::to_string(maxTotal) + ", DungeonClear.TestRun.Plan.MaxTotal)");
@@ -76,7 +77,7 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
     // Default + clamp the plan's concurrency to the run manager's global cap so
     // the scheduler isn't asking for launches Start would always reject.
     uint32 const maxConcurrent =
-        sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxConcurrent", 8);
+        DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxConcurrent");
     if (spec.concurrent == 0)
         spec.concurrent = std::min<uint32>(5, maxConcurrent ? maxConcurrent : 5);
     if (maxConcurrent != 0)
@@ -284,7 +285,7 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
     // driver takes over — a GM can start a 20-run plan and log off.
     Player* gm = ObjectAccessor::FindConnectedPlayer(plan.gmGuid);
     uint32 const backoffCfg =
-        sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.Plan.BackoffMs", 5000);
+        DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.Plan.BackoffMs");
     if (!gm)
     {
         // No issuing GM: either the plan came from the console (there never was
@@ -307,7 +308,7 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
             plan.backoffMs = backoffCfg;
 
             uint32 const waitCap =
-                sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.Plan.DriverWaitMs", 120000);
+                DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.Plan.DriverWaitMs");
             if (DcTestPlan::DriverWaitVerdict(
                     ready == DcTestDriver::Readiness::PendingLogin,
                     static_cast<uint32>(nowMs - plan.driverWaitSinceMs),
