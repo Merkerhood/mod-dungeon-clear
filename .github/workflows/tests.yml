@@ -58,9 +58,12 @@ jobs:
         with:
           path: modules/mod-dungeon-clear
 
-      # 2. Cheap, build-free gate first.
+      # 2. Cheap, build-free gates first.
       - name: Determinism lint
         run: bash modules/mod-dungeon-clear/tools/check_determinism.sh
+
+      - name: Config-read lint
+        run: python3 modules/mod-dungeon-clear/tools/check_config_reads.py
 
       # 3. Build the core deps + the test target. ccache makes repeat runs cheap.
       - name: Install build dependencies

@@ -1183,6 +1183,19 @@ DungeonClear.TestRun.Plan.MaxTotal = 500
 DungeonClear.TestRun.Plan.BackoffMs = 5000
 
 #
+#    DungeonClear.TestRun.Plan.DriverWaitMs
+#        How long a plan waits for the headless test driver to finish logging
+#        in before giving up and aborting the plan. Only applies when there is
+#        no issuing GM online (console/dashboard start, or the GM logged off
+#        mid-campaign) — a plan whose driver never comes up would otherwise
+#        retry forever.
+#
+#        Default: 120000 (2 minutes)
+#
+
+DungeonClear.TestRun.Plan.DriverWaitMs = 120000
+
+#
 #    DungeonClear.TestRun.DriverCharacter
 #        Character name the harness logs in headlessly as the issuing "GM"
 #        when `.dc test ...` comes from the console or the dashboard (no

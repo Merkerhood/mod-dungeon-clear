@@ -9,6 +9,9 @@
  *
  * Adding a new option later is a one-line change here plus the matching line in
  * mod_dungeon_clear.conf.dist; read it at the use site via DcSettings::GetT().
+ * Never reach past this table to sConfigMgr — a raw GetOption re-logs "Config:
+ * Missing property ..." on every call, which floods Server.log from any per-tick
+ * call site. tools/check_config_reads.py fails the build if one creeps back in.
  *
  * The `key` is the suffix only — the "DungeonClear." prefix is added by the
  * accessor when it falls back to sConfigMgr.
@@ -386,6 +389,26 @@ inline constexpr DcSettingDef kDcSettings[] =
     // possessed camera dummy (flight and run). See Util/DcSpectator.h.
     { "SpectateEnable",        DcType::Bool,   1,   0,   1,  false },
     { "SpectateSpeed",         DcType::Float, 2.5, 0.5,  8,  true  },
+
+    // Test-run harness (`.dc test`). Server-only: these govern the regression
+    // harness, never a live dungeon run, so the addon neither shows nor
+    // overrides them. They live here (rather than being read straight from
+    // sConfigMgr at the call site) for the same reason every other tunable does
+    // — DcSettings reads with showLogs=false and caches, and the concurrency
+    // caps in particular are re-read on EVERY world tick by DcTestRunManager::
+    // Tick / DcTestPlanManager::TickPlan. A raw GetOption there floods the
+    // console with "Config: Missing property ..." whenever the deployed conf
+    // predates the key (thousands of lines per session). See DcSettings.h.
+    // MaxConcurrent / MaxPlans take 0 = unlimited, hence the 0 floor.
+    { "TestRun.MaxConcurrent",   DcType::UInt,      8,  0,     64, false },
+    { "TestRun.MaxPlans",        DcType::UInt,      2,  0,     32, false },
+    { "TestRun.PauseGraceS",     DcType::UInt,     60,  0,   3600, false },
+    { "TestRun.StallGraceS",     DcType::UInt,    120,  0,   3600, false },
+    { "TestRun.NoProgressS",     DcType::UInt,    600,  0,  86400, false },
+    { "TestRun.OverallTimeoutS", DcType::UInt,   3600, 60,  86400, false },
+    { "TestRun.Plan.MaxTotal",   DcType::UInt,    500,  1, 100000, false },
+    { "TestRun.Plan.BackoffMs",  DcType::UInt,   5000,  0, 600000, false },
+    { "TestRun.Plan.DriverWaitMs", DcType::UInt, 120000, 0, 600000, false },
 
     // Server-only (not overridable from the addon).
     { "AsyncPathfinding",      DcType::Bool,   1,   0,   1,  false },

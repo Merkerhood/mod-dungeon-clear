@@ -12,7 +12,6 @@
 
 #include "CharacterCache.h"
 #include "Chat.h"
-#include "Config.h"
 #include "Group.h"
 #include "GroupMgr.h"
 #include "InstanceScript.h"
@@ -170,10 +169,10 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     if (seed == 0)
         seed = rand32() | 1u;
 
-    job->_limits.pauseGraceMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.PauseGraceS", 60) * 1000;
-    job->_limits.stallGraceMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.StallGraceS", 120) * 1000;
-    job->_limits.noProgressMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.NoProgressS", 600) * 1000;
-    job->_limits.overallTimeoutMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.OverallTimeoutS", 3600) * 1000;
+    job->_limits.pauseGraceMs = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.PauseGraceS") * 1000;
+    job->_limits.stallGraceMs = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.StallGraceS") * 1000;
+    job->_limits.noProgressMs = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.NoProgressS") * 1000;
+    job->_limits.overallTimeoutMs = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.OverallTimeoutS") * 1000;
 
     job->_record = DcTestRunRecord::Record{};
     job->_record.runId = MakeRunId();

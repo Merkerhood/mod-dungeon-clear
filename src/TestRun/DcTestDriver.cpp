@@ -27,8 +27,11 @@ namespace DcTestDriver
 
         std::string ConfName()
         {
+            // showLogs=false: a missing conf line is normal (the default below is
+            // authoritative), and this is re-read on every driver resolve — see
+            // DcSettings.h. String-valued, so the numeric registry can't hold it.
             return sConfigMgr->GetOption<std::string>("DungeonClear.TestRun.DriverCharacter",
-                                                      "Dcdriver");
+                                                      "Dcdriver", false);
         }
 
         // Resolve (and re-resolve after a conf change) the driver's guid.
