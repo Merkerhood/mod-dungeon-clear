@@ -82,6 +82,8 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "TestRun/DcTestDriver.h"
+#include "TestRun/DcTestDungeonRegistry.h"
 #include "TestRun/DcTestPlanManager.h"
 #include "TestRun/DcTestRunManager.h"
 
@@ -217,6 +219,10 @@ public:
         // map threads only run inside sMapMgr->Update, never concurrently with
         // this world-thread hook.
         new DungeonClearSpectatorMoverEndScript();
+
+        // The dashboard's test-plan start form needs the dungeon catalogue +
+        // caps; publish them once the config is final (first world tick).
+        DcTestDungeonRegistry::WriteSidecar();
 
         LOG_INFO("module", "mod-dungeon-clear: registered DungeonClear contexts "
                            "(strategy/action/trigger/value) into all class "
@@ -406,8 +412,10 @@ public:
         // `.dc test` harness state machine (spawn -> gear -> group -> teleport
         // -> dc on -> watchdogs -> record). Cheap no-op while no test run is
         // active; global tick for the same reason as the status pusher.
-        // Plan scheduler first: a launch it makes this tick enters the run
-        // manager's tick loop immediately below.
+        // Headless-driver login poll first (a console start may be waiting on
+        // it), then the plan scheduler (a launch it makes this tick enters the
+        // run manager's tick loop immediately below).
+        DcTestDriver::Tick();
         DcTestPlanManager::Instance().Tick(diff);
         DcTestRunManager::Instance().Tick(diff);
 

@@ -6,6 +6,12 @@
 #include "DcTestDungeonRegistry.h"
 
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
+
+#include "Config.h"
+
+#include "TestRun/DcTestRunRecord.h"
 
 namespace DcTestDungeonRegistry
 {
@@ -105,5 +111,41 @@ namespace DcTestDungeonRegistry
                 hit = &row;
             }
         return hit;
+    }
+
+    void WriteSidecar()
+    {
+        char const* path = "dc_test_dungeons.json";
+        if (char const* env = std::getenv("DC_TEST_DUNGEONS_FILE"))
+            if (env[0])
+                path = env;
+
+        using DcTestRunRecord::EscapeJson;
+        std::ostringstream s;
+        s << "{\"limits\":{\"maxConcurrent\":"
+          << sConfigMgr->GetOption<std::uint32_t>("DungeonClear.TestRun.MaxConcurrent", 8)
+          << ",\"maxPlans\":"
+          << sConfigMgr->GetOption<std::uint32_t>("DungeonClear.TestRun.MaxPlans", 2)
+          << ",\"planMaxTotal\":"
+          << sConfigMgr->GetOption<std::uint32_t>("DungeonClear.TestRun.Plan.MaxTotal", 500)
+          << "},\"dungeons\":[";
+        bool first = true;
+        for (Row const& row : All())
+        {
+            if (!first)
+                s << ',';
+            first = false;
+            s << "{\"token\":\"" << EscapeJson(row.token) << '"'
+              << ",\"name\":\"" << EscapeJson(row.name) << '"'
+              << ",\"mapId\":" << row.mapId
+              << ",\"level\":" << row.recommendedLevel
+              << ",\"wing\":\"" << EscapeJson(row.wing) << "\"}";
+        }
+        s << "]}";
+
+        std::ofstream f(path, std::ios::out | std::ios::trunc);
+        if (!f.is_open())
+            return;
+        f << s.str() << '\n';
     }
 }

@@ -40,6 +40,13 @@ namespace DcTestDungeonRegistry
     Row const* Find(std::string const& tokenOrMapId);
 
     std::vector<Row> const& All();
+
+    // Dump the catalogue (plus the test-run caps the dashboard's start form
+    // needs) to dc_test_dungeons.json in the worldserver cwd — the same
+    // sidecar pattern as the live/record files (env override
+    // DC_TEST_DUNGEONS_FILE). Written once at the first world tick; the
+    // dashboard serves it via /api/testdungeons.
+    void WriteSidecar();
 }
 
 #endif  // _PLAYERBOT_DCTESTDUNGEONREGISTRY_H

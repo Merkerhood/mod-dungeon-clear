@@ -24,6 +24,7 @@
 #include <sstream>
 
 #include "DungeonClearDispatch.h"
+#include "TestRun/DcTestDriver.h"
 #include "TestRun/DcTestDungeonRegistry.h"
 #include "TestRun/DcTestPlan.h"
 #include "TestRun/DcTestPlanManager.h"
@@ -136,18 +137,21 @@ public:
 
     ChatCommandTable GetCommands() const override
     {
+        // Console::Yes across `.dc test`: a console (or dashboard screen-
+        // bridge) start resolves its issuing GM to the headless driver
+        // character — see DcTestDriver and ResolveTestIssuer.
         static ChatCommandTable dcTestPlanTable =
         {
-            { "start",  HandleTestPlanStart,  SEC_GAMEMASTER, Console::No },
-            { "status", HandleTestPlanStatus, SEC_GAMEMASTER, Console::No },
-            { "stop",   HandleTestPlanStop,   SEC_GAMEMASTER, Console::No },
+            { "start",  HandleTestPlanStart,  SEC_GAMEMASTER, Console::Yes },
+            { "status", HandleTestPlanStatus, SEC_GAMEMASTER, Console::Yes },
+            { "stop",   HandleTestPlanStop,   SEC_GAMEMASTER, Console::Yes },
         };
         static ChatCommandTable dcTestTable =
         {
-            { "start",  HandleTestStart,  SEC_GAMEMASTER, Console::No },
-            { "status", HandleTestStatus, SEC_GAMEMASTER, Console::No },
-            { "stop",   HandleTestStop,   SEC_GAMEMASTER, Console::No },
-            { "list",   HandleTestList,   SEC_GAMEMASTER, Console::No },
+            { "start",  HandleTestStart,  SEC_GAMEMASTER, Console::Yes },
+            { "status", HandleTestStatus, SEC_GAMEMASTER, Console::Yes },
+            { "stop",   HandleTestStop,   SEC_GAMEMASTER, Console::Yes },
+            { "list",   HandleTestList,   SEC_GAMEMASTER, Console::Yes },
             { "plan",   dcTestPlanTable },
         };
         static ChatCommandTable dcTable =
@@ -181,16 +185,28 @@ public:
     // These act on DcTestRunManager directly (never DispatchToTankBots: the
     // whole point is that the GM is NOT in the bot party).
 
+    // The issuing GM for a start: the in-game player when there is one, else
+    // the headless driver (console / dashboard path). nullptr with a pending
+    // message sent when the driver is still logging in — the caller retries.
+    static Player* ResolveTestIssuer(ChatHandler* handler)
+    {
+        if (Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr)
+            return issuer;
+
+        std::string whyPending;
+        if (DcTestDriver::EnsureOnline(&whyPending))
+            return DcTestDriver::Get();
+        handler->SendSysMessage(whyPending);
+        return nullptr;
+    }
+
     // `.dc test start <dungeon> [level=N]` — dungeon is a registry token
     // (`.dc test list`) or a mapId.
     static bool HandleTestStart(ChatHandler* handler, Tail args)
     {
-        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+        Player* issuer = ResolveTestIssuer(handler);
         if (!issuer)
-        {
-            handler->SendSysMessage("This command must be used in-game.");
             return true;
-        }
 
         std::string token;
         uint32 level = 0;
@@ -252,12 +268,9 @@ public:
 
     static bool HandleTestPlanStart(ChatHandler* handler, Tail args)
     {
-        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+        Player* issuer = ResolveTestIssuer(handler);
         if (!issuer)
-        {
-            handler->SendSysMessage("This command must be used in-game.");
             return true;
-        }
 
         DcTestPlan::ParseResult const parsed = DcTestPlan::ParseStartArgs(std::string(args));
         if (!parsed.ok)
