@@ -150,9 +150,20 @@ trips a bug can be replayed with the same party via `seed=`.
 | Command | What it does |
 |---|---|
 | `.dc test start <dungeon> [level=N] [seed=N]` | Launch a run. `<dungeon>` is a token from `list` (or a mapId); `level=` overrides the dungeon-appropriate default; `seed=` replays a specific random comp (omit to roll a fresh one). |
-| `.dc test status` | One-line progress: stage, elapsed, bosses killed, current state. |
-| `.dc test stop` | Abort the active run (recorded as `aborted`). |
+| `.dc test status` | One-line progress per run: stage, elapsed, bosses killed, current state (plus active plan lines). |
+| `.dc test stop [runId\|dungeon\|all]` | Abort run(s) (recorded as `aborted`). `all` also stops every plan. |
 | `.dc test list` | The supported dungeon tokens with their default levels. |
+| `.dc test plan start <dungeon> total=N [concurrent=N] [level=N] [seed=N]` | Campaign: keep up to `concurrent` runs going until `total` complete, then append a summary (success rate, fail reasons, duration stats, boss funnel) to `dc_testplans.jsonl`. `seed=` makes child i replay seed N+i. |
+| `.dc test plan status` | Progress per active plan. |
+| `.dc test plan stop [planId\|all]` | Stop launching, abort the plan's live runs, summarize what ran. |
+
+All `.dc test` commands also work from the **worldserver console** (and thus
+the AC Command Deck): with no in-game issuer the harness logs in a headless
+driver character as the anchoring "GM". One-time setup: create a dedicated bot
+account (not in `AiPlayerbot.RandomBotAccounts`, not an addclass pool
+account), create a character on it named per
+`DungeonClear.TestRun.DriverCharacter` (default `Dcdriver`) — the module logs
+it in on first use, neutralizes its AI and parks it in GM mode.
 
 A run **succeeds** when the existing all-bosses-cleared condition fires. It
 **fails** when the run disables for any other reason (party death, left the

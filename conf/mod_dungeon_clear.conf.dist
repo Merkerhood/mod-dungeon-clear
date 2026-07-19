@@ -1181,3 +1181,20 @@ DungeonClear.TestRun.Plan.MaxTotal = 500
 #
 
 DungeonClear.TestRun.Plan.BackoffMs = 5000
+
+#
+#    DungeonClear.TestRun.DriverCharacter
+#        Character name the harness logs in headlessly as the issuing "GM"
+#        when `.dc test ...` comes from the console or the dashboard (no
+#        in-game player to anchor the run). One-time setup: create a dedicated
+#        bot account, create this character on it (any class), done — the
+#        module logs it in on first use, self-masters its AI (so the party
+#        keeps the real-player-master fast path), parks it in GM mode and
+#        reuses it forever. The account must NOT be in
+#        AiPlayerbot.RandomBotAccounts and must not be an addclass pool
+#        account.
+#
+#        Default: "Dcdriver"
+#
+
+DungeonClear.TestRun.DriverCharacter = "Dcdriver"

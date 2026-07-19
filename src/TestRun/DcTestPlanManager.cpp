@@ -15,6 +15,7 @@
 #include "Player.h"
 #include "StringFormat.h"
 
+#include "TestRun/DcTestDriver.h"
 #include "TestRun/DcTestDungeonRegistry.h"
 #include "TestRun/DcTestPlanSummary.h"
 #include "TestRun/DcTestRunManager.h"
@@ -272,17 +273,28 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
     // At most one launch per world tick per plan: each accepted Start feeds
     // five async bot logins into the shared provisioning budget, and spreading
     // the starts keeps the world tick smooth. The next tick launches the next.
+    //
+    // Issuer resolution happens per launch, not per plan: the plan may have
+    // been started in-game (issuer = that GM) or from the console (issuer =
+    // the headless driver). Either way, when the stored issuer is gone the
+    // driver takes over — a GM can start a 20-run plan and log off.
     Player* gm = ObjectAccessor::FindConnectedPlayer(plan.gmGuid);
     uint32 const backoffCfg =
         sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.Plan.BackoffMs", 5000);
     if (!gm)
     {
-        // The issuing GM is gone; treat like a transient rejection — they may
-        // be relogging (the stall escalation below bounds how long we spin).
-        plan.backoffMs = backoffCfg;
-        if (plan.counters.activeNow == 0 && ++plan.transientStreak >= kMaxTransientStreak)
-            AbortPlan(plan, "stalled: issuing GM logged out");
-        return;
+        std::string whyPending;
+        if (DcTestDriver::EnsureOnline(&whyPending))
+            gm = DcTestDriver::Get();
+        else
+        {
+            // Driver login in flight (or misconfigured) — transient; the
+            // stall escalation below bounds how long we spin on it.
+            plan.backoffMs = backoffCfg;
+            if (plan.counters.activeNow == 0 && ++plan.transientStreak >= kMaxTransientStreak)
+                AbortPlan(plan, "stalled: no issuing GM online (" + whyPending + ")");
+            return;
+        }
     }
 
     uint32 const seed =
