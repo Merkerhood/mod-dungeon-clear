@@ -41,13 +41,29 @@ class DcTestRunManager
 public:
     static DcTestRunManager& Instance();
 
+    // Machine-readable Start rejection class, so the plan scheduler can tell a
+    // transient condition (retry with backoff) from a permanent one (abort the
+    // plan) without matching on the human message.
+    enum class StartErr : uint8
+    {
+        None,
+        UnknownDungeon,  // permanent
+        NoMgr,           // permanent
+        CapHit,          // transient — a run will finish
+        BotBudget,       // transient — MaxAddedBots pre-check
+        PoolExhausted    // transient — other runs hold the pool chars
+    };
+
     // Validate + launch a run. On success sets *msg to the start confirmation
     // and returns true; on failure sets *msg to the reason and returns false.
     // Rejections: unknown dungeon, no playerbot manager, concurrency cap hit,
     // MaxAddedBots pre-check, or no free pool character for a comp class.
     // seed 0 rolls a random comp; a nonzero seed reproduces a specific comp.
+    // planId ties the run to a `.dc test plan` campaign ("" = ad-hoc); errOut /
+    // runIdOut are optional feedback for the plan scheduler.
     bool Start(Player* gm, std::string const& dungeonToken, uint32 levelOverride, uint32 seed,
-               std::string* msg);
+               std::string* msg, std::string const& planId = "", StartErr* errOut = nullptr,
+               std::string* runIdOut = nullptr);
 
     // Stop the run(s) the selector resolves to (see DcTestRunSelect). Bare
     // selector = the single active run. False (with an explanatory *msg) on
@@ -56,6 +72,10 @@ public:
 
     std::string StatusText() const;
     bool IsActive() const { return !_runs.empty(); }
+
+    // Remaining global-cap headroom for the plan scheduler's launch decision
+    // (UINT32_MAX when MaxConcurrent is 0 = unlimited). World-thread read.
+    uint32 CapHeadroom() const;
 
     // Drive every live job from the global playerbots tick (world thread).
     void Tick(uint32 diff);
@@ -81,6 +101,7 @@ private:
     mutable std::mutex _runsMutex;                  // guards _runs vs observer threads
     std::unordered_set<ObjectGuid> _reservedGuids;  // world-thread only
     uint32 _liveAccumMs = 0;                        // live-file throttle
+    bool _liveWasActive = false;                    // for the final active:false write
     std::size_t _provisionRR = 0;                   // round-robin tick offset
 };
 

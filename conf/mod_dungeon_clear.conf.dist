@@ -1148,3 +1148,36 @@ DungeonClear.TestRun.OverallTimeoutS = 3600
 #
 
 DungeonClear.TestRun.MaxConcurrent = 8
+
+#
+#    DungeonClear.TestRun.MaxPlans
+#        How many `.dc test plan` campaigns may be active at once. Each plan
+#        keeps up to its own `concurrent=` test runs in flight until `total=`
+#        runs have completed, then writes one summary line to
+#        dc_testplans.jsonl. 0 = unlimited.
+#
+#        Default: 2
+#
+
+DungeonClear.TestRun.MaxPlans = 2
+
+#
+#    DungeonClear.TestRun.Plan.MaxTotal
+#        Sanity cap on a plan's `total=` argument (a fat-fingered total=2000
+#        would grind the server for days).
+#
+#        Default: 500
+#
+
+DungeonClear.TestRun.Plan.MaxTotal = 500
+
+#
+#    DungeonClear.TestRun.Plan.BackoffMs
+#        How long a plan waits before retrying after a transient launch
+#        rejection (global run cap hit, MaxAddedBots budget, addclass pool
+#        exhausted, issuing GM briefly offline).
+#
+#        Default: 5000
+#
+
+DungeonClear.TestRun.Plan.BackoffMs = 5000

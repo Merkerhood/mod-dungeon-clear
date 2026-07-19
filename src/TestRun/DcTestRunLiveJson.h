@@ -11,15 +11,17 @@
 #include <vector>
 
 // Pure builder for the live-heartbeat sidecar the dashboard polls
-// (dc_testrun_live.json). With concurrent runs the file carries an array:
+// (dc_testrun_live.json). With concurrent runs and plans the file carries:
 //
-//   {"active":<bool>,"ts":<unixS>,"runs":[ {…per-run keys…}, … ]}
+//   {"active":<bool>,"ts":<unixS>,"plans":[ {…per-plan keys…}, … ],
+//    "runs":[ {…per-run keys…}, … ]}
 //
-// "active" is true whenever at least one run is present; the dashboard treats a
-// stale ts (or active:false / empty runs) as "no live run". Each per-run object
-// keeps the same keys the single-run schema wrote, so app.js's card renderer
-// maps 1:1 over the array. Engine-free (takes plain snapshots the manager
-// gathers under its own locks) so the schema is unit-testable in isolation.
+// "active" is true whenever at least one run OR plan is present (a plan in a
+// between-runs backoff window with zero children is still active); the
+// dashboard treats a stale ts (or active:false) as "no live run". Keys are
+// only ever added, so an older app.js keeps rendering the runs array
+// unchanged. Engine-free (takes plain snapshots the managers gather under
+// their own locks) so the schema is unit-testable in isolation.
 
 namespace DcTestRunLive
 {
@@ -45,9 +47,26 @@ namespace DcTestRunLive
         bool alive = true;
     };
 
+    // One active `.dc test plan` campaign, for the dashboard's plan progress
+    // bars (DcTestPlanManager gathers these alongside the run snapshots).
+    struct PlanSnapshot
+    {
+        std::string planId;
+        std::string dungeon;
+        std::uint32_t total = 0;
+        std::uint32_t launched = 0;
+        std::uint32_t succeeded = 0;
+        std::uint32_t failed = 0;
+        std::uint32_t activeNow = 0;
+        std::uint32_t concurrent = 0;
+        std::string state;             // "running" | "backoff" | "draining"
+        std::uint32_t elapsedS = 0;
+    };
+
     struct RunSnapshot
     {
         std::string runId;
+        std::string planId;            // "" for ad-hoc runs
         std::string dungeon;
         std::string dungeonName;
         std::string stage;
@@ -62,8 +81,10 @@ namespace DcTestRunLive
     };
 
     // tsS = unix seconds stamped by the caller (engine time source stays out of
-    // the pure builder). runs empty → {"active":false,"ts":tsS,"runs":[]}.
-    std::string Build(std::uint64_t tsS, std::vector<RunSnapshot> const& runs);
+    // the pure builder). runs and plans both empty →
+    // {"active":false,"ts":tsS,"plans":[],"runs":[]}.
+    std::string Build(std::uint64_t tsS, std::vector<RunSnapshot> const& runs,
+                      std::vector<PlanSnapshot> const& plans = {});
 }
 
 #endif  // _PLAYERBOT_DCTESTRUNLIVEJSON_H

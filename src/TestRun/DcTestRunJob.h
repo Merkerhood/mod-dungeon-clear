@@ -49,7 +49,7 @@ public:
     static std::unique_ptr<DcTestRunJob> Create(Player* gm, DcTestDungeonRegistry::Row const& row,
                                                  uint32 levelOverride, uint32 seed,
                                                  std::unordered_set<ObjectGuid> const& reservedGuids,
-                                                 std::string* err);
+                                                 std::string const& planId, std::string* err);
 
     // Drive from the world thread. provisionBudget is shared across all runs
     // this tick: the one heavyweight PlayerbotFactory::Randomize roll a run
@@ -74,7 +74,13 @@ public:
     ObjectGuid TankGuid() const { return _tankGuid; }
     ObjectGuid GmGuid() const { return _gmGuid; }
     std::string const& RunId() const { return _record.runId; }
+    std::string const& PlanId() const { return _record.planId; }
     std::string const& DungeonToken() const { return _dungeonToken; }
+
+    // The finished record, for the manager's erase pass to distill a plan
+    // child's outcome. Only meaningful once Done() — the record is fully
+    // populated (and the observers gated off) by Teardown.
+    DcTestRunRecord::Record const& RecordData() const { return _record; }
 
     // One-line status for `.dc test status` and the start message.
     std::string StatusLine() const;

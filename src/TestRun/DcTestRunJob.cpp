@@ -150,7 +150,7 @@ Player* DcTestRunJob::FindTank() const
 std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegistry::Row const& row,
                                                    uint32 levelOverride, uint32 seed,
                                                    std::unordered_set<ObjectGuid> const& reservedGuids,
-                                                   std::string* err)
+                                                   std::string const& planId, std::string* err)
 {
     // Caller (DcTestRunManager::Start) has already validated the registry row
     // and that gm has a playerbot manager.
@@ -177,6 +177,7 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
 
     job->_record = DcTestRunRecord::Record{};
     job->_record.runId = MakeRunId();
+    job->_record.planId = planId;
     job->_record.dungeon = row.token;
     job->_record.dungeonName = row.name;
     job->_record.wing = row.wing;
@@ -315,6 +316,7 @@ DcTestRunLive::RunSnapshot DcTestRunJob::Snapshot() const
 {
     DcTestRunLive::RunSnapshot s;
     s.runId = _record.runId;
+    s.planId = _record.planId;
     s.dungeon = _record.dungeon;
     s.dungeonName = _record.dungeonName;
     s.stage = StageName(_stage.load());

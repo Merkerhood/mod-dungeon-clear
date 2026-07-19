@@ -21,6 +21,7 @@ namespace
     {
         Record r;
         r.runId = "tr-test-1";
+        r.planId = "tp-test-1";
         r.dungeon = "deadmines";
         r.dungeonName = "The Deadmines";
         r.mapId = 36;
@@ -71,6 +72,7 @@ TEST(DcTestRunRecordTest, SerializesKnownFields)
     EXPECT_EQ(line.front(), '{');
     EXPECT_EQ(line.back(), '}');
     EXPECT_NE(line.find("\"runId\":\"tr-test-1\""), std::string::npos);
+    EXPECT_NE(line.find("\"planId\":\"tp-test-1\""), std::string::npos);
     EXPECT_NE(line.find("\"dungeon\":\"deadmines\""), std::string::npos);
     EXPECT_NE(line.find("\"mapId\":36"), std::string::npos);
     EXPECT_NE(line.find("\"result\":\"success\""), std::string::npos);

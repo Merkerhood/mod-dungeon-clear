@@ -9,6 +9,7 @@
 
 using DcTestRunLive::BotPos;
 using DcTestRunLive::Build;
+using DcTestRunLive::PlanSnapshot;
 using DcTestRunLive::RunSnapshot;
 using DcTestRunLive::StatusEntry;
 
@@ -35,7 +36,7 @@ namespace
 TEST(DcTestRunLiveJsonTest, EmptyIsInactiveWithEmptyRuns)
 {
     std::string const json = Build(1700000000ull, {});
-    EXPECT_EQ(json, "{\"active\":false,\"ts\":1700000000,\"runs\":[]}");
+    EXPECT_EQ(json, "{\"active\":false,\"ts\":1700000000,\"plans\":[],\"runs\":[]}");
 }
 
 // ---- ts passthrough --------------------------------------------------------------
@@ -65,6 +66,46 @@ TEST(DcTestRunLiveJsonTest, TwoRunsPreserveOrderAndAreActive)
     EXPECT_NE(json.find("\"dungeon\":\"deadmines\""), std::string::npos);
     EXPECT_NE(json.find("\"bossesKilled\":1"), std::string::npos);
     EXPECT_NE(json.find("\"bossesTotal\":4"), std::string::npos);
+}
+
+// ---- runs carry their owning plan ------------------------------------------------
+
+TEST(DcTestRunLiveJsonTest, RunPlanIdEmittedAndEmptyForAdHoc)
+{
+    RunSnapshot planChild = Sample("tr-1", "deadmines");
+    planChild.planId = "tp-9";
+    RunSnapshot adHoc = Sample("tr-2", "wailing");
+
+    std::string const json = Build(1700000000ull, {planChild, adHoc});
+    EXPECT_NE(json.find("\"runId\":\"tr-1\",\"planId\":\"tp-9\""), std::string::npos);
+    EXPECT_NE(json.find("\"runId\":\"tr-2\",\"planId\":\"\""), std::string::npos);
+}
+
+// ---- plans array -----------------------------------------------------------------
+
+TEST(DcTestRunLiveJsonTest, PlansArrayCarriesProgressAndKeepsFileActive)
+{
+    PlanSnapshot p;
+    p.planId = "tp-9";
+    p.dungeon = "old-hillsbrad";
+    p.total = 20;
+    p.launched = 9;
+    p.succeeded = 6;
+    p.failed = 1;
+    p.activeNow = 2;
+    p.concurrent = 5;
+    p.state = "running";
+    p.elapsedS = 900;
+
+    // A plan with zero runs in flight (backoff window) must still read active.
+    std::string const json = Build(1700000000ull, {}, {p});
+    EXPECT_NE(json.find("\"active\":true"), std::string::npos);
+    EXPECT_NE(json.find("\"plans\":[{\"planId\":\"tp-9\",\"dungeon\":\"old-hillsbrad\""
+                        ",\"total\":20,\"launched\":9,\"succeeded\":6,\"failed\":1"
+                        ",\"active\":2,\"concurrent\":5,\"state\":\"running\""
+                        ",\"elapsedS\":900}]"),
+              std::string::npos);
+    EXPECT_NE(json.find("\"runs\":[]"), std::string::npos);
 }
 
 // ---- recent entries are escaped --------------------------------------------------
