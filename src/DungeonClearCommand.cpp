@@ -20,8 +20,12 @@
 #include "StringFormat.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <sstream>
 
 #include "DungeonClearDispatch.h"
+#include "TestRun/DcTestDungeonRegistry.h"
+#include "TestRun/DcTestRunManager.h"
 #include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettingsRegistry.h"
@@ -130,6 +134,13 @@ public:
 
     ChatCommandTable GetCommands() const override
     {
+        static ChatCommandTable dcTestTable =
+        {
+            { "start",  HandleTestStart,  SEC_GAMEMASTER, Console::No },
+            { "status", HandleTestStatus, SEC_GAMEMASTER, Console::No },
+            { "stop",   HandleTestStop,   SEC_GAMEMASTER, Console::No },
+            { "list",   HandleTestList,   SEC_GAMEMASTER, Console::No },
+        };
         static ChatCommandTable dcTable =
         {
             { "on",     HandleOn,     SEC_PLAYER, Console::No },
@@ -142,6 +153,7 @@ public:
             { "go",     HandleGo,     SEC_PLAYER, Console::No },
             { "config", HandleConfig, SEC_PLAYER, Console::No },
             { "spectate", HandleSpectate, SEC_PLAYER, Console::No },
+            { "test",   dcTestTable },
         };
         static ChatCommandTable root = { { "dc", dcTable } };
         return root;
@@ -155,6 +167,77 @@ public:
     static bool HandleStatus(ChatHandler* handler, Optional<std::string> param) { return RunDcCommand(handler, "dc status", param ? *param : ""); }
     static bool HandleBosses(ChatHandler* handler, Optional<std::string> param) { return RunDcCommand(handler, "dc bosses", param ? *param : ""); }
     static bool HandleGo(ChatHandler* handler, Tail targetBoss) { return RunDcCommand(handler, "dc go", std::string(targetBoss)); }
+
+    // --- `.dc test` — the automated test-run harness ------------------------
+    // These act on DcTestRunManager directly (never DispatchToTankBots: the
+    // whole point is that the GM is NOT in the bot party).
+
+    // `.dc test start <dungeon> [level=N]` — dungeon is a registry token
+    // (`.dc test list`) or a mapId.
+    static bool HandleTestStart(ChatHandler* handler, Tail args)
+    {
+        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+        if (!issuer)
+        {
+            handler->SendSysMessage("This command must be used in-game.");
+            return true;
+        }
+
+        std::string token;
+        uint32 level = 0;
+        std::istringstream in{std::string(args)};
+        std::string word;
+        while (in >> word)
+        {
+            if (word.rfind("level=", 0) == 0)
+                level = static_cast<uint32>(std::strtoul(word.c_str() + 6, nullptr, 10));
+            else if (token.empty())
+                token = word;
+            else
+            {
+                handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N]");
+                return true;
+            }
+        }
+        if (token.empty())
+        {
+            handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N] — see .dc test list");
+            return true;
+        }
+
+        std::string err;
+        if (!DcTestRunManager::Instance().Start(issuer, token, level, &err))
+        {
+            handler->SendSysMessage("Test run not started: " + err);
+            return true;
+        }
+        handler->SendSysMessage("Test run started: " + DcTestRunManager::Instance().StatusText());
+        return true;
+    }
+
+    static bool HandleTestStatus(ChatHandler* handler)
+    {
+        handler->SendSysMessage(DcTestRunManager::Instance().StatusText());
+        return true;
+    }
+
+    static bool HandleTestStop(ChatHandler* handler)
+    {
+        std::string msg;
+        DcTestRunManager::Instance().Stop(&msg);
+        handler->SendSysMessage(msg);
+        return true;
+    }
+
+    static bool HandleTestList(ChatHandler* handler)
+    {
+        handler->SendSysMessage("Supported test dungeons (.dc test start <token>):");
+        for (DcTestDungeonRegistry::Row const& row : DcTestDungeonRegistry::All())
+            handler->SendSysMessage(Acore::StringFormat(
+                "  {:<16} {} (map {}, level {})", row.token, row.name, row.mapId,
+                row.recommendedLevel));
+        return true;
+    }
 };
 
 void AddSC_dungeon_clear_command()

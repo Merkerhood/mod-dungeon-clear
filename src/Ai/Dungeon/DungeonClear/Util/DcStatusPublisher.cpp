@@ -80,6 +80,10 @@ namespace
     std::map<ObjectGuid, DcPushState> g_dcActiveTanks;
     std::mutex g_dcActiveTanksMutex;
 
+    // Server-side observer for changed STATUS frames (the `.dc test` harness).
+    // Registered once at module startup, before any run exists — not guarded.
+    DcStatusPublisher::StatusObserver g_dcStatusObserver;
+
     // Throttle accumulator for the world-tick detector (ms).
     uint32 g_dcPushAccumMs = 0;
     constexpr uint32 DC_PUSH_INTERVAL_MS = 400;
@@ -434,6 +438,10 @@ void DcStatusPublisher::UnmarkActiveTank(ObjectGuid tank)
     std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
     g_dcActiveTanks.erase(tank);
 }
+void DcStatusPublisher::SetStatusObserver(StatusObserver observer)
+{
+    g_dcStatusObserver = std::move(observer);
+}
 void DcStatusPublisher::TickStatusPushes(uint32 diff)
 {
     // Throttle: detect at most every DC_PUSH_INTERVAL_MS. Status transitions are
@@ -513,7 +521,11 @@ void DcStatusPublisher::TickStatusPushes(uint32 diff)
         }
 
         if (emitStatus)
+        {
             SendAddonMessage(botAI, payload);
+            if (g_dcStatusObserver)
+                g_dcStatusObserver(guid, payload);
+        }
         if (emitBosses)
             // Reuse the existing boss-list action (silent) so the BOSS_START /
             // BOSS* / BOSS_END framing and per-boss status logic live in one

@@ -171,4 +171,11 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    the Old Hillsbrad barrel run. Paired with a party-cohesion spread gate in
 #    DriveUseItemOnGO so the tank waits for the party between houses instead of
 #    sprinting off while the panel reports "waiting".)
+# TestRun/DcTestRunVerdict.{h,cpp}, TestRun/DcTestDungeonRegistry.{h,cpp},
+# TestRun/DcTestComp.h, TestRun/DcTestRunRecord.{h,cpp},
+# TestRun/DcTestRunManager.{h,cpp}
+#   (`.dc test` automated dungeon test harness: pure verdict kernel + supported-
+#    dungeon/entrance registry + fixed party comp + JSONL run-result sink +
+#    the state-machine manager that spawns/gears/groups/teleports a 5-bot
+#    party, starts the run, watches it, and records the outcome.)
 # (this comment bumps mtime to force CMake re-glob on next build)

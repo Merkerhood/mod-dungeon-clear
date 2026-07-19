@@ -1897,7 +1897,7 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
 
 bool DungeonClearDisableOnClearedAction::Execute(Event /*event*/)
 {
-    DisableDungeonClear(botAI, "All bosses cleared!");
+    DisableDungeonClear(botAI, DcActionShared::kReasonAllCleared);
     return true;
 }
 

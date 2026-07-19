@@ -1082,3 +1082,55 @@ DungeonClear.SpectateEnable = 1
 #
 
 DungeonClear.SpectateSpeed = 2.5
+
+###############################################################################
+# `.dc test` — AUTOMATED DUNGEON TEST RUNS
+#
+#   Server-only watchdog limits for the test-run harness (a GM command that
+#   spawns a full 5-bot party and runs an autonomous dungeon clear, recording
+#   the outcome to dc_testruns.jsonl). These are not player-facing settings —
+#   the companion addon cannot override them.
+###############################################################################
+
+#
+#    DungeonClear.TestRun.PauseGraceS
+#        How long a test run may sit PAUSED (door auto-pause, or anything that
+#        would normally wait for a human) before the run is failed as
+#        paused_timeout. Long enough for the door-blocked auto-resume to win
+#        the race when the door does reopen.
+#
+#        Default: 60
+#
+
+DungeonClear.TestRun.PauseGraceS = 60
+
+#
+#    DungeonClear.TestRun.StallGraceS
+#        How long the run may report a stall reason ("can't reach ...") before
+#        the run is failed as stalled_timeout. The stall ladder gets this much
+#        time to recover on its own first.
+#
+#        Default: 120
+#
+
+DungeonClear.TestRun.StallGraceS = 120
+
+#
+#    DungeonClear.TestRun.NoProgressS
+#        Silent-livelock net: the longest a run may go without ANY boss kill or
+#        objective completion before it is failed as no_progress.
+#
+#        Default: 600
+#
+
+DungeonClear.TestRun.NoProgressS = 600
+
+#
+#    DungeonClear.TestRun.OverallTimeoutS
+#        Hard wall-clock cap on a single test run (setup excluded); exceeding
+#        it fails the run as overall_timeout.
+#
+#        Default: 3600
+#
+
+DungeonClear.TestRun.OverallTimeoutS = 3600

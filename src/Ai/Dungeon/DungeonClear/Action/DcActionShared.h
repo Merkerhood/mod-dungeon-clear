@@ -147,8 +147,16 @@ namespace DcActionShared
     // nullopt. Used by the engage walk-in (EngageDirect) and the advanced pull.
     std::optional<ResolvedPullSpell> ResolvePullSpell(PlayerbotAI* botAI, Player* bot);
 
+    // The one success reason: DisableDungeonClear called with exactly this
+    // string means the run ended because every boss died. Shared so the
+    // all-cleared action and the `.dc test` harness classifier can never
+    // drift apart on the wording.
+    inline constexpr char kReasonAllCleared[] = "All bosses cleared!";
+
     // Tear the run down: clears every "dungeon clear *" value and announces the
-    // reason. Mode goes disabled.
+    // reason. Mode goes disabled. Every run-end path funnels through here, so
+    // this is also where the `.dc test` harness observes the run ending (see
+    // DcTestRunManager::OnRunDisabled — a no-op outside a monitored test run).
     void DisableDungeonClear(PlayerbotAI* botAI, std::string const& reason);
 
     // Mode stays enabled; set a stall reason the fallback trigger / `dc status`

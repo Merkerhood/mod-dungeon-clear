@@ -5,6 +5,7 @@
 
 #include "DungeonClearActions.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "TestRun/DcTestRunManager.h"
 
 #include <algorithm>
 #include <cmath>
@@ -182,6 +183,10 @@ namespace DcActionShared
         }
         DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + reason);
         botAI->DoSpecificAction("dc status", Event(), true);
+
+        // Run-end observer for the `.dc test` harness — cheap GUID compare,
+        // no-op unless this leader is the monitored test run's tank.
+        DcTestRunManager::Instance().OnRunDisabled(bot, reason);
     }
 
 

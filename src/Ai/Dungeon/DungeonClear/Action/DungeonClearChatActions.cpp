@@ -49,7 +49,13 @@ namespace
                 return false;
         if (!bot || !bot->GetGroup())
             return false;
-        return bot->GetGroup()->IsMember(owner->GetGUID());
+        if (bot->GetGroup()->IsMember(owner->GetGUID()))
+            return true;
+        // GM allowance: the `.dc test` harness (and a GM debugging a run)
+        // issues dc commands at a bot party it is deliberately NOT a member
+        // of — the whole point of a test run is a pure-bot group.
+        return owner->GetSession() &&
+               owner->GetSession()->GetSecurity() >= SEC_GAMEMASTER;
     }
 
     bool AnyPartyMemberDead(Player* bot)

@@ -82,6 +82,7 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "TestRun/DcTestRunManager.h"
 
 namespace
 {
@@ -401,6 +402,11 @@ public:
         // fights, when the bot's non-combat strategy engine is dormant.
         DcStatusPublisher::TickStatusPushes(diff);
 
+        // `.dc test` harness state machine (spawn -> gear -> group -> teleport
+        // -> dc on -> watchdogs -> record). Cheap no-op while no test run is
+        // active; global tick for the same reason as the status pusher.
+        DcTestRunManager::Instance().Tick(diff);
+
         // Dungeon-gate correctness net: re-assert "DC strategies installed iff in
         // a dungeon" across all bots on a throttled cadence. The login and
         // map-changed hooks apply/strip responsively on entry/exit; this sweep
@@ -541,4 +547,14 @@ void AddSC_dungeon_clear_module()
     new DungeonClearReaperScript();
     new DungeonClearZfStraySummonScript();
     new DungeonClearEranikusCombatReleaseScript();
+
+    // `.dc test` harness: receive each changed STATUS frame for the monitored
+    // tank (addon messages only reach real players in the bot's group, and the
+    // test-run GM deliberately isn't one). Registered here, once, before any
+    // run can exist.
+    DcStatusPublisher::SetStatusObserver(
+        [](ObjectGuid tank, std::string const& payload)
+        {
+            DcTestRunManager::Instance().OnStatusPayload(tank, payload);
+        });
 }
