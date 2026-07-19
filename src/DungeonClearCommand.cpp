@@ -205,13 +205,9 @@ public:
             return true;
         }
 
-        std::string err;
-        if (!DcTestRunManager::Instance().Start(issuer, token, level, &err))
-        {
-            handler->SendSysMessage("Test run not started: " + err);
-            return true;
-        }
-        handler->SendSysMessage("Test run started: " + DcTestRunManager::Instance().StatusText());
+        std::string msg;
+        DcTestRunManager::Instance().Start(issuer, token, level, &msg);
+        handler->SendSysMessage(msg);
         return true;
     }
 
@@ -221,10 +217,13 @@ public:
         return true;
     }
 
-    static bool HandleTestStop(ChatHandler* handler)
+    // `.dc test stop [selector]` — bare = the single active run (errors listing
+    // runs when >1 active); "all"; an exact runId; or a dungeon token (all its
+    // runs). See DcTestRunSelect.
+    static bool HandleTestStop(ChatHandler* handler, Tail selector)
     {
         std::string msg;
-        DcTestRunManager::Instance().Stop(&msg);
+        DcTestRunManager::Instance().Stop(std::string(selector), &msg);
         handler->SendSysMessage(msg);
         return true;
     }

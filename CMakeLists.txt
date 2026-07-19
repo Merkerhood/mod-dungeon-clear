@@ -178,4 +178,14 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    dungeon/entrance registry + fixed party comp + JSONL run-result sink +
 #    the state-machine manager that spawns/gears/groups/teleports a 5-bot
 #    party, starts the run, watches it, and records the outcome.)
+# TestRun/DcTestRunSelect.{h,cpp}, TestRun/DcTestRunLiveJson.{h,cpp}
+#   (concurrent-run refactor pure helpers: DcTestRunSelect resolves the
+#    `.dc test stop <selector>` precedence (bare/all/runId/dungeon-token) to a
+#    set of run indices; DcTestRunLiveJson builds the multi-run live-heartbeat
+#    JSON ({"active","ts","runs":[…]}) the dashboard polls. Both engine-free and
+#    edge-pinned by t/TestTestRunSelect + t/TestTestRunLiveJson. Paired with the
+#    DcTestRunJob per-run FSM extraction + DcTestRunManager registry rewrite.)
+# TestRun/DcTestRunJob.{h,cpp}
+#   (per-run FSM extracted verbatim from the old singleton DcTestRunManager so N
+#    runs can execute at once; DcTestRunManager is now a run registry.)
 # (this comment bumps mtime to force CMake re-glob on next build)
