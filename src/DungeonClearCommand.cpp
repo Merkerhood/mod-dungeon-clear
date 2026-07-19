@@ -185,28 +185,31 @@ public:
 
         std::string token;
         uint32 level = 0;
+        uint32 seed = 0;  // 0 = roll a random comp; seed=N replays a specific one
         std::istringstream in{std::string(args)};
         std::string word;
         while (in >> word)
         {
             if (word.rfind("level=", 0) == 0)
                 level = static_cast<uint32>(std::strtoul(word.c_str() + 6, nullptr, 10));
+            else if (word.rfind("seed=", 0) == 0)
+                seed = static_cast<uint32>(std::strtoul(word.c_str() + 5, nullptr, 10));
             else if (token.empty())
                 token = word;
             else
             {
-                handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N]");
+                handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N] [seed=N]");
                 return true;
             }
         }
         if (token.empty())
         {
-            handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N] — see .dc test list");
+            handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N] [seed=N] — see .dc test list");
             return true;
         }
 
         std::string msg;
-        DcTestRunManager::Instance().Start(issuer, token, level, &msg);
+        DcTestRunManager::Instance().Start(issuer, token, level, seed, &msg);
         handler->SendSysMessage(msg);
         return true;
     }

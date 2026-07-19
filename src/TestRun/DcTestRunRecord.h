@@ -60,6 +60,7 @@ namespace DcTestRunRecord
         std::uint32_t mapId = 0;
         std::uint32_t instanceId = 0;
         std::uint32_t level = 0;  // requested level
+        std::uint32_t compSeed = 0;  // seed BuildComp rolled this comp from (for replay)
         std::vector<CompEntry> comp;
         std::uint64_t startedAtMs = 0;  // unix ms
         std::uint64_t endedAtMs = 0;

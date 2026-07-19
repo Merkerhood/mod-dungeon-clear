@@ -38,13 +38,16 @@ class Player;
 class DcTestRunJob
 {
 public:
-    // Factory: today's Start body after registry/GM validation. Picks one
-    // offline addclass-pool character per slot (skipping reservedGuids, the
-    // guids already claimed by other live runs), starts their async logins,
-    // logs TESTRUN START and enters SpawningBots. Returns nullptr + err when a
-    // comp class has no available pool character.
+    // Factory: today's Start body after registry/GM validation. Rolls a random
+    // comp from `seed` (DcTestComp::BuildComp), then picks one offline
+    // addclass-pool character per slot (skipping reservedGuids, the guids
+    // already claimed by other live runs; substituting an alternative class of
+    // the same role when the drawn class has no free pool char), starts their
+    // async logins, logs TESTRUN START and enters SpawningBots. Returns nullptr
+    // + err only when a whole role can't be filled from the pool. The seed is
+    // stored in the record so the comp can be replayed.
     static std::unique_ptr<DcTestRunJob> Create(Player* gm, DcTestDungeonRegistry::Row const& row,
-                                                 uint32 levelOverride,
+                                                 uint32 levelOverride, uint32 seed,
                                                  std::unordered_set<ObjectGuid> const& reservedGuids,
                                                  std::string* err);
 

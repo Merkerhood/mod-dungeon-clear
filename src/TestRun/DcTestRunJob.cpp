@@ -6,7 +6,9 @@
 #include "TestRun/DcTestRunJob.h"
 
 #include <algorithm>
+#include <array>
 #include <ctime>
+#include <set>
 
 #include "CharacterCache.h"
 #include "Chat.h"
@@ -27,6 +29,7 @@
 #include "PlayerbotGuildMgr.h"
 #include "PlayerbotMgr.h"
 #include "RandomPlayerbotMgr.h"
+#include "Random.h"
 
 #include "DcStrategyGate.h"
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
@@ -145,7 +148,7 @@ Player* DcTestRunJob::FindTank() const
 }
 
 std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegistry::Row const& row,
-                                                   uint32 levelOverride,
+                                                   uint32 levelOverride, uint32 seed,
                                                    std::unordered_set<ObjectGuid> const& reservedGuids,
                                                    std::string* err)
 {
@@ -162,6 +165,11 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_level = levelOverride ? std::min<uint32>(levelOverride, 80u) : row.recommendedLevel;
     job->_gmGuid = gm->GetGUID();
 
+    // seed 0 = "roll one" — pick a nonzero seed so the comp varies per run yet
+    // is recorded for exact replay via `.dc test start <d> seed=N`.
+    if (seed == 0)
+        seed = rand32() | 1u;
+
     job->_limits.pauseGraceMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.PauseGraceS", 60) * 1000;
     job->_limits.stallGraceMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.StallGraceS", 120) * 1000;
     job->_limits.noProgressMs = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.NoProgressS", 600) * 1000;
@@ -174,13 +182,15 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_record.wing = row.wing;
     job->_record.mapId = row.mapId;
     job->_record.level = job->_level;
+    job->_record.compSeed = seed;
     job->_record.startedAtMs = NowUnixMs();
     job->_record.pauseGraceS = job->_limits.pauseGraceMs / 1000;
     job->_record.stallGraceS = job->_limits.stallGraceMs / 1000;
     job->_record.noProgressS = job->_limits.noProgressMs / 1000;
     job->_record.overallS = job->_limits.overallTimeoutMs / 1000;
 
-    for (DcTestComp::Slot const& c : DcTestComp::kSlots)
+    std::array<DcTestComp::Slot, DcTestComp::kPartySize> const comp = DcTestComp::BuildComp(seed);
+    for (DcTestComp::Slot const& c : comp)
     {
         Slot s;
         s.classId = c.classId;
@@ -190,14 +200,15 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
         job->_slots.push_back(s);
     }
 
-    // Pick one offline addclass-pool character per slot (the `addclass`
-    // command's own selection rules) and start their async logins.
     PlayerbotMgr* mgr = GET_PLAYERBOT_MGR(gm);
     bool const isAlliance = gm->GetTeamId(true) == TEAM_ALLIANCE;
-    for (Slot& slot : job->_slots)
+
+    // Claim one offline addclass-pool character of `classId` (the `addclass`
+    // command's own selection rules), or Empty if none is free.
+    auto claim = [&](uint8 classId) -> ObjectGuid
     {
         auto const& pool = sRandomPlayerbotMgr.addclassCache[
-            RandomPlayerbotMgr::GetTeamClassIdx(isAlliance, slot.classId)];
+            RandomPlayerbotMgr::GetTeamClassIdx(isAlliance, classId)];
         for (ObjectGuid const& guid : pool)
         {
             // Skip guids already claimed by this job's earlier slots and by any
@@ -218,22 +229,55 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
             uint32 const guildId = sCharacterCache->GetCharacterGuildIdByGuid(guid);
             if (guildId && PlayerbotGuildMgr::instance().IsRealGuild(guildId))
                 continue;
-            slot.guid = guid;
-            break;
+            return guid;
         }
-        if (!slot.guid)
+        return ObjectGuid::Empty;
+    };
+
+    // Fill each slot with its drawn class, then start its async login. When the
+    // drawn class has no free pool character, substitute another class of the
+    // same role that does (and isn't already in the party) rather than fail —
+    // randomisation shouldn't abort a run just because one class is un-seeded.
+    // Only a role with no fillable class at all is fatal.
+    std::set<uint8> usedClasses;
+    for (Slot& slot : job->_slots)
+    {
+        ObjectGuid guid = claim(slot.classId);
+        if (!guid)
+        {
+            for (DcTestComp::Slot const& alt : DcTestComp::RolePool(slot.role))
+            {
+                if (alt.classId == slot.classId || usedClasses.count(alt.classId))
+                    continue;
+                guid = claim(alt.classId);
+                if (guid)
+                {
+                    LOG_INFO("playerbots.dungeonclear",
+                             "TESTRUN {} substituting {} for unavailable {} ({})",
+                             job->_record.runId, ClassToken(alt.classId),
+                             ClassToken(slot.classId), slot.role);
+                    slot.classId = alt.classId;
+                    slot.specName = alt.specName;
+                    slot.fallbackSpec = alt.fallbackSpec;
+                    break;
+                }
+            }
+        }
+        if (!guid)
         {
             if (err)
-                *err = std::string("no available ") + ClassToken(slot.classId) +
-                       " in the addclass pool — pre-seed with `.playerbots addclass`";
+                *err = std::string("no available ") + slot.role +
+                       " class in the addclass pool — pre-seed with `.playerbots addclass`";
             return nullptr;
         }
+        slot.guid = guid;
+        usedClasses.insert(slot.classId);
         mgr->AddPlayerBot(slot.guid, gm->GetSession()->GetAccountId());
     }
 
     LOG_INFO("playerbots.dungeonclear",
-             "TESTRUN START {} dungeon={} map={} level={} gm={}",
-             job->_record.runId, job->_record.dungeon, job->_mapId, job->_level, gm->GetName());
+             "TESTRUN START {} dungeon={} map={} level={} seed={} gm={}",
+             job->_record.runId, job->_record.dungeon, job->_mapId, job->_level, seed, gm->GetName());
 
     job->EnterStage(Stage::SpawningBots);
     return job;

@@ -139,14 +139,17 @@ touches **no** playerbots file. Details:
 ## Automated test runs (`.dc test`)
 
 Not part of normal play — this is a **GM-only regression harness** for exercising
-the module across dungeons. One command fields a full 5-bot party (prot warrior
-tank, holy priest, mage/rogue/hunter DPS), levels and gears it, teleports it to
+the module across dungeons. One command fields a full 5-bot party — a randomly
+rolled tank / healer / three-DPS comp on five distinct classes, so successive
+runs shake out class-specific edge cases — levels and gears it, teleports it to
 a supported dungeon's entrance and runs an autonomous clear — the issuing GM
-stays outside the party and just watches (or `.dc spectate`s).
+stays outside the party and just watches (or `.dc spectate`s). The comp's seed
+is logged (`TESTRUN START … seed=N`) and recorded in the JSONL, so a run that
+trips a bug can be replayed with the same party via `seed=`.
 
 | Command | What it does |
 |---|---|
-| `.dc test start <dungeon> [level=N]` | Launch a run. `<dungeon>` is a token from `list` (or a mapId); `level=` overrides the dungeon-appropriate default. |
+| `.dc test start <dungeon> [level=N] [seed=N]` | Launch a run. `<dungeon>` is a token from `list` (or a mapId); `level=` overrides the dungeon-appropriate default; `seed=` replays a specific random comp (omit to roll a fresh one). |
 | `.dc test status` | One-line progress: stage, elapsed, bosses killed, current state. |
 | `.dc test stop` | Abort the active run (recorded as `aborted`). |
 | `.dc test list` | The supported dungeon tokens with their default levels. |
