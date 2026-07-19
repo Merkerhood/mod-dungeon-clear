@@ -69,31 +69,6 @@ being inside a dungeon.
 Non-tank party bots follow the tank only while it has dungeon clear enabled, then
 revert to the player automatically.
 
-## Automated test runs (`.dc test`)
-
-GM-only regression harness: one command fields a full 5-bot party (prot warrior
-tank, holy priest, mage/rogue/hunter DPS), levels and gears it, teleports it to
-a supported dungeon's entrance and runs an autonomous clear — the issuing GM
-stays outside the party and just watches (or `.dc spectate`s).
-
-| Command | What it does |
-|---|---|
-| `.dc test start <dungeon> [level=N]` | Launch a run. `<dungeon>` is a token from `list` (or a mapId); `level=` overrides the dungeon-appropriate default. |
-| `.dc test status` | One-line progress: stage, elapsed, bosses killed, current state. |
-| `.dc test stop` | Abort the active run (recorded as `aborted`). |
-| `.dc test list` | The supported dungeon tokens with their default levels. |
-
-A run **succeeds** when the existing all-bosses-cleared condition fires. It
-**fails** when the run disables for any other reason (party death, left the
-dungeon), pauses longer than a grace period (a paused run is waiting for human
-input a test run never gets), reports a stall too long, makes no boss/objective
-progress, or exceeds the overall time cap — see the `DungeonClear.TestRun.*`
-conf keys. Every run appends one JSON line to `dc_testruns.jsonl` in the
-worldserver directory (comp, per-boss kill timeline, status transitions,
-pauses, fail reason) and brackets its `DungeonClear.log` output with
-`TESTRUN START/END <runId>` markers. Wing-split dungeons run per wing
-(`dm-east`, `sm-cath`, …).
-
 ## Pull modes
 
 How the tank takes trash packs on the way to each boss. Choose from the addon's
@@ -160,6 +135,32 @@ factories into the engine's shared registries on the first world tick, and
 registers a `.dc` command plus a login hook for the `dungeon clear` strategy. It
 touches **no** playerbots file. Details:
 [How it integrates](https://github.com/jrad7/mod-dungeon-clear/wiki/How-It-Integrates).
+
+## Automated test runs (`.dc test`)
+
+Not part of normal play — this is a **GM-only regression harness** for exercising
+the module across dungeons. One command fields a full 5-bot party (prot warrior
+tank, holy priest, mage/rogue/hunter DPS), levels and gears it, teleports it to
+a supported dungeon's entrance and runs an autonomous clear — the issuing GM
+stays outside the party and just watches (or `.dc spectate`s).
+
+| Command | What it does |
+|---|---|
+| `.dc test start <dungeon> [level=N]` | Launch a run. `<dungeon>` is a token from `list` (or a mapId); `level=` overrides the dungeon-appropriate default. |
+| `.dc test status` | One-line progress: stage, elapsed, bosses killed, current state. |
+| `.dc test stop` | Abort the active run (recorded as `aborted`). |
+| `.dc test list` | The supported dungeon tokens with their default levels. |
+
+A run **succeeds** when the existing all-bosses-cleared condition fires. It
+**fails** when the run disables for any other reason (party death, left the
+dungeon), pauses longer than a grace period (a paused run is waiting for human
+input a test run never gets), reports a stall too long, makes no boss/objective
+progress, or exceeds the overall time cap — see the `DungeonClear.TestRun.*`
+conf keys. Every run appends one JSON line to `dc_testruns.jsonl` in the
+worldserver directory (comp, per-boss kill timeline, status transitions,
+pauses, fail reason) and brackets its `DungeonClear.log` output with
+`TESTRUN START/END <runId>` markers. Wing-split dungeons run per wing
+(`dm-east`, `sm-cath`, …).
 
 ## License
 
