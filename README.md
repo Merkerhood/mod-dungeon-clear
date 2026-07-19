@@ -138,43 +138,33 @@ touches **no** playerbots file. Details:
 
 ## Automated test runs (`.dc test`)
 
-Not part of normal play — this is a **GM-only regression harness** for exercising
-the module across dungeons. One command fields a full 5-bot party — a randomly
-rolled tank / healer / three-DPS comp on five distinct classes, so successive
-runs shake out class-specific edge cases — levels and gears it, teleports it to
-a supported dungeon's entrance and runs an autonomous clear — the issuing GM
-stays outside the party and just watches (or `.dc spectate`s). The comp's seed
-is logged (`TESTRUN START … seed=N`) and recorded in the JSONL, so a run that
-trips a bug can be replayed with the same party via `seed=`.
+A **GM-only** harness, not part of normal play. One command rolls a random
+5-bot party (tank, healer, three DPS on five different classes), levels and
+gears it, sends it to a dungeon entrance and lets it clear the place on its
+own. You stay out of the party and watch, or `.dc spectate` along. Every run
+logs its seed, so a run that hits a bug can be replayed with the exact same
+party.
 
 | Command | What it does |
 |---|---|
-| `.dc test start <dungeon> [level=N] [seed=N]` | Launch a run. `<dungeon>` is a token from `list` (or a mapId); `level=` overrides the dungeon-appropriate default; `seed=` replays a specific random comp (omit to roll a fresh one). |
-| `.dc test status` | One-line progress per run: stage, elapsed, bosses killed, current state (plus active plan lines). |
-| `.dc test stop [runId\|dungeon\|all]` | Abort run(s) (recorded as `aborted`). `all` also stops every plan. |
-| `.dc test list` | The supported dungeon tokens with their default levels. |
-| `.dc test plan start <dungeon> total=N [concurrent=N] [level=N] [seed=N]` | Campaign: keep up to `concurrent` runs going until `total` complete, then append a summary (success rate, fail reasons, duration stats, boss funnel) to `dc_testplans.jsonl`. `seed=` makes child i replay seed N+i. |
-| `.dc test plan status` | Progress per active plan. |
-| `.dc test plan stop [planId\|all]` | Stop launching, abort the plan's live runs, summarize what ran. |
+| `.dc test start <dungeon> [level=N] [seed=N]` | Start a run. `<dungeon>` is a token from `list` (or a mapId). |
+| `.dc test status` | Progress of each live run. |
+| `.dc test stop [runId\|dungeon\|all]` | Abort runs. |
+| `.dc test list` | Supported dungeons and their default levels. |
+| `.dc test plan start <dungeon> total=N [concurrent=N]` | Run the same dungeon N times, up to `concurrent` at once, then write a summary. |
+| `.dc test plan status` | Progress of each live plan. |
+| `.dc test plan stop [planId\|all]` | Stop a plan and its runs. |
 
-All `.dc test` commands also work from the **worldserver console** (and thus
-the AC Command Deck): with no in-game issuer the harness logs in a headless
-driver character as the anchoring "GM". One-time setup: create a dedicated bot
-account (not in `AiPlayerbot.RandomBotAccounts`, not an addclass pool
-account), create a character on it named per
-`DungeonClear.TestRun.DriverCharacter` (default `Dcdriver`) — the module logs
-it in on first use, neutralizes its AI and parks it in GM mode.
+These also work from the **worldserver console** and the AC Command Deck. For
+console use, create a dedicated bot account with one character named per
+`DungeonClear.TestRun.DriverCharacter` (default `Dcdriver`); the module logs it
+in and parks it as the stand-in GM.
 
-A run **succeeds** when the existing all-bosses-cleared condition fires. It
-**fails** when the run disables for any other reason (party death, left the
-dungeon), pauses longer than a grace period (a paused run is waiting for human
-input a test run never gets), reports a stall too long, makes no boss/objective
-progress, or exceeds the overall time cap — see the `DungeonClear.TestRun.*`
-conf keys. Every run appends one JSON line to `dc_testruns.jsonl` in the
-worldserver directory (comp, per-boss kill timeline, status transitions,
-pauses, fail reason) and brackets its `DungeonClear.log` output with
-`TESTRUN START/END <runId>` markers. Wing-split dungeons run per wing
-(`dm-east`, `sm-cath`, …).
+A run succeeds when every boss is down. It fails on a party wipe, a long stall,
+no progress, or the overall time cap (tunable via the `DungeonClear.TestRun.*`
+settings). Results land in `dc_testruns.jsonl` next to the worldserver, with
+the run's log lines bracketed by `TESTRUN START/END` markers. Wing-split
+dungeons run one wing at a time (`dm-east`, `sm-cath`, ...).
 
 ## License
 
