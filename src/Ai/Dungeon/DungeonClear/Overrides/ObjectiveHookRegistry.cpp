@@ -20,6 +20,7 @@
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 
 namespace
@@ -118,6 +119,9 @@ namespace
                 return ObjectiveArriveResult::Running;  // bags full this tick
         }
 
+        // Feral-form druids can't cast the item spell at all — shift back first
+        // (same gate the barrel plants use). See DcFormGate.
+        DcFormGate::DropBlockingForm(bot, gunpowder);
         SpellCastTargets targets;
         targets.SetGOTarget(cannon);
         bot->CastItemUseSpell(gunpowder, targets, 0, 0);
@@ -232,6 +236,9 @@ namespace
 
         // USE the key ON the chest: item-use supplies m_CastItem so the KEY_ITEM
         // lock opens -> SendLoot -> SMSG_LOOT_RESPONSE -> "store loot" stores it.
+        // Feral-form druids can't cast the item spell at all — shift back first
+        // (same gate the barrel plants use). See DcFormGate.
+        DcFormGate::DropBlockingForm(bot, key);
         SpellCastTargets targets;
         targets.SetGOTarget(cache);
         bot->CastItemUseSpell(key, targets, 0, 0);

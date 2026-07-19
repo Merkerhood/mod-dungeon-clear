@@ -18,6 +18,7 @@
 #include "InstanceScript.h"
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
 #include "MotionMaster.h"
@@ -657,6 +658,9 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             LOG_INFO("playerbots.dungeonclear",
                      "[dungeon-clear] {} event-step UseItem {} (encounter trigger)",
                      bot->GetName(), step.itemId);
+            // A feral-form druid leader can't cast the item's spell at all
+            // (CheckShapeshift) — shift back first. See DcFormGate.
+            DcFormGate::DropBlockingForm(bot, item);
             SpellCastTargets targets;
             targets.SetUnitTarget(bot);
             bot->CastItemUseSpell(item, targets, 0, 0);
@@ -761,6 +765,13 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                      bot->GetName(), step.itemId, step.spellId,
                      target->GetGUID().ToString(), target->GetName(),
                      bot->GetExactDist(target));
+            // Bear/cat form silently rejects the plant (feral forms are
+            // CAN_ONLY_CAST_SHAPESHIFT_SPELLS, so CheckShapeshift fails the
+            // item-use cast before it reaches the barrel) — a druid tank would
+            // otherwise spam-cast here for the whole step timeout. Shift back to
+            // caster form first; the removal is synchronous, so the cast below
+            // goes out this same tick. See DcFormGate.
+            DcFormGate::DropBlockingForm(bot, item);
             SpellCastTargets goTargets;
             goTargets.SetGOTarget(target);
             bot->CastItemUseSpell(item, goTargets, 0, 0);

@@ -190,4 +190,10 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # TestRun/DcTestRunJob.{h,cpp}
 #   (per-run FSM extracted verbatim from the old singleton DcTestRunManager so N
 #    runs can execute at once; DcTestRunManager is now a run registry.)
+# Util/DcFormGate.h
+#   (header-only shapeshift gate for the item-use casts: a feral-form druid tank
+#    fails Spell::CheckCast's CheckShapeshift, so every quest-item interaction
+#    — Old Hillsbrad's barrel bombs, the Deadmines cannon, the Mechanar cache —
+#    silently no-ops until the form is dropped. Called just before each
+#    CastItemUseSpell.)
 # (this comment bumps mtime to force CMake re-glob on next build)
