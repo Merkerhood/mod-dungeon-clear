@@ -923,6 +923,39 @@ void DcTestRunJob::Finish(DcTestRun::Verdict verdict, std::string const& failRea
     Teardown();
 }
 
+// Log the party out, whichever holder owns it.
+//
+// A bot's login is filed under the holder that owns its master *at callback
+// time*, resolved by sWorldSessionMgr->FindSession(masterAccountId)
+// (PlayerbotMgr.cpp AddPlayerBot / PlayerbotOperations.h OnBotLoginOperation).
+// The test driver logs in through the masterless fake-session path, and those
+// sessions are constructed directly — never handed to WorldSessionMgr::AddSession
+// — so that lookup misses and every driver-run party lands in
+// sRandomPlayerbotMgr instead of the driver's own PlayerbotMgr. The run itself
+// never noticed (it resolves bots through ObjectAccessor), but LogoutPlayerBot
+// keys off the holder's map and returned silently: the group disbanded, the
+// bots left the instance, and then sat in the world logged in forever.
+// A real GM's session *is* in WorldSessionMgr, so their runs took the first
+// branch — which is why this only ever showed up on driver/dashboard runs.
+void DcTestRunJob::LogoutBots(Player* gm)
+{
+    PlayerbotMgr* mgr = gm ? GET_PLAYERBOT_MGR(gm) : nullptr;
+    for (Slot const& slot : _slots)
+    {
+        if (!slot.guid)
+            continue;
+
+        if (mgr && mgr->GetPlayerBot(slot.guid))
+            mgr->LogoutPlayerBot(slot.guid);
+        else if (sRandomPlayerbotMgr.GetPlayerBot(slot.guid))
+            sRandomPlayerbotMgr.LogoutPlayerBot(slot.guid);
+        else if (ObjectAccessor::FindConnectedPlayer(slot.guid))
+            LOG_WARN("playerbots.dungeonclear",
+                     "TESTRUN {} bot {} is online but owned by no holder — left logged in",
+                     _record.runId, slot.guid.ToString());
+    }
+}
+
 void DcTestRunJob::Teardown()
 {
     // gates the observers off before DisableDungeonClear; the exchange also
@@ -952,11 +985,7 @@ void DcTestRunJob::Teardown()
             group->Disband(true);
 
     Player* gm = FindGm();
-    PlayerbotMgr* mgr = gm ? GET_PLAYERBOT_MGR(gm) : nullptr;
-    if (mgr)
-        for (Slot const& slot : _slots)
-            if (slot.guid)
-                mgr->LogoutPlayerBot(slot.guid);
+    LogoutBots(gm);
 
     _record.endedAtMs = NowUnixMs();
     _record.durationS = static_cast<uint32>((_record.endedAtMs - _record.startedAtMs) / 1000);

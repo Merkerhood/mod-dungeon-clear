@@ -138,6 +138,7 @@ private:
     void FailSetup(std::string const& why);
     void Finish(DcTestRun::Verdict verdict, std::string const& failReason);
     void Teardown();
+    void LogoutBots(Player* gm);
 
     Player* FindGm() const;
     Player* FindTank() const;
