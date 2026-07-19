@@ -10,6 +10,7 @@
 #include "Log.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "WorldSession.h"
 
 #include "Playerbots.h"
 #include "PlayerbotAI.h"
@@ -142,6 +143,18 @@ namespace DcTestDriver
         //    self-mastered "real player" first (the .playerbots self flow),
         //    then pin it in place. GM mode also drops it from mob
         //    threat/visibility entirely.
+        // 2b. Actually a GM. The playerbots fake-session login hardcodes
+        // SEC_PLAYER (PlayerbotMgr.cpp: `new WorldSession(..., SEC_PLAYER,
+        // ...)`) regardless of the account's real gmlevel, so the driver
+        // looked like a plain player to every security check — including the
+        // dc commands' GM allowance, which is what lets the harness drive a
+        // bot party it is deliberately not a member of. Without this, every
+        // `dc on` the harness issued was refused and each run died at setup.
+        // SetGameMaster below is only the GM *mode* flag; it does not touch
+        // session security.
+        if (WorldSession* session = driver->GetSession())
+            session->SetSecurity(SEC_GAMEMASTER);
+
         ai->ResetStrategies();
         ai->ChangeStrategy("+stay", BOT_STATE_NON_COMBAT);
         ai->ChangeStrategy("+passive", BOT_STATE_NON_COMBAT);
@@ -150,9 +163,10 @@ namespace DcTestDriver
 
         _initialized = true;
         LOG_INFO("playerbots.dungeonclear",
-                 "TESTDRIVER ready: '{}' online (account {}), self-mastered, parked at map {} "
-                 "{:.1f} {:.1f} {:.1f}",
-                 driver->GetName(), driver->GetSession()->GetAccountId(), driver->GetMapId(),
+                 "TESTDRIVER ready: '{}' online (account {}, security {}), self-mastered, "
+                 "parked at map {} {:.1f} {:.1f} {:.1f}",
+                 driver->GetName(), driver->GetSession()->GetAccountId(),
+                 static_cast<uint32>(driver->GetSession()->GetSecurity()), driver->GetMapId(),
                  driver->GetPositionX(), driver->GetPositionY(), driver->GetPositionZ());
     }
 }
