@@ -723,7 +723,7 @@ void DcTestRunJob::TickStarting()
     }
 
     if (_stageMs >= START_TIMEOUT_MS)
-        FailSetup("dc on did not take (see server log for the bot's error chat)");
+        FailSetup("dc on did not take (look for 'DC command refused' in the DC log)");
 }
 
 void DcTestRunJob::TickMonitoring(uint32 dt)

@@ -35,6 +35,26 @@
 
 namespace
 {
+    // Refuse a dc command with a reason the issuer can actually receive.
+    //
+    // TellError whispers the bot's MASTER, and PlayerbotAI::TellError drops the
+    // message outright when that master is itself a bot
+    // (`GET_PLAYERBOT_AI(master)` bails before the error map). That is exactly
+    // the headless `.dc test` case — the party's master is the test driver, a
+    // fake-session bot — so every refusal reason vanished silently and the
+    // harness's "see the server log for the bot's error chat" pointed at a line
+    // nothing ever wrote. Log the ones that could reach nobody; a refusal a
+    // real player can read still goes to chat only, so normal play stays quiet.
+    void DcRefuse(PlayerbotAI* botAI, Player* bot, std::string const& why)
+    {
+        botAI->TellError(why);
+
+        Player* master = botAI->GetMaster();
+        if (!master || GET_PLAYERBOT_AI(master))
+            LOG_WARN("playerbots.dungeonclear", "DC command refused for {}: {}",
+                     bot ? bot->GetName() : "<unknown>", why);
+    }
+
     bool IsAuthorized(Player* bot, Event const& event)
     {
         Player* owner = const_cast<Event&>(event).getOwner();
@@ -200,7 +220,7 @@ bool DcOnAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))
     {
-        botAI->TellError("Not authorized to enable dungeon clear");
+        DcRefuse(botAI, bot, "Not authorized to enable dungeon clear");
         return false;
     }
     // Party chat fans `dc on` out to every bot the master owns, so non-leader
@@ -224,20 +244,20 @@ bool DcOnAction::Execute(Event event)
     }
     if (!bot->GetMap() || !bot->GetMap()->IsDungeon())
     {
-        botAI->TellError("Not in a dungeon.");
+        DcRefuse(botAI, bot, "Not in a dungeon.");
         return false;
     }
 
     auto const& bosses = AI_VALUE(std::vector<DungeonBossInfo>, DcKey::DungeonBosses);
     if (bosses.empty())
     {
-        botAI->TellError("No bosses found for this map.");
+        DcRefuse(botAI, bot, "No bosses found for this map.");
         return false;
     }
 
     if (AnyPartyMemberDead(bot))
     {
-        botAI->TellError(FirstDeadName(bot) + " is dead — rez and try again.");
+        DcRefuse(botAI, bot, FirstDeadName(bot) + " is dead — rez and try again.");
         return false;
     }
 
@@ -309,7 +329,7 @@ bool DcOffAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))
     {
-        botAI->TellError("Not authorized to disable dungeon clear");
+        DcRefuse(botAI, bot, "Not authorized to disable dungeon clear");
         return false;
     }
 
@@ -348,7 +368,7 @@ bool DcSkipAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))
     {
-        botAI->TellError("Not authorized to skip");
+        DcRefuse(botAI, bot, "Not authorized to skip");
         return false;
     }
     // Only the leader owns the run state. Non-leaders reached via the party-chat
@@ -358,7 +378,7 @@ bool DcSkipAction::Execute(Event event)
         return true;
     if (!DcRun::Of(context).enabled)
     {
-        botAI->TellError("Dungeon clear is not enabled.");
+        DcRefuse(botAI, bot, "Dungeon clear is not enabled.");
         return false;
     }
 
@@ -387,7 +407,7 @@ bool DcSkipAction::Execute(Event event)
     std::optional<DungeonBossInfo> current = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!current.has_value())
     {
-        botAI->TellError("No current boss to skip.");
+        DcRefuse(botAI, bot, "No current boss to skip.");
         return false;
     }
 
@@ -847,7 +867,7 @@ bool DcGoAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))
     {
-        botAI->TellError("Not authorized to run go command");
+        DcRefuse(botAI, bot, "Not authorized to run go command");
         return false;
     }
     // Leader owns the run; non-leaders reached via the chat-keyword fan-out
@@ -856,14 +876,14 @@ bool DcGoAction::Execute(Event event)
         return true;
     if (!DcRun::Of(context).enabled)
     {
-        botAI->TellError("Dungeon clear is not enabled. Please enable it first.");
+        DcRefuse(botAI, bot, "Dungeon clear is not enabled. Please enable it first.");
         return false;
     }
 
     std::string const param = event.getParam();
     if (param.empty())
     {
-        botAI->TellError("Usage: .dc go <boss name or entry>");
+        DcRefuse(botAI, bot, "Usage: .dc go <boss name or entry>");
         return false;
     }
 
@@ -931,7 +951,7 @@ bool DcGoAction::Execute(Event event)
 
             if (!matched)
             {
-                botAI->TellError(ev->name +
+                DcRefuse(botAI, bot, ev->name +
                                  " happens on the way — there's no separate spot to send the tank to.");
                 return false;
             }
@@ -941,14 +961,14 @@ bool DcGoAction::Execute(Event event)
 
     if (!matched)
     {
-        botAI->TellError("Could not find boss matching: " + param);
+        DcRefuse(botAI, bot, "Could not find boss matching: " + param);
         return false;
     }
 
     if (matched->kind == DungeonAnchorKind::Objective &&
         AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors).count(matched->entry))
     {
-        botAI->TellError("Objective " + matched->name + " is already done.");
+        DcRefuse(botAI, bot, "Objective " + matched->name + " is already done.");
         return false;
     }
 
@@ -957,7 +977,7 @@ bool DcGoAction::Execute(Event event)
     if (matched->kind == DungeonAnchorKind::Boss &&
         matched->encounterIndex < 32 && (completedMask & (1u << matched->encounterIndex)))
     {
-        botAI->TellError("Boss " + matched->name + " is already dead (encounter complete).");
+        DcRefuse(botAI, bot, "Boss " + matched->name + " is already dead (encounter complete).");
         return false;
     }
 
@@ -979,7 +999,7 @@ bool DcGoAction::Execute(Event event)
     }
     if (present && !alive)
     {
-        botAI->TellError("Boss " + matched->name + " is dead.");
+        DcRefuse(botAI, bot, "Boss " + matched->name + " is dead.");
         return false;
     }
 
@@ -1024,7 +1044,7 @@ bool DcPauseAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))
     {
-        botAI->TellError("Not authorized to pause dungeon clear");
+        DcRefuse(botAI, bot, "Not authorized to pause dungeon clear");
         return false;
     }
 
@@ -1035,7 +1055,7 @@ bool DcPauseAction::Execute(Event event)
 
     if (!DcRun::Of(context).enabled)
     {
-        botAI->TellError("Dungeon clear is not enabled.");
+        DcRefuse(botAI, bot, "Dungeon clear is not enabled.");
         return false;
     }
 
@@ -1088,7 +1108,7 @@ bool DcPauseAction::Execute(Event event)
     // don't unpause straight into a wipe.
     if (AnyPartyMemberDead(bot))
     {
-        botAI->TellError(FirstDeadName(bot) + " is dead — rez and try again.");
+        DcRefuse(botAI, bot, FirstDeadName(bot) + " is dead — rez and try again.");
         return false;
     }
 
@@ -1132,7 +1152,7 @@ bool DcPullAction::Execute(Event event)
 {
     if (!IsAuthorized(bot, event))
     {
-        botAI->TellError("Not authorized to toggle advanced pull");
+        DcRefuse(botAI, bot, "Not authorized to toggle advanced pull");
         return false;
     }
 
