@@ -5,12 +5,23 @@
 
 #include "TestRun/DcTestRunLiveJson.h"
 
+#include <iomanip>
 #include <sstream>
 
 #include "TestRun/DcTestRunRecord.h"
 
 namespace DcTestRunLive
 {
+    // One-decimal fixed formatting keeps the coordinate payload small and the
+    // file readable — sub-decimetre precision is meaningless for a map dot and
+    // would only bloat the heartbeat with noise digits.
+    static std::string Dp1(float v)
+    {
+        std::ostringstream o;
+        o << std::fixed << std::setprecision(1) << v;
+        return o.str();
+    }
+
     std::string Build(std::uint64_t tsS, std::vector<RunSnapshot> const& runs)
     {
         using DcTestRunRecord::EscapeJson;
@@ -33,6 +44,21 @@ namespace DcTestRunLive
               << ",\"bossesKilled\":" << run.bossesKilled
               << ",\"bossesTotal\":" << run.bossesTotal
               << ",\"state\":\"" << EscapeJson(run.state) << '"'
+              << ",\"mapId\":" << run.mapId
+              << ",\"bots\":[";
+            for (std::size_t b = 0; b < run.bots.size(); ++b)
+            {
+                BotPos const& p = run.bots[b];
+                if (b)
+                    s << ',';
+                s << "{\"role\":\"" << EscapeJson(p.role) << '"'
+                  << ",\"cls\":" << static_cast<unsigned>(p.classId)
+                  << ",\"x\":" << Dp1(p.x)
+                  << ",\"y\":" << Dp1(p.y)
+                  << ",\"z\":" << Dp1(p.z)
+                  << ",\"alive\":" << (p.alive ? "true" : "false") << '}';
+            }
+            s << "]"
               << ",\"recent\":[";
             for (std::size_t i = 0; i < run.recent.size(); ++i)
             {

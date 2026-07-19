@@ -323,6 +323,30 @@ DcTestRunLive::RunSnapshot DcTestRunJob::Snapshot() const
     s.bossesKilled = _record.bossesKilled;
     s.bossesTotal = _record.bossesTotal;
 
+    // Live positions for the dashboard map overlay. Snapshot() is called from
+    // the manager's world-thread tick (WriteLiveStatus), so resolving guids to
+    // players and reading their transform is safe here. The run's mapId is the
+    // tank's (all members share one instance); a member still loading resolves
+    // to null and is simply omitted this heartbeat.
+    for (Slot const& slot : _slots)
+    {
+        if (!slot.guid)
+            continue;
+        Player* p = ObjectAccessor::FindPlayer(slot.guid);
+        if (!p)
+            continue;
+        if (s.mapId < 0)
+            s.mapId = static_cast<std::int32_t>(p->GetMapId());
+        DcTestRunLive::BotPos bp;
+        bp.role = slot.role;
+        bp.classId = slot.classId;
+        bp.x = p->GetPositionX();
+        bp.y = p->GetPositionY();
+        bp.z = p->GetPositionZ();
+        bp.alive = p->IsAlive();
+        s.bots.push_back(std::move(bp));
+    }
+
     std::lock_guard<std::mutex> lock(_obsMutex);
     s.state = _lastStatusState;
     std::vector<DcTestRunRecord::StatusEntry> const& st = _record.statusTimeline;
