@@ -25,6 +25,8 @@
 
 #include "DungeonClearDispatch.h"
 #include "TestRun/DcTestDungeonRegistry.h"
+#include "TestRun/DcTestPlan.h"
+#include "TestRun/DcTestPlanManager.h"
 #include "TestRun/DcTestRunManager.h"
 #include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -134,12 +136,19 @@ public:
 
     ChatCommandTable GetCommands() const override
     {
+        static ChatCommandTable dcTestPlanTable =
+        {
+            { "start",  HandleTestPlanStart,  SEC_GAMEMASTER, Console::No },
+            { "status", HandleTestPlanStatus, SEC_GAMEMASTER, Console::No },
+            { "stop",   HandleTestPlanStop,   SEC_GAMEMASTER, Console::No },
+        };
         static ChatCommandTable dcTestTable =
         {
             { "start",  HandleTestStart,  SEC_GAMEMASTER, Console::No },
             { "status", HandleTestStatus, SEC_GAMEMASTER, Console::No },
             { "stop",   HandleTestStop,   SEC_GAMEMASTER, Console::No },
             { "list",   HandleTestList,   SEC_GAMEMASTER, Console::No },
+            { "plan",   dcTestPlanTable },
         };
         static ChatCommandTable dcTable =
         {
@@ -217,16 +226,63 @@ public:
     static bool HandleTestStatus(ChatHandler* handler)
     {
         handler->SendSysMessage(DcTestRunManager::Instance().StatusText());
+        if (DcTestPlanManager::Instance().HasActivePlans())
+            handler->SendSysMessage(DcTestPlanManager::Instance().StatusText());
         return true;
     }
 
     // `.dc test stop [selector]` — bare = the single active run (errors listing
     // runs when >1 active); "all"; an exact runId; or a dungeon token (all its
-    // runs). See DcTestRunSelect.
+    // runs). See DcTestRunSelect. "all" also stops every active plan first —
+    // otherwise the plan scheduler would relaunch the runs it just aborted.
     static bool HandleTestStop(ChatHandler* handler, Tail selector)
     {
+        if (std::string(selector) == "all" && DcTestPlanManager::Instance().HasActivePlans())
+        {
+            DcTestPlanManager::Instance().StopAll("stopped via .dc test stop all");
+            handler->SendSysMessage("stopping all test plans");
+        }
         std::string msg;
         DcTestRunManager::Instance().Stop(std::string(selector), &msg);
+        handler->SendSysMessage(msg);
+        return true;
+    }
+
+    // --- `.dc test plan` — batched campaigns (N runs, capped concurrency) ----
+
+    static bool HandleTestPlanStart(ChatHandler* handler, Tail args)
+    {
+        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+        if (!issuer)
+        {
+            handler->SendSysMessage("This command must be used in-game.");
+            return true;
+        }
+
+        DcTestPlan::ParseResult const parsed = DcTestPlan::ParseStartArgs(std::string(args));
+        if (!parsed.ok)
+        {
+            handler->SendSysMessage(parsed.err);
+            return true;
+        }
+
+        std::string msg;
+        DcTestPlanManager::Instance().Start(parsed.spec, issuer, &msg);
+        handler->SendSysMessage(msg);
+        return true;
+    }
+
+    static bool HandleTestPlanStatus(ChatHandler* handler)
+    {
+        handler->SendSysMessage(DcTestPlanManager::Instance().StatusText());
+        return true;
+    }
+
+    // `.dc test plan stop [planId|all]` — bare = the single active plan.
+    static bool HandleTestPlanStop(ChatHandler* handler, Tail selector)
+    {
+        std::string msg;
+        DcTestPlanManager::Instance().Stop(std::string(selector), &msg);
         handler->SendSysMessage(msg);
         return true;
     }

@@ -52,8 +52,9 @@ namespace DcTestRunRecord
 
     struct Record
     {
-        std::uint32_t schema = 1;
+        std::uint32_t schema = 2;   // 2: added planId
         std::string runId;
+        std::string planId;       // owning `.dc test plan`, "" for ad-hoc runs
         std::string dungeon;      // registry token
         std::string dungeonName;
         std::string wing;

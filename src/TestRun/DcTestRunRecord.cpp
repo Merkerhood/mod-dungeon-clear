@@ -65,6 +65,8 @@ namespace DcTestRunRecord
         s << "{\"schema\":" << rec.schema
           << ",\"runId\":";
         AppendEscaped(s, rec.runId);
+        s << ",\"planId\":";
+        AppendEscaped(s, rec.planId);
         s << ",\"dungeon\":";
         AppendEscaped(s, rec.dungeon);
         s << ",\"dungeonName\":";

@@ -82,6 +82,7 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
+#include "TestRun/DcTestPlanManager.h"
 #include "TestRun/DcTestRunManager.h"
 
 namespace
@@ -405,6 +406,9 @@ public:
         // `.dc test` harness state machine (spawn -> gear -> group -> teleport
         // -> dc on -> watchdogs -> record). Cheap no-op while no test run is
         // active; global tick for the same reason as the status pusher.
+        // Plan scheduler first: a launch it makes this tick enters the run
+        // manager's tick loop immediately below.
+        DcTestPlanManager::Instance().Tick(diff);
         DcTestRunManager::Instance().Tick(diff);
 
         // Dungeon-gate correctness net: re-assert "DC strategies installed iff in

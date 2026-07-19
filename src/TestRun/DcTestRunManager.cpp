@@ -7,6 +7,7 @@
 
 #include <ctime>
 #include <fstream>
+#include <limits>
 
 #include "Config.h"
 #include "ObjectGuid.h"
@@ -18,6 +19,7 @@
 
 #include "TestRun/DcTestComp.h"
 #include "TestRun/DcTestDungeonRegistry.h"
+#include "TestRun/DcTestPlanManager.h"
 #include "TestRun/DcTestRunJob.h"
 #include "TestRun/DcTestRunLiveJson.h"
 #include "TestRun/DcTestRunRecord.h"
@@ -38,26 +40,35 @@ DcTestRunManager& DcTestRunManager::Instance()
 }
 
 bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
-                             uint32 levelOverride, uint32 seed, std::string* msg)
+                             uint32 levelOverride, uint32 seed, std::string* msg,
+                             std::string const& planId, StartErr* errOut,
+                             std::string* runIdOut)
 {
-    auto fail = [&](std::string const& why) -> bool
+    if (errOut)
+        *errOut = StartErr::None;
+
+    auto fail = [&](StartErr kind, std::string const& why) -> bool
     {
         if (msg)
             *msg = "Test run not started: " + why;
+        if (errOut)
+            *errOut = kind;
         return false;
     };
 
     DcTestDungeonRegistry::Row const* row = DcTestDungeonRegistry::Find(dungeonToken);
     if (!row)
-        return fail("unknown dungeon '" + dungeonToken + "' — see .dc test list");
+        return fail(StartErr::UnknownDungeon,
+                    "unknown dungeon '" + dungeonToken + "' — see .dc test list");
 
     if (!gm || !GET_PLAYERBOT_MGR(gm))
-        return fail("no playerbot manager on this account");
+        return fail(StartErr::NoMgr, "no playerbot manager on this account");
 
     // Concurrency cap (0 = unlimited). World-thread read, no lock.
     uint32 const maxConcurrent = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxConcurrent", 8);
     if (maxConcurrent != 0 && _runs.size() >= maxConcurrent)
-        return fail("max concurrent test runs reached (" + std::to_string(maxConcurrent) +
+        return fail(StartErr::CapHit,
+                    "max concurrent test runs reached (" + std::to_string(maxConcurrent) +
                     ") — .dc test stop <run> first");
 
     // MaxAddedBots pre-check: the core enforces this silently inside
@@ -66,7 +77,8 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
     uint32 const currentBots = GET_PLAYERBOT_MGR(gm)->GetPlayerbotsCount();
     if (sPlayerbotAIConfig.maxAddedBots > 0 &&
         currentBots + DcTestComp::kPartySize > static_cast<uint32>(sPlayerbotAIConfig.maxAddedBots))
-        return fail("would exceed AiPlayerbot.MaxAddedBots (" +
+        return fail(StartErr::BotBudget,
+                    "would exceed AiPlayerbot.MaxAddedBots (" +
                     std::to_string(sPlayerbotAIConfig.maxAddedBots) + "; " +
                     std::to_string(currentBots) + " bots already added, this run needs " +
                     std::to_string(DcTestComp::kPartySize) + ") — raise it or stop a run");
@@ -75,9 +87,12 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
     // world thread — no TOCTOU with other runs).
     std::string err;
     std::unique_ptr<DcTestRunJob> job =
-        DcTestRunJob::Create(gm, *row, levelOverride, seed, _reservedGuids, &err);
+        DcTestRunJob::Create(gm, *row, levelOverride, seed, _reservedGuids, planId, &err);
     if (!job)
-        return fail(err);
+        return fail(StartErr::PoolExhausted, err);
+
+    if (runIdOut)
+        *runIdOut = job->RunId();
 
     // Reserve the slot guids for the life of the run (covers both the async
     // login and the async logout windows — released only at job erase).
@@ -168,49 +183,81 @@ std::string DcTestRunManager::StatusText() const
     return out;
 }
 
+uint32 DcTestRunManager::CapHeadroom() const
+{
+    uint32 const maxConcurrent = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxConcurrent", 8);
+    if (maxConcurrent == 0)
+        return std::numeric_limits<uint32>::max();
+    return maxConcurrent > _runs.size() ? maxConcurrent - static_cast<uint32>(_runs.size()) : 0;
+}
+
 void DcTestRunManager::Tick(uint32 diff)
 {
-    if (_runs.empty())
-        return;
-
-    // One factory-provision roll per world tick across ALL runs; the rotating
-    // offset gives each run a fair first crack at the budget.
-    std::size_t const n = _runs.size();
-    bool provisionBudget = true;
-    for (std::size_t k = 0; k < n; ++k)
-        _runs[(_provisionRR + k) % n]->Tick(diff, provisionBudget);
-    _provisionRR = (_provisionRR + 1) % n;
-
-    // Erase finished jobs, releasing their reserved guids first. Hold the lock
-    // across the whole pass so an observer thread can't be mid-callback on a
-    // job we destroy.
-    bool erasedAny = false;
+    // A plan in a between-runs window (backoff, or all children just finished)
+    // has zero jobs here but must keep the live heartbeat fresh — otherwise
+    // the dashboard reads the file as stale mid-campaign.
+    bool const plansActive = DcTestPlanManager::Instance().HasActivePlans();
+    if (_runs.empty() && !plansActive)
     {
+        // One final active:false write on the tick everything drained, so the
+        // dashboard flips at once rather than waiting out the staleness window.
+        if (_liveWasActive)
+        {
+            _liveWasActive = false;
+            WriteLiveStatus();
+        }
+        return;
+    }
+    _liveWasActive = true;
+
+    if (!_runs.empty())
+    {
+        // One factory-provision roll per world tick across ALL runs; the
+        // rotating offset gives each run a fair first crack at the budget.
+        std::size_t const n = _runs.size();
+        bool provisionBudget = true;
+        for (std::size_t k = 0; k < n; ++k)
+            _runs[(_provisionRR + k) % n]->Tick(diff, provisionBudget);
+        _provisionRR = (_provisionRR + 1) % n;
+
+        // Erase finished jobs, releasing their reserved guids first and handing
+        // plan children's outcomes to the plan scheduler. Hold the lock across
+        // the whole pass so an observer thread can't be mid-callback on a job
+        // we destroy.
         std::lock_guard<std::mutex> lock(_runsMutex);
         for (auto it = _runs.begin(); it != _runs.end();)
         {
             if ((*it)->Done())
             {
+                if (!(*it)->PlanId().empty())
+                {
+                    DcTestRunRecord::Record const& rec = (*it)->RecordData();
+                    DcTestPlan::RunOutcome outcome;
+                    outcome.runId = rec.runId;
+                    outcome.result = rec.result;
+                    outcome.failReason = rec.failReason;
+                    outcome.durationS = rec.durationS;
+                    outcome.bossesKilled = rec.bossesKilled;
+                    outcome.bossesTotal = rec.bossesTotal;
+                    for (DcTestRunRecord::BossKill const& kill : rec.bossTimeline)
+                        if (kill.via == "mask")
+                            outcome.bossKills.push_back(kill.name);
+                    DcTestPlanManager::Instance().OnRunFinished((*it)->PlanId(),
+                                                                std::move(outcome));
+                }
                 for (ObjectGuid const& g : (*it)->BotGuids())
                     _reservedGuids.erase(g);
                 it = _runs.erase(it);
-                erasedAny = true;
             }
             else
                 ++it;
         }
     }
 
-    // Live-status throttle: every ~2s while runs exist, plus one final write on
-    // the tick the last run drained (so the dashboard sees active:false at once
-    // rather than waiting out the 15s staleness window).
+    // Live-status throttle: every ~2s while runs or plans exist. The final
+    // active:false write happens above, on the first fully-idle tick.
     _liveAccumMs += diff;
-    if (_runs.empty())
-    {
-        if (erasedAny)
-            WriteLiveStatus();
-    }
-    else if (_liveAccumMs >= 2000)
+    if (_liveAccumMs >= 2000)
     {
         _liveAccumMs = 0;
         WriteLiveStatus();
@@ -227,7 +274,8 @@ void DcTestRunManager::WriteLiveStatus()
             snaps.push_back(job->Snapshot());
     }
 
-    std::string const json = DcTestRunLive::Build(NowUnixMs() / 1000, snaps);
+    std::string const json = DcTestRunLive::Build(NowUnixMs() / 1000, snaps,
+                                                  DcTestPlanManager::Instance().Snapshots());
     std::ofstream f(DcTestRunRecord::LivePath(), std::ios::out | std::ios::trunc);
     if (!f.is_open())
         return;

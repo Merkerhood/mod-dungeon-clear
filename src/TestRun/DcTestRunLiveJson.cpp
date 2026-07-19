@@ -22,20 +22,39 @@ namespace DcTestRunLive
         return o.str();
     }
 
-    std::string Build(std::uint64_t tsS, std::vector<RunSnapshot> const& runs)
+    std::string Build(std::uint64_t tsS, std::vector<RunSnapshot> const& runs,
+                      std::vector<PlanSnapshot> const& plans)
     {
         using DcTestRunRecord::EscapeJson;
 
         std::ostringstream s;
-        s << "{\"active\":" << (runs.empty() ? "false" : "true")
+        s << "{\"active\":" << (runs.empty() && plans.empty() ? "false" : "true")
           << ",\"ts\":" << tsS
-          << ",\"runs\":[";
+          << ",\"plans\":[";
+        for (std::size_t p = 0; p < plans.size(); ++p)
+        {
+            PlanSnapshot const& plan = plans[p];
+            if (p)
+                s << ',';
+            s << "{\"planId\":\"" << EscapeJson(plan.planId) << '"'
+              << ",\"dungeon\":\"" << EscapeJson(plan.dungeon) << '"'
+              << ",\"total\":" << plan.total
+              << ",\"launched\":" << plan.launched
+              << ",\"succeeded\":" << plan.succeeded
+              << ",\"failed\":" << plan.failed
+              << ",\"active\":" << plan.activeNow
+              << ",\"concurrent\":" << plan.concurrent
+              << ",\"state\":\"" << EscapeJson(plan.state) << '"'
+              << ",\"elapsedS\":" << plan.elapsedS << '}';
+        }
+        s << "],\"runs\":[";
         for (std::size_t r = 0; r < runs.size(); ++r)
         {
             RunSnapshot const& run = runs[r];
             if (r)
                 s << ',';
             s << "{\"runId\":\"" << EscapeJson(run.runId) << '"'
+              << ",\"planId\":\"" << EscapeJson(run.planId) << '"'
               << ",\"dungeon\":\"" << EscapeJson(run.dungeon) << '"'
               << ",\"dungeonName\":\"" << EscapeJson(run.dungeonName) << '"'
               << ",\"stage\":\"" << EscapeJson(run.stage) << '"'
