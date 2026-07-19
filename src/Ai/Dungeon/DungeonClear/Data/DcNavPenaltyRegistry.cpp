@@ -46,26 +46,10 @@ namespace
     // platform — x 25..68, y 150..248, z -5..30 — so every edge on the shortcut is
     // taxed while the upper room / platform (y>=250) and the lower lobby (y<150)
     // stay untaxed and the legitimate west-ramp route is left at base cost.
-    //
-    // Old Hillsbrad Foothills / Escape from Durnholde (map 560) -- a flat-ground
-    // snag, not a climb. On the courtyard->prison-yard leg the party's route runs
-    // through a stretch of bad navmesh where the tank reliably wedges for 30s-1min
-    // (bad polys/edges the A* keeps threading). Three separate wedge spots surfaced
-    // one after another as each tight box steered the corridor onto the next bad
-    // edge a few yards over:
-    //     (2130.57, 144.23, 70.16), (2126.99, 150.99, 64.74), (2135.76, 126.73, 75.28)
-    // -- a line running south with the floor rising (z65 -> z75). Rather than keep
-    // adding ~6yd boxes and playing whack-a-mole, one box spans the whole defect:
-    // the bounding volume of the three spots, padded by the same ~6yd (x/y) / ~8yd
-    // (z) so there is no interior gap for the search to leak into. Same lever: a
-    // stiff cost, never a hard reject, so the corridor prefers the way around but
-    // still traverses if this is the only path. The legit route on either side of
-    // the stretch sits outside the box and is untaxed.
-    constexpr std::array<DcNavPenaltyVolume, 4> kVolumes = {{
+    constexpr std::array<DcNavPenaltyVolume, 3> kVolumes = {{
         { 229, -134.0f, -406.0f, 33.0f, -118.0f, -374.0f, 56.0f, 40.0f },
         { 229,  -65.5f, -384.0f, 49.4f,  -60.5f, -377.0f, 54.2f, 40.0f },
         { 556,   25.0f,  150.0f, -5.0f,   68.0f,  248.0f, 30.0f, 40.0f },
-        { 560, 2120.0f,  120.0f, 56.0f,  2142.0f,  157.0f, 84.0f, 40.0f },
     }};
 }
 
