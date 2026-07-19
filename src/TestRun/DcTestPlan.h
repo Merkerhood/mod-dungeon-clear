@@ -58,6 +58,24 @@ namespace DcTestPlan
     std::uint32_t LaunchesWanted(Spec const& s, Counters const& c,
                                  std::uint32_t globalHeadroom, std::uint32_t backoffMs);
 
+    // A plan started from the console has no issuing GM until the headless
+    // test driver finishes logging in, so the scheduler has to sit on its
+    // hands for the first few ticks. Wait while the login is in flight, but
+    // bound it — a driver that can't come up at all (or one whose login never
+    // lands) must fail the plan rather than leave it parked forever.
+    enum class DriverWait
+    {
+        Wait,
+        Abort,
+    };
+    inline DriverWait DriverWaitVerdict(bool loginPending, std::uint32_t waitedMs,
+                                        std::uint32_t capMs)
+    {
+        if (!loginPending)
+            return DriverWait::Abort;  // misconfigured — retrying can't fix it
+        return waitedMs >= capMs ? DriverWait::Abort : DriverWait::Wait;
+    }
+
     // A plan is finished (ready to summarize) once nothing is in flight and
     // either the total has completed or the plan was told to stop launching.
     inline bool IsFinished(Spec const& s, Counters const& c, bool stopping)

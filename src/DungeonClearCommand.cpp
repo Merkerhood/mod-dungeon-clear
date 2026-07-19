@@ -266,11 +266,25 @@ public:
 
     // --- `.dc test plan` — batched campaigns (N runs, capped concurrency) ----
 
+    // Unlike `.dc test start`, a plan does NOT need its issuer up front: the
+    // scheduler re-resolves one per launch and waits out an in-flight driver
+    // login. That matters because the very first console/dashboard start is
+    // the click that kicks that login off — requiring an issuer here rejected
+    // exactly the request that caused the driver to come online.
     static bool HandleTestPlanStart(ChatHandler* handler, Tail args)
     {
-        Player* issuer = ResolveTestIssuer(handler);
+        Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!issuer)
-            return true;
+        {
+            std::string why;
+            DcTestDriver::Readiness const ready = DcTestDriver::Ensure(&why);
+            if (ready == DcTestDriver::Readiness::Unavailable)
+            {
+                handler->SendSysMessage("Test plan not started: " + why);
+                return true;
+            }
+            issuer = DcTestDriver::Get();  // nullptr while the login is in flight
+        }
 
         DcTestPlan::ParseResult const parsed = DcTestPlan::ParseStartArgs(std::string(args));
         if (!parsed.ok)

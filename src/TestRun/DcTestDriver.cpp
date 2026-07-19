@@ -61,18 +61,18 @@ namespace DcTestDriver
         return _initialized ? FindOnline() : nullptr;
     }
 
-    bool EnsureOnline(std::string* whyPending)
+    Readiness Ensure(std::string* why)
     {
         if (Get())
-            return true;
+            return Readiness::Ready;
 
         if (!ResolveGuid())
         {
-            if (whyPending)
-                *whyPending = "test driver character '" + ConfName() +
-                              "' not found — create it on a dedicated bot account and set "
-                              "DungeonClear.TestRun.DriverCharacter";
-            return false;
+            if (why)
+                *why = "test driver character '" + ConfName() +
+                       "' not found — create it on a dedicated bot account and set "
+                       "DungeonClear.TestRun.DriverCharacter";
+            return Readiness::Unavailable;
         }
 
         if (!_loginIssued)
@@ -85,9 +85,18 @@ namespace DcTestDriver
                      _resolvedName, _guid.ToString());
         }
 
+        if (why)
+            *why = "test driver '" + _resolvedName + "' is logging in";
+        return Readiness::PendingLogin;
+    }
+
+    bool EnsureOnline(std::string* whyPending)
+    {
+        std::string why;
+        if (Ensure(&why) == Readiness::Ready)
+            return true;
         if (whyPending)
-            *whyPending = "test driver '" + _resolvedName +
-                          "' is logging in — retry in a few seconds";
+            *whyPending = why + " — retry in a few seconds";
         return false;
     }
 

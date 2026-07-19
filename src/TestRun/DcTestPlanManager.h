@@ -32,7 +32,9 @@ public:
     static DcTestPlanManager& Instance();
 
     // Validate + register a plan (spec.planId is assigned here). The issuing
-    // GM is stored as a guid and re-resolved at every launch.
+    // GM is stored as a guid and re-resolved at every launch, so gm may be
+    // nullptr: a console/dashboard start registers the plan while the headless
+    // driver is still logging in, and the first launch picks the driver up.
     bool Start(DcTestPlan::Spec spec, Player* gm, std::string* msg);
 
     // Stop the plan(s) the selector resolves to: "" (single active plan),
@@ -69,6 +71,7 @@ private:
         uint64 startedAtMs = 0;
         uint32 backoffMs = 0;         // remaining transient-rejection backoff
         uint32 transientStreak = 0;   // consecutive rejections with 0 active
+        uint64 driverWaitSinceMs = 0; // 0 = not waiting on the driver login
         bool stopping = false;        // no more launches; drain then summarize
         std::string result;           // final disposition once stopping/complete
         std::string abortReason;

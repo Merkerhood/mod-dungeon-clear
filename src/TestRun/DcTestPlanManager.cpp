@@ -63,9 +63,6 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
         return fail("unknown dungeon '" + spec.dungeonToken + "' — see .dc test list");
     spec.dungeonToken = row->token;  // canonicalize a mapId argument to the token
 
-    if (!gm)
-        return fail("no issuing player");
-
     uint32 const maxPlans = sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.MaxPlans", 2);
     if (maxPlans != 0 && _plans.size() >= maxPlans)
         return fail("max active test plans reached (" + std::to_string(maxPlans) +
@@ -91,20 +88,24 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
 
     Plan plan;
     plan.spec = spec;
-    plan.gmGuid = gm->GetGUID();
+    if (gm)
+        plan.gmGuid = gm->GetGUID();
     plan.startedAtMs = NowUnixMs();
     _plans.push_back(std::move(plan));
 
     LOG_INFO("playerbots.dungeonclear",
              "TESTPLAN START {} dungeon={} total={} concurrent={} level={} seedBase={} gm={}",
              spec.planId, spec.dungeonToken, spec.total, spec.concurrent, spec.level,
-             spec.seedBase, gm->GetName());
+             spec.seedBase, gm ? gm->GetName() : "<pending test driver>");
 
     if (msg)
-        *msg = Acore::StringFormat("Test plan started: {} {} total={} concurrent={}{}",
+        *msg = Acore::StringFormat("Test plan started: {} {} total={} concurrent={}{}{}",
                                    spec.planId, spec.dungeonToken, spec.total, spec.concurrent,
                                    spec.seedBase ? Acore::StringFormat(" seedBase={}", spec.seedBase)
-                                                 : std::string());
+                                                 : std::string(),
+                                   gm ? std::string()
+                                      : std::string(" — first run launches once the test "
+                                                    "driver finishes logging in"));
     return true;
 }
 
@@ -231,7 +232,10 @@ std::vector<DcTestRunLive::PlanSnapshot> DcTestPlanManager::Snapshots() const
         s.failed = plan.counters.failed;
         s.activeNow = plan.counters.activeNow;
         s.concurrent = plan.spec.concurrent;
-        s.state = plan.stopping ? "draining" : (plan.backoffMs ? "backoff" : "running");
+        s.state = plan.stopping      ? "draining"
+                  : plan.driverWaitSinceMs ? "waiting for test driver"
+                  : plan.backoffMs     ? "backoff"
+                                       : "running";
         s.elapsedS = static_cast<uint32>((nowMs - plan.startedAtMs) / 1000);
         out.push_back(std::move(s));
     }
@@ -283,16 +287,32 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
         sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.Plan.BackoffMs", 5000);
     if (!gm)
     {
-        std::string whyPending;
-        if (DcTestDriver::EnsureOnline(&whyPending))
+        // No issuing GM: either the plan came from the console (there never was
+        // one) or the GM logged off mid-campaign. Either way the headless
+        // driver takes over — and since a console start registers the plan on
+        // the same click that kicks the login off, waiting here is the normal
+        // first-tick path, not an error.
+        std::string why;
+        DcTestDriver::Readiness const ready = DcTestDriver::Ensure(&why);
+        if (ready == DcTestDriver::Readiness::Ready)
+        {
             gm = DcTestDriver::Get();
+            plan.driverWaitSinceMs = 0;
+        }
         else
         {
-            // Driver login in flight (or misconfigured) — transient; the
-            // stall escalation below bounds how long we spin on it.
+            uint64 const nowMs = NowUnixMs();
+            if (!plan.driverWaitSinceMs)
+                plan.driverWaitSinceMs = nowMs;
             plan.backoffMs = backoffCfg;
-            if (plan.counters.activeNow == 0 && ++plan.transientStreak >= kMaxTransientStreak)
-                AbortPlan(plan, "stalled: no issuing GM online (" + whyPending + ")");
+
+            uint32 const waitCap =
+                sConfigMgr->GetOption<uint32>("DungeonClear.TestRun.Plan.DriverWaitMs", 120000);
+            if (DcTestPlan::DriverWaitVerdict(
+                    ready == DcTestDriver::Readiness::PendingLogin,
+                    static_cast<uint32>(nowMs - plan.driverWaitSinceMs),
+                    waitCap) == DcTestPlan::DriverWait::Abort)
+                AbortPlan(plan, "no issuing GM: " + why);
             return;
         }
     }

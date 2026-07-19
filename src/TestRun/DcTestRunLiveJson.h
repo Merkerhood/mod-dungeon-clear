@@ -60,6 +60,7 @@ namespace DcTestRunLive
         std::uint32_t activeNow = 0;
         std::uint32_t concurrent = 0;
         std::string state;             // "running" | "backoff" | "draining"
+                                       // | "waiting for test driver"
         std::uint32_t elapsedS = 0;
     };
 
