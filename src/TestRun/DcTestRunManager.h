@@ -45,7 +45,9 @@ public:
     // and returns true; on failure sets *msg to the reason and returns false.
     // Rejections: unknown dungeon, no playerbot manager, concurrency cap hit,
     // MaxAddedBots pre-check, or no free pool character for a comp class.
-    bool Start(Player* gm, std::string const& dungeonToken, uint32 levelOverride, std::string* msg);
+    // seed 0 rolls a random comp; a nonzero seed reproduces a specific comp.
+    bool Start(Player* gm, std::string const& dungeonToken, uint32 levelOverride, uint32 seed,
+               std::string* msg);
 
     // Stop the run(s) the selector resolves to (see DcTestRunSelect). Bare
     // selector = the single active run. False (with an explanatory *msg) on

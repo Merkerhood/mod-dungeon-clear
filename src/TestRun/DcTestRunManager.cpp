@@ -38,7 +38,7 @@ DcTestRunManager& DcTestRunManager::Instance()
 }
 
 bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
-                             uint32 levelOverride, std::string* msg)
+                             uint32 levelOverride, uint32 seed, std::string* msg)
 {
     auto fail = [&](std::string const& why) -> bool
     {
@@ -75,7 +75,7 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
     // world thread — no TOCTOU with other runs).
     std::string err;
     std::unique_ptr<DcTestRunJob> job =
-        DcTestRunJob::Create(gm, *row, levelOverride, _reservedGuids, &err);
+        DcTestRunJob::Create(gm, *row, levelOverride, seed, _reservedGuids, &err);
     if (!job)
         return fail(err);
 

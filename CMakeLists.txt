@@ -172,12 +172,14 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    DriveUseItemOnGO so the tank waits for the party between houses instead of
 #    sprinting off while the panel reports "waiting".)
 # TestRun/DcTestRunVerdict.{h,cpp}, TestRun/DcTestDungeonRegistry.{h,cpp},
-# TestRun/DcTestComp.h, TestRun/DcTestRunRecord.{h,cpp},
+# TestRun/DcTestComp.{h,cpp}, TestRun/DcTestRunRecord.{h,cpp},
 # TestRun/DcTestRunManager.{h,cpp}
 #   (`.dc test` automated dungeon test harness: pure verdict kernel + supported-
-#    dungeon/entrance registry + fixed party comp + JSONL run-result sink +
-#    the state-machine manager that spawns/gears/groups/teleports a 5-bot
-#    party, starts the run, watches it, and records the outcome.)
+#    dungeon/entrance registry + randomised party comp (DcTestComp::BuildComp
+#    rolls a distinct-class tank/heal/3-dps party from a recorded seed; pinned
+#    by t/TestTestComp) + JSONL run-result sink + the state-machine manager that
+#    spawns/gears/groups/teleports a 5-bot party, starts the run, watches it,
+#    and records the outcome.)
 # TestRun/DcTestRunSelect.{h,cpp}, TestRun/DcTestRunLiveJson.{h,cpp}
 #   (concurrent-run refactor pure helpers: DcTestRunSelect resolves the
 #    `.dc test stop <selector>` precedence (bare/all/runId/dungeon-token) to a
