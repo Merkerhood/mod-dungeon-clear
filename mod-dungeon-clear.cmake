@@ -29,6 +29,8 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestTestRunVerdict.cpp"
             "${MOD_PATH}/t/TestTestDungeonRegistry.cpp"
             "${MOD_PATH}/t/TestTestRunRecord.cpp"
+            "${MOD_PATH}/t/TestTestRunSelect.cpp"
+            "${MOD_PATH}/t/TestTestRunLiveJson.cpp"
             "${MOD_PATH}/t/NavHarness.cpp"
             "${MOD_PATH}/t/replay_decisions.cpp"
             "${MOD_PATH}/t/replay_pull.cpp"
