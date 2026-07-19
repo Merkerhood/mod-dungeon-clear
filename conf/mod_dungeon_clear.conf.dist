@@ -1134,3 +1134,17 @@ DungeonClear.TestRun.NoProgressS = 600
 #
 
 DungeonClear.TestRun.OverallTimeoutS = 3600
+
+#
+#    DungeonClear.TestRun.MaxConcurrent
+#        How many `.dc test` runs may be active at once. Each run fields its own
+#        5-bot party (its own instance, watchdog and dashboard card), so N runs
+#        add up to N*5 bots against AiPlayerbot.MaxAddedBots — a start that would
+#        cross that cap is refused up front with an explicit message. Starting
+#        past this cap is refused with "max concurrent test runs reached".
+#        0 = unlimited (bounded only by MaxAddedBots).
+#
+#        Default: 8
+#
+
+DungeonClear.TestRun.MaxConcurrent = 8
