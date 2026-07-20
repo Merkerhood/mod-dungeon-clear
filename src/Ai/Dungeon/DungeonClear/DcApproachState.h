@@ -46,6 +46,7 @@ struct DcApproachState
     DcProgressWatchdog finalApproachWatch;   // path-ends-short escalation (was doneNotEngagedTicks)
     uint32 stuckCount          = 0;  // MoveTo-returned-false backup (was "stuck count")
     uint32 rebuildAttempts     = 0;  // consecutive rebuilds w/o progress ("stride rebuild attempts")
+    uint32 resnapAttempts      = 0;  // consecutive Resnap recoveries w/o progress (rung-1 give-up)
 
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
@@ -136,6 +137,7 @@ struct DcApproachState
         pursuitWatch.Reset();
         finalApproachWatch.Reset();
         rebuildAttempts     = 0;
+        resnapAttempts      = 0;
         lastPos             = Position();
         skirtOrbitDir       = 0;
         skirtOrbitTarget.Clear();

@@ -183,4 +183,15 @@ constexpr uint32 DC_SMART_REST_REARM_MS = 30000;
 constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
 constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 
+// Consecutive Resnap recoveries allowed before the stuck ladder stops trusting
+// the cached route and forces a rebuild. Resnap only proves the bot's position
+// can be snapped ONTO the polyline — never that it can walk ALONG it — so a bot
+// wedged against geometry beside a still-valid route re-snaps successfully
+// forever. Counting only rebuilds pinned the ladder on its first rung (live:
+// nine "resnapped onto existing route (rebuildAttempts=0)" lines over ~24s on
+// the Durnholde terraces, escalating to nothing). Two lets a genuine transient
+// drift resolve cheaply while a real geometric wedge reaches the rebuild in a
+// few seconds.
+constexpr uint32 DC_MAX_RESNAP_ATTEMPTS = 2;
+
 #endif  // _DUNGEON_CLEAR_TUNING_H

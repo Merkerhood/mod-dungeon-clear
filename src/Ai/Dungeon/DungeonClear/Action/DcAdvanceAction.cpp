@@ -283,13 +283,17 @@ namespace
     //
     // Returns true when Resnap kept us on the existing path; false when
     // a full rebuild is needed (in which case the cache/state are reset).
-    bool TriggerStrideRebuild(Player* bot, AiObjectContext* ctx, DcApproachState& appr)
+    // `allowResnap` false forces the invalidate-and-rebuild path even when the bot
+    // could still be snapped onto the cached polyline — the caller uses it once
+    // repeated resnaps have failed to restore progress (see DC_MAX_RESNAP_ATTEMPTS).
+    bool TriggerStrideRebuild(Player* bot, AiObjectContext* ctx, DcApproachState& appr,
+                              bool allowResnap = true)
     {
         ChunkedPathfinder::Result const& path =
             ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
         DungeonFollowerState& follower =
             ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
-        if (path.reachable && !path.segments.empty() &&
+        if (allowResnap && path.reachable && !path.segments.empty() &&
             DungeonPathFollower::Resnap(bot, path, follower))
             return true;
 
@@ -705,8 +709,13 @@ void DungeonClearAdvanceAction::FillStuckObs(AdvanceState& st, DungeonClearAppro
         appr.routeGlideWatch.TickDisplacement(moving, moved, DC_STUCK_DISPLACEMENT);
     // Real forward progress (moving AND displaced past the threshold) clears any
     // prior consecutive-rebuild count — the strongest signal the route resumed.
+    // Same signal re-arms the cheap Resnap rung: a resnap that actually restored
+    // movement must not count toward the give-up budget.
     if (moving && moved >= DC_STUCK_DISPLACEMENT)
+    {
         rebuildAttempts = 0;
+        appr.resnapAttempts = 0;
+    }
 
     // Per-tick advance telemetry — the three signals the spline-issue lines
     // can't show on their own: did the bot physically move since the last
@@ -767,20 +776,33 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoStuckRecover(Advanc
     // position. Strides are short enough that a rebuild from here
     // usually picks a different sequence of stride endpoints and
     // routes around whatever was wedging us.
-    bool const resnapped = TriggerStrideRebuild(bot, context, appr);
+    // Resnap only proves the bot's position can be snapped ONTO the polyline, never
+    // that it can walk ALONG it — so a bot wedged against geometry beside a route
+    // that is still perfectly valid re-snaps successfully every single time. Left
+    // uncounted, that pinned the ladder on its first rung forever (live: nine
+    // consecutive "resnapped onto existing route (rebuildAttempts=0)" lines over
+    // ~24s on the Durnholde terraces, reaching neither the rebuild nor the nudge,
+    // until an unrelated rebuild happened to land and freed it). Count consecutive
+    // resnaps and, once they stop helping, force the invalidate-and-rebuild path.
+    // Real displacement clears the counter in FillStuckObs, so a transient drift
+    // still gets the cheap rung.
+    bool const allowResnap = appr.resnapAttempts < DC_MAX_RESNAP_ATTEMPTS;
+    bool const resnapped = TriggerStrideRebuild(bot, context, appr, allowResnap);
     LOG_INFO("playerbots.dungeonclear",
-             "[DC:{}] posStuck ({} ticks <{}yd) -> {} (rebuildAttempts={})",
+             "[DC:{}] posStuck ({} ticks <{}yd) -> {} (resnapAttempts={} rebuildAttempts={})",
              bot->GetName(), DC_STUCK_TICK_LIMIT, DC_STUCK_DISPLACEMENT,
              resnapped ? "resnapped onto existing route" : "forcing rebuild",
+             resnapped ? appr.resnapAttempts + 1u : 0u,
              rebuildAttempts + (resnapped ? 0u : 1u));
     if (resnapped)
     {
-        // Resnap fixed us without burning a rebuild — leave the
-        // rebuild-attempt counter alone so the navmesh-nudge
-        // escalation only triggers on true geometric wedges, not
-        // on transient drifts.
+        // Resnap MAY have fixed us without burning a rebuild — leave the
+        // rebuild-attempt counter alone so the navmesh-nudge escalation only
+        // triggers on true geometric wedges, not on transient drifts.
+        ++appr.resnapAttempts;
         return Step::ReturnFalse;
     }
+    appr.resnapAttempts = 0;
     ++rebuildAttempts;
 
     // After three consecutive rebuilds without forward progress, try a
