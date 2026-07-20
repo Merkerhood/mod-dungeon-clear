@@ -196,4 +196,10 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    — Old Hillsbrad's barrel bombs, the Deadmines cannon, the Mechanar cache —
 #    silently no-ops until the form is dropped. Called just before each
 #    CastItemUseSpell.)
+# TestRun/DcDiagSnapshot.{h,cpp}
+#   (end-of-run failure diagnostics: one read-only Snapshot of the whole run —
+#    party positions/liveness/combat, the current boss target, route + wedge
+#    watchdog counters, the stall reason, and the roster with WHICH completion
+#    path fired per boss. Captured in DcTestRunJob::Teardown before the party is
+#    disbanded, serialized under "diag" in dc_testruns.jsonl (schema 3).)
 # (this comment bumps mtime to force CMake re-glob on next build)
