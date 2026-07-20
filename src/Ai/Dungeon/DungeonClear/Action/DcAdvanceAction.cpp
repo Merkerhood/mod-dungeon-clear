@@ -620,14 +620,38 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
 // The multiplier suppresses wander actions during the wait.
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(AdvanceState const& /*st*/)
 {
-    if (!IsBetweenPullsReady(bot, context))
+    // From the context, NOT st.appr: this gate runs in the PRE-ROUTE part of the
+    // ladder, well before Execute fills st.appr, so st.appr is still null here
+    // (TryLootYield above reaches its own state the same way).
+    DcApproachState& appr =
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+
+    if (IsBetweenPullsReady(bot, context))
     {
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] advance yielding: party not ready / resting", bot->GetName());
-        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
-        return Step::ReturnFalse;
+        appr.partyNotReadyTicks = 0;
+        return Step::Continue;
     }
-    return Step::Continue;
+
+    // Debounce. Halting means StopBot(Hold), which cancels the escort spline, so
+    // a single-tick trip (a follower momentarily at PartyMaxSpread while the tank
+    // glides) would cost a full stop and re-issue — the micro-stutter. Ride out a
+    // brief trip; a real wait trips every tick and halts within the budget.
+    if (++appr.partyNotReadyTicks <= DC_PARTY_YIELD_DEBOUNCE_TICKS)
+        return Step::Continue;
+
+    // Name the limiting member/reason with the SAME thresholds the gate used, so
+    // this line says whether it was spread, HP/mana, or the rest latch instead of
+    // leaving all three indistinguishable behind "party not ready / resting".
+    DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
+    std::string const why = DcPartyState::DescribePartyNotReady(
+        bot, DcPartyState::RestMinHpPct(bot), DcPartyState::RestMinMpPct(bot),
+        gate.maxSpread, gate.anchor, gate.maxTankGap);
+    LOG_DEBUG("playerbots.dungeonclear",
+              "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
+              bot->GetName(), appr.partyNotReadyTicks,
+              why.empty() ? " (resting)" : (" — waiting on " + why));
+    DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+    return Step::ReturnFalse;
 }
 
 // If this boss has no live spawn at all (and not even a corpse), stall so the

@@ -47,6 +47,7 @@ struct DcApproachState
     uint32 stuckCount          = 0;  // MoveTo-returned-false backup (was "stuck count")
     uint32 rebuildAttempts     = 0;  // consecutive rebuilds w/o progress ("stride rebuild attempts")
     uint32 resnapAttempts      = 0;  // consecutive Resnap recoveries w/o progress (rung-1 give-up)
+    uint32 partyNotReadyTicks  = 0;  // consecutive between-pulls not-ready ticks (yield debounce)
 
     // --- approach bookkeeping ---------------------------------------------
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
@@ -138,6 +139,7 @@ struct DcApproachState
         finalApproachWatch.Reset();
         rebuildAttempts     = 0;
         resnapAttempts      = 0;
+        partyNotReadyTicks  = 0;
         lastPos             = Position();
         skirtOrbitDir       = 0;
         skirtOrbitTarget.Clear();

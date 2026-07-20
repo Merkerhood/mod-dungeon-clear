@@ -183,6 +183,18 @@ constexpr uint32 DC_SMART_REST_REARM_MS = 30000;
 constexpr float DC_STUCK_DISPLACEMENT = 0.5f;
 constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 
+// Consecutive not-ready ticks the between-pulls gate tolerates before it
+// actually halts the advance. The gate is a bare threshold test (spread / HP /
+// mana / rest latch) with no hysteresis, so a party strung out right AT
+// PartyMaxSpread trips it for a single tick as the tank glides. Halting costs a
+// StopBot(Hold), which CANCELS the escort spline — so a one-tick blip became a
+// full stop/re-issue and a visible hitch (live: isolated "advance yielding:
+// party not ready / resting" lines seconds apart, each one a micro-stutter mid-
+// run). Riding out a brief trip costs at most this many ticks of extra travel
+// while a genuine wait — the party really is behind, or resting — trips every
+// tick and still halts almost immediately.
+constexpr uint32 DC_PARTY_YIELD_DEBOUNCE_TICKS = 3;
+
 // Consecutive Resnap recoveries allowed before the stuck ladder stops trusting
 // the cached route and forces a rebuild. Resnap only proves the bot's position
 // can be snapped ONTO the polyline — never that it can walk ALONG it — so a bot
