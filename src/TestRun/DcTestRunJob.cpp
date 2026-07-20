@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <ctime>
+#include <optional>
 #include <set>
 
 #include "CharacterCache.h"
@@ -37,6 +38,7 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "TestRun/DcDiagSnapshot.h"
 #include "TestRun/DcTestComp.h"
 
 namespace
@@ -345,8 +347,30 @@ DcTestRunLive::RunSnapshot DcTestRunJob::Snapshot() const
         bp.y = p->GetPositionY();
         bp.z = p->GetPositionZ();
         bp.alive = p->IsAlive();
+        bp.hp = static_cast<std::uint8_t>(bp.alive ? p->GetHealthPct() : 0.f);
+        bp.inCombat = p->IsInCombat();
+        if (bp.inCombat)
+            s.inCombat = true;
         s.bots.push_back(std::move(bp));
     }
+
+    // Why the run is sitting still, read live off the tank rather than from the
+    // status timeline: the timeline only records state CHANGES, so a run that
+    // has been wedged in one state for ten minutes has nothing recent in it.
+    if (Player* tank = FindTank())
+        if (PlayerbotAI* tankAI = GET_PLAYERBOT_AI(tank))
+        {
+            AiObjectContext* ctx = tankAI->GetAiObjectContext();
+            s.stall = ctx->GetValue<std::string&>(DcKey::StallReason)->Get();
+            std::optional<DungeonBossInfo> const next =
+                ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+            if (next.has_value())
+                s.bossName = next->name;
+        }
+
+    // Not under _obsMutex: the watchdog writes _sinceProgressMs outside it too,
+    // and both that write and this read happen on the world thread.
+    s.sinceProgressS = _sinceProgressMs / 1000;
 
     std::lock_guard<std::mutex> lock(_obsMutex);
     s.state = _lastStatusState;
@@ -971,6 +995,17 @@ void DcTestRunJob::Teardown()
         _record.finalX = tank->GetPositionX();
         _record.finalY = tank->GetPositionY();
         _record.finalZ = tank->GetPositionZ();
+
+        // Capture the full picture BEFORE anything below tears the party down:
+        // DisableDungeonClear resets the run state, Group::Disband drops every
+        // member, and LogoutBots removes them from the world. Afterwards there
+        // is nothing left to describe why the run failed.
+        _record.diag = DcDiag::Capture(tank, "teardown");
+        _record.stallAtEnd = _record.diag.stallReason;
+        _record.phaseAtEnd = _record.diag.phase;
+        if (_record.diag.valid && _record.result != "success")
+            LOG_INFO("playerbots.dungeonclear", "TESTRUN DIAG {} {}",
+                     _record.runId, DcDiag::Summarize(_record.diag));
 
         if (PlayerbotAI* tankAI = GET_PLAYERBOT_AI(tank))
             if (DcRun::Of(tankAI).enabled)

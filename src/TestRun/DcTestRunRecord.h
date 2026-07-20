@@ -11,6 +11,8 @@
 #include <string_view>
 #include <vector>
 
+#include "TestRun/DcDiagSnapshot.h"
+
 // One JSON line per completed test run, appended to dc_testruns.jsonl in the
 // worldserver working directory (env override DC_TESTRUNS_FILE) — same
 // pattern as the decision-capture logs (DungeonClearApproachIo), but with
@@ -52,7 +54,8 @@ namespace DcTestRunRecord
 
     struct Record
     {
-        std::uint32_t schema = 2;   // 2: added planId
+        // 3: added diag (full failure snapshot) + stallAtEnd/phaseAtEnd
+        std::uint32_t schema = 3;
         std::string runId;
         std::string planId;       // owning `.dc test plan`, "" for ad-hoc runs
         std::string dungeon;      // registry token
@@ -78,6 +81,18 @@ namespace DcTestRunRecord
         float finalX = 0.f, finalY = 0.f, finalZ = 0.f;
         std::uint32_t pauseGraceS = 0, stallGraceS = 0, noProgressS = 0, overallS = 0;
         std::string setupStage;   // non-empty only for setup_failed:* records
+
+        // The stall reason and phase token as they stood when the run ended.
+        // Previously only the stalled_timeout verdict preserved the stall
+        // reason (it was folded into failReason); every other failure threw it
+        // away, which is exactly the field a no_progress post-mortem wants.
+        std::string stallAtEnd;
+        std::string phaseAtEnd;
+
+        // Full end-of-run diagnostic snapshot, captured before teardown
+        // disbands the party. Serialized under "diag"; absent on records
+        // written before schema 3 and on setup failures (no party existed).
+        DcDiag::Snapshot diag;
     };
 
     // A thrashing run can flip status every publisher tick; keep the head

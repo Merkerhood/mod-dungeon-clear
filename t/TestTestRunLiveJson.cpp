@@ -158,3 +158,54 @@ TEST(DcTestRunLiveJsonTest, BotPositionsAreCompactAndOutsideRecent)
     EXPECT_NE(json.find("\"bots\":["), std::string::npos);
     EXPECT_NE(json.find("\"recent\":[]"), std::string::npos);
 }
+
+// ---- live "why is it sitting there" fields ---------------------------------
+//
+// The recent[] timeline only records state CHANGES, so a run wedged in one
+// state for ten minutes has nothing in it. These fields are read live off the
+// tank each heartbeat and are what the dashboard shows for a stuck run.
+
+TEST(DcTestRunLiveJsonTest, LiveStallAndBossAreEmitted)
+{
+    RunSnapshot s = Sample("tr-1", "wailing-caverns");
+    s.stall = "can't reach Mutanus";
+    s.bossName = "Mutanus the Devourer";
+    s.sinceProgressS = 412;
+    s.inCombat = true;
+
+    std::string const json = Build(1700000000ull, {s});
+
+    EXPECT_NE(json.find("\"stall\":\"can't reach Mutanus\""), std::string::npos);
+    EXPECT_NE(json.find("\"bossName\":\"Mutanus the Devourer\""), std::string::npos);
+    EXPECT_NE(json.find("\"sinceProgressS\":412"), std::string::npos);
+    EXPECT_NE(json.find("\"inCombat\":true"), std::string::npos);
+}
+
+TEST(DcTestRunLiveJsonTest, LiveFieldsDefaultToEmptyNotAbsent)
+{
+    // An older app.js reads these unconditionally; they must always be present.
+    std::string const json = Build(1700000000ull, {Sample("tr-1", "deadmines")});
+
+    EXPECT_NE(json.find("\"stall\":\"\""), std::string::npos);
+    EXPECT_NE(json.find("\"bossName\":\"\""), std::string::npos);
+    EXPECT_NE(json.find("\"sinceProgressS\":0"), std::string::npos);
+}
+
+// ---- per-bot health / combat ------------------------------------------------
+
+TEST(DcTestRunLiveJsonTest, BotHealthAndCombatAreEmitted)
+{
+    RunSnapshot s = Sample("tr-1", "ragefire");
+    BotPos tank{"tank", 1, 0.f, 0.f, 0.f, true};
+    tank.hp = 37;
+    tank.inCombat = true;
+    BotPos corpse{"healer", 5, 0.f, 0.f, 0.f, false};
+    corpse.hp = 0;
+    s.bots.push_back(tank);
+    s.bots.push_back(corpse);
+
+    std::string const json = Build(1700000000ull, {s});
+
+    EXPECT_NE(json.find("\"alive\":true,\"hp\":37,\"inCombat\":true"), std::string::npos);
+    EXPECT_NE(json.find("\"alive\":false,\"hp\":0,\"inCombat\":false"), std::string::npos);
+}

@@ -166,6 +166,12 @@ namespace DcTestRunRecord
           << ",\"overallS\":" << rec.overallS
           << "},\"setupStage\":";
         AppendEscaped(s, rec.setupStage);
+        s << ",\"stallAtEnd\":";
+        AppendEscaped(s, rec.stallAtEnd);
+        s << ",\"phaseAtEnd\":";
+        AppendEscaped(s, rec.phaseAtEnd);
+        s << ",\"diag\":";
+        DcDiag::AppendJson(s, rec.diag);
         s << '}';
         return s.str();
     }

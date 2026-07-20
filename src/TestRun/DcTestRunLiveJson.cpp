@@ -64,6 +64,10 @@ namespace DcTestRunLive
               << ",\"bossesTotal\":" << run.bossesTotal
               << ",\"state\":\"" << EscapeJson(run.state) << '"'
               << ",\"mapId\":" << run.mapId
+              << ",\"stall\":\"" << EscapeJson(run.stall) << '"'
+              << ",\"bossName\":\"" << EscapeJson(run.bossName) << '"'
+              << ",\"sinceProgressS\":" << run.sinceProgressS
+              << ",\"inCombat\":" << (run.inCombat ? "true" : "false")
               << ",\"bots\":[";
             for (std::size_t b = 0; b < run.bots.size(); ++b)
             {
@@ -75,7 +79,9 @@ namespace DcTestRunLive
                   << ",\"x\":" << Dp1(p.x)
                   << ",\"y\":" << Dp1(p.y)
                   << ",\"z\":" << Dp1(p.z)
-                  << ",\"alive\":" << (p.alive ? "true" : "false") << '}';
+                  << ",\"alive\":" << (p.alive ? "true" : "false")
+                  << ",\"hp\":" << static_cast<unsigned>(p.hp)
+                  << ",\"inCombat\":" << (p.inCombat ? "true" : "false") << '}';
             }
             s << "]"
               << ",\"recent\":[";

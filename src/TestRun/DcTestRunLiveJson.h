@@ -45,6 +45,8 @@ namespace DcTestRunLive
         float y = 0.f;
         float z = 0.f;
         bool alive = true;
+        std::uint8_t hp = 0;           // health %, 0 when dead
+        bool inCombat = false;
     };
 
     // One active `.dc test plan` campaign, for the dashboard's plan progress
@@ -77,6 +79,15 @@ namespace DcTestRunLive
         std::uint32_t bossesKilled = 0;
         std::uint32_t bossesTotal = 0;
         std::int32_t mapId = -1;           // party's current map; -1 = none resolved
+
+        // Live "why is it sitting there" fields. A run watched on the dashboard
+        // is most often waiting on exactly one of these: a stall the ladder has
+        // not cleared, or a boss it cannot reach. Empty when not applicable.
+        std::string stall;                 // current DcKey::StallReason
+        std::string bossName;              // current target boss/objective
+        std::uint32_t sinceProgressS = 0;  // age of the no-progress watchdog
+        bool inCombat = false;             // any member in combat
+
         std::vector<BotPos> bots;          // per-member positions (may be empty)
         std::vector<StatusEntry> recent;   // already trimmed to <=8 by the caller
     };

@@ -31,6 +31,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestTestRunRecord.cpp"
             "${MOD_PATH}/t/TestTestRunSelect.cpp"
             "${MOD_PATH}/t/TestTestRunLiveJson.cpp"
+            "${MOD_PATH}/t/TestDcDiagSnapshot.cpp"
             "${MOD_PATH}/t/TestTestComp.cpp"
             "${MOD_PATH}/t/TestTestPlanSchedule.cpp"
             "${MOD_PATH}/t/TestTestPlanSummary.cpp"
