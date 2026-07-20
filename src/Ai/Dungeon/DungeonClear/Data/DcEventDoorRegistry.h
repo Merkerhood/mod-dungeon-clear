@@ -55,6 +55,34 @@ namespace DcEventDoorRegistry
         }
     }
 
+    // Doors whose KEY requirement we deliberately waive: the bot opens them as
+    // if it held the key, no item in inventory needed.
+    //
+    // Scarlet Monastery's Armory (Herod's Door) and Cathedral (Chapel Door)
+    // both sit on lock 299 — Scarlet Key (7146) or lockpicking 175. A tank bot
+    // carries neither, so an autonomous SM run parked at the wing entrance and
+    // auto-paused every time, making those two wings unclearable without a
+    // human handing the key over first. The doors are otherwise ordinary
+    // traversal gates: no ScriptName, no AIName, no instance-script GO-state
+    // control, and nothing behind them the key is meant to gate beyond the
+    // wing itself (the key is a convenience item players farm from the
+    // Graveyard/Library side, not an encounter lock).
+    //
+    // Keyed by GO ENTRY, not by lock id, for the same reason as the lists
+    // above: lock 299 is shared with the Stratholme Scarlet-side doors, which
+    // keep their key requirement.
+    inline bool IsKeyExempt(uint32 goEntry)
+    {
+        switch (goEntry)
+        {
+            case 101854:  // Scarlet Monastery — Herod's Door (Armory, lock 299)
+            case 104591:  // Scarlet Monastery — Chapel Door (Cathedral, lock 299)
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // The MIRROR-IMAGE special case: door gameobjects carrying NO lock at all
     // (template lockId 0) that a player nonetheless opens by simply clicking
     // them — ordinary traversal gates the dungeon expects you to walk through.

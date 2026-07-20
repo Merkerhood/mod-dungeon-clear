@@ -7,6 +7,7 @@
 
 #include <initializer_list>
 
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "DcDoorPolicy.h"
 
 // Fixtures are REAL Lock.dbc rows (decoded from the 3.3.5 client data) for the
@@ -132,4 +133,22 @@ TEST(DcDoorPolicyTest, ZeroItemIndexStillARequirement)
 {
     LockFixture const oddLock = MakeLock({{LOCK_KEY_ITEM, 0, 0}});
     EXPECT_FALSE(CanOpen(oddLock, /*lockEnforced*/ false));
+}
+
+// --- Key-exempt allowlist ---------------------------------------------------
+//
+// SM's Armory (Herod's Door) and Cathedral (Chapel Door) both ride lock 299,
+// which the policy above correctly refuses for a keyless, non-rogue tank. The
+// registry waives that requirement per GO ENTRY so those wings stay clearable;
+// the Stratholme doors sharing lock 299 must keep theirs.
+TEST(DcDoorPolicyTest, ScarletMonasteryWingDoorsAreKeyExempt)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(101854));   // Herod's Door
+    EXPECT_TRUE(DcEventDoorRegistry::IsKeyExempt(104591));   // Chapel Door
+
+    // Not a blanket amnesty: everything else still goes through CanOpenSlots.
+    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(104600));  // High Inquisitor's (lock 85 already)
+    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(18895));   // SFK courtyard (script-only)
+    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175611));  // Scholomance Iron Gate
+    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(0));
 }

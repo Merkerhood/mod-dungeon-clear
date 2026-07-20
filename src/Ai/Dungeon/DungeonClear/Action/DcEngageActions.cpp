@@ -160,7 +160,10 @@ namespace
     //     anyone — these were wrongly refused before, which is why the tank
     //     paused at every plain Deadmines door.
     //   - Key items (Scarlet Key, Key to the City) and lockpicking open their
-    //     locks exactly as a player would.
+    //     locks exactly as a player would — EXCEPT for the handful of doors on
+    //     DcEventDoorRegistry::IsKeyExempt (the SM Armory/Cathedral wing
+    //     gates), where the key requirement is deliberately waived so a
+    //     keyless tank can still clear the wing.
     //   - GO_FLAG_LOCKED suppresses the bare-hands slots: flagged gates demand
     //     the real key/skill (Strat's King's Square Gate carries a Quick Open
     //     slot yet requires the Key to the City).
@@ -182,6 +185,11 @@ namespace
         if (go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE) ||
             go->HasGameObjectFlag(GO_FLAG_INTERACT_COND))
             return false;
+
+        // Key-exempt traversal gates (SM Armory/Cathedral): treated as if the
+        // bot held the key. See DcEventDoorRegistry::IsKeyExempt.
+        if (DcEventDoorRegistry::IsKeyExempt(go->GetEntry()))
+            return true;
 
         uint32 const lockId = info->GetLockId();
         if (!lockId)
