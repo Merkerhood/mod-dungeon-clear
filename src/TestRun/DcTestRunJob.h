@@ -171,6 +171,22 @@ private:
     uint32 _lastMask = 0;
     std::size_t _lastAnchors = 0;
     uint32 _sinceProgressMs = 0;
+
+    // Closing-distance progress: the nearest the party has ever been to the
+    // CURRENT target, and which target that was. Re-armed on target change, so
+    // each anchor gets its own approach measured from scratch.
+    uint32 _bestDistEntry = 0;
+    float _bestDist = -1.f;
+
+    // Last tick's combat picture. Progress is a CHANGE in these, never a value:
+    // "in combat" held true is the signature of the phantom-combat ghost-flag
+    // deadlock, so treating combat itself as progress would make that bug
+    // undetectable by construction. A real fight moves the victim's health
+    // every sample; a wedged one moves nothing.
+    bool _lastInCombat = false;
+    ObjectGuid _lastVictim;
+    uint32 _lastVictimHpPct = 0;
+
     uint32 _pausedForMs = 0;
     uint32 _stalledForMs = 0;
     bool _wasPaused = false;
