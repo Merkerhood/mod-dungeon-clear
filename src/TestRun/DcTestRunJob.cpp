@@ -52,6 +52,12 @@ namespace
 
     constexpr uint32 MONITOR_STEP_MS = 1000;
 
+    // How much closer the party must get to its target for the sample to count
+    // as ground gained. Above the idle jitter of a bot settling on a spot, so a
+    // parked tank drifting a few centimetres can't hold the watchdog open
+    // forever; far below any real leg of travel.
+    constexpr float DC_TESTRUN_PROGRESS_EPSILON_YD = 1.0f;
+
     uint64 NowUnixMs()
     {
         return static_cast<uint64>(std::time(nullptr)) * 1000;
@@ -795,7 +801,11 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
                 _disableReason = "run disabled (no reason captured)";
         }
 
-        // Progress = a new completed-encounter bit or a new cleared anchor.
+        // The anchor the run is currently heading for, for the closing-distance
+        // signal below.
+        std::optional<DungeonBossInfo> const next =
+            ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+
         uint32 mask = _lastMask;
         if (InstanceScript* inst = DcTargeting::GetInstanceScript(tank))
             mask = inst->GetCompletedEncounterMask();
@@ -840,12 +850,66 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
             progressed = true;
         }
         if (progressed)
-        {
             _record.bossesKilled =
                 std::min<uint32>(static_cast<uint32>(_record.bossTimeline.size()),
                                  _record.bossesTotal);
-            _sinceProgressMs = 0;
+
+        // A kill is not the only evidence a run is alive. Keyed on kills alone
+        // the watchdog fails runs that are working perfectly: a party can
+        // legitimately spend more than NoProgressS on the trash between two
+        // bosses — or on the way to the first one, where the clock starts at
+        // zero and nothing has been killed yet.
+        //
+        // What counts is that something CHANGES, never that some state holds.
+        // "In combat" held true is the signature of the phantom-combat
+        // ghost-flag deadlock, so counting combat itself as progress would make
+        // that bug undetectable by construction — the run would sit in a dead
+        // fight forever and the watchdog would call it healthy the whole time.
+        //
+        // So compare this tick's combat picture against last tick's:
+        //
+        //   entering or leaving combat — a pack pulled, or a pack died.
+        //   a different victim         — one mob down, on to the next.
+        //   the victim's health moved  — the fight itself is progressing,
+        //                                which is what carries a long single
+        //                                target where nothing else changes.
+        //
+        // A real fight moves at least one of those every sample. A wedged one
+        // moves none: stuck flag, no victim or a stale one, health frozen.
+        bool const inCombat = tank->IsInCombat();
+        Unit const* victim = tank->GetVictim();
+        ObjectGuid const victimGuid = victim ? victim->GetGUID() : ObjectGuid::Empty;
+        uint32 const victimHpPct =
+            victim ? static_cast<uint32>(victim->GetHealthPct()) : 0u;
+
+        if (inCombat != _lastInCombat || victimGuid != _lastVictim ||
+            victimHpPct != _lastVictimHpPct)
+            progressed = true;
+
+        _lastInCombat = inCombat;
+        _lastVictim = victimGuid;
+        _lastVictimHpPct = victimHpPct;
+
+        if (next.has_value() && next->mapId == tank->GetMapId())
+        {
+            // Re-arm on target change: distance to a NEW anchor is unrelated to
+            // the best held for the old one, and would otherwise read as an
+            // instant regression that never recovers.
+            if (next->entry != _bestDistEntry)
+            {
+                _bestDistEntry = next->entry;
+                _bestDist = -1.f;
+            }
+            float const dist = tank->GetDistance(next->x, next->y, next->z);
+            if (_bestDist < 0.f || dist < _bestDist - DC_TESTRUN_PROGRESS_EPSILON_YD)
+            {
+                _bestDist = dist;
+                progressed = true;
+            }
         }
+
+        if (progressed)
+            _sinceProgressMs = 0;
         else
             _sinceProgressMs += dt;
 
