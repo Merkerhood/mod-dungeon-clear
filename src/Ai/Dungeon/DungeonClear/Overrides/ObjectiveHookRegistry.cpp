@@ -8,6 +8,7 @@
 #include <atomic>
 #include <unordered_map>
 
+#include "Creature.h"
 #include "GameObject.h"
 #include "InstanceScript.h"
 #include "Item.h"
@@ -126,6 +127,70 @@ namespace
         targets.SetGOTarget(cannon);
         bot->CastItemUseSpell(gunpowder, targets, 0, 0);
         return ObjectiveArriveResult::Running;  // door-state gate confirms it
+    }
+
+    // --- ZulFarrak: WakeZumrah (hook id 5) --------------------------------
+    // Witch Doctor Zum'rah (7271) spawns with creature_template faction 35
+    // (friendly to everyone) — he is NOT flag-gated, so nothing in the engage
+    // path reads him as un-engageable. The ONLY thing that turns him hostile is
+    // area trigger 962 (map 209, centre 1909.27/1015.11/11.5155, radius 10 —
+    // roughly 3yd off his spawn), whose SmartAI row sets his spawn's faction to
+    // 37:
+    //   smart_scripts (962, source_type 2, event 46 ON_TRIGGER) -> SET_FACTION 37
+    //
+    // That row is reachable only from CMSG_AREATRIGGER, which a bot never sends
+    // on its own: mod-playerbots either mirrors the human master's own crossing
+    // (PlayerbotAI's "area trigger" master handler) or fires autonomously but
+    // ONLY for teleport triggers (WithinAreaTrigger / ReachAreaTriggerAction both
+    // bail on !GetAreaTriggerTeleport). AT 962 has no areatrigger_teleport row,
+    // so an all-bot party — every `dc test` run — walks up to a permanently
+    // friendly Zum'rah. The engage gate then loops forever against a live but
+    // unattackable boss and the run deadlocks there.
+    //
+    // The first attempt at this forged CMSG_AREATRIGGER from the leader (the way
+    // EnsureRingStarted starts the Ring of Law) so the genuine SmartAI row would
+    // run. It did NOT work in a live all-bot run — the tank parked on the trigger
+    // and Zum'rah stayed friendly — and no log survived to say which stage failed
+    // (condition, core range check, or SmartAI target resolution). Rather than
+    // spend build cycles bisecting a path with three opaque failure modes, set
+    // the faction the SmartAI row would have set. The row's ONLY action is
+    // SET_FACTION 37 on this spawn, so the end state is identical; what we give
+    // up is going through the script.
+    //
+    // Faction 37 (not "hostile" generically) is exactly what the row applies. His
+    // own "On Reset - Restore faction" row puts him back to 35 after a wipe, and
+    // the repeatable event re-fires — so the reset path still works. Setting the
+    // faction is enough on its own: once hostile his normal aggro takes over and
+    // he pulls the party, no engage nudge required.
+    //
+    // Logged at INFO because this is the one place a ZF deadlock gets fixed
+    // silently; under the test harness a bot-side failure is otherwise invisible
+    // (see the TellError lesson in the test-plan notes).
+    constexpr uint32 ZF_ZUMRAH = 7271;
+    constexpr uint32 ZF_ZUMRAH_FACTION_FRIENDLY = 35;  // creature_template default
+    constexpr uint32 ZF_ZUMRAH_FACTION_HOSTILE  = 37;  // what AT 962's row sets
+    // Wide enough to still find him from the trigger spot if he has wandered;
+    // the party is standing on top of him by the time this step runs.
+    constexpr float ZF_ZUMRAH_SCAN = 60.0f;
+
+    ObjectiveArriveResult WakeZumrah(Player* bot, AiObjectContext* /*context*/,
+                                     DungeonBossInfo const& /*info*/)
+    {
+        Creature* zumrah = bot->FindNearestCreature(ZF_ZUMRAH, ZF_ZUMRAH_SCAN);
+        if (!zumrah || !zumrah->IsAlive())
+            return ObjectiveArriveResult::Done;  // gone/dead — nothing to wake
+
+        // Already flipped (this fired, or a human crossed the trigger).
+        if (zumrah->GetFaction() != ZF_ZUMRAH_FACTION_FRIENDLY)
+            return ObjectiveArriveResult::Done;
+
+        zumrah->SetFaction(ZF_ZUMRAH_FACTION_HOSTILE);
+        LOG_INFO("playerbots.dungeonclear",
+                 "DungeonClear: ZulFarrak — set Zum'rah ({}) faction {} -> {} for {} "
+                 "(area trigger 962 never fires for an all-bot party)",
+                 ZF_ZUMRAH, ZF_ZUMRAH_FACTION_FRIENDLY, ZF_ZUMRAH_FACTION_HOSTILE,
+                 bot->GetName());
+        return ObjectiveArriveResult::Done;
     }
 
     // --- Old Hillsbrad: GrantIncendiaryBombs (hook id 3) ------------------
@@ -255,6 +320,7 @@ namespace
             { 2, &FireDefiasCannon },        // Deadmines — fire the cannon, open the door
             { 3, &GrantIncendiaryBombs },    // Old Hillsbrad — pack of bombs (unlocks Brazen)
             { 4, &GrantCacheKeyAndLoot },    // The Mechanar — Cache of the Legion key + loot
+            { 5, &WakeZumrah },              // ZulFarrak — flip Zum'rah hostile (AT 962)
         };
         return kHooks;
     }

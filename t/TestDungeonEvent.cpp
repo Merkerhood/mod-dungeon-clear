@@ -7,6 +7,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 
 namespace
@@ -994,11 +995,14 @@ TEST(DungeonEventBuilderTest, SkipIfTargetMissing)
 // Conditional() returns only EventActivation::Conditional events for the map.
 // Sunken Temple (109) is anchored-only (forcefield ring anchors + statues etc.);
 // Shadowfang Keep (33) has the conditional courtyard-door event; ZulFarrak (209)
-// is anchored only.
+// has exactly one conditional (the Zum'rah wake-up) alongside its two anchored.
 TEST(DungeonEventConditional, ConditionalListFiltersByActivation)
 {
     EXPECT_TRUE(DungeonEventRegistry::Conditional(109).empty());  // anchored only
-    EXPECT_TRUE(DungeonEventRegistry::Conditional(209).empty());
+
+    std::vector<DungeonEvent const*> zf = DungeonEventRegistry::Conditional(209);
+    ASSERT_EQ(zf.size(), 1u);
+    EXPECT_EQ(zf[0]->id, 3u);  // Wake Witch Doctor Zum'rah
 
     // SFK has two faction-specific conditional events (Alliance + Horde).
     std::vector<DungeonEvent const*> sfk = DungeonEventRegistry::Conditional(33);
@@ -1218,4 +1222,27 @@ TEST(DungeonEventRegistryTest, WailingCavernsDiscipleEscort)
     EXPECT_EQ(esc.gossipOption, 0);        // "Let the event begin!"
     EXPECT_EQ(esc.escortDoneEntry, 3654u); // Mutanus the Devourer
     EXPECT_EQ(esc.escortDoneBit, 7);       // his DungeonEncounter bit
+}
+
+// ZulFarrak Zum'rah wake-up (map 209, id 3). He spawns FRIENDLY (faction 35) and
+// only turns hostile when someone crosses area trigger 962 — a client packet no
+// bot sends for a non-teleport trigger, so an all-bot party deadlocks on a live
+// but unattackable boss. CONDITIONAL (his state, not a travel anchor, decides) +
+// REPEATABLE (a wipe restores faction 35, and a one-shot latch would leave the
+// retry deadlocked). A single Custom step (hook 5) sets the faction the trigger's
+// SmartAI row would have set; forging the packet was tried first and did not work
+// live, so no MoveTo-onto-the-trigger step remains.
+TEST(DungeonEventConditional, ZulFarrakZumrahWakeEventShape)
+{
+    DungeonEvent const* e = DungeonEventRegistry::Find(209, 3);
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->activation, EventActivation::Conditional);
+    EXPECT_TRUE(static_cast<bool>(e->condition));
+    EXPECT_TRUE(e->repeatable);
+    EXPECT_EQ(e->panelGatesBossEntry, 7271u);  // folds under Zum'rah in the panel
+
+    ASSERT_EQ(e->steps.size(), 1u);
+    EXPECT_EQ(e->steps[0].kind, EventStepKind::Custom);
+    EXPECT_EQ(e->steps[0].hookId, 5u);
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(e->steps[0].hookId));
 }

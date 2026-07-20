@@ -117,6 +117,11 @@ namespace
             {329, 1},
             {329, 2},
             {329, 3},
+            // ZulFarrak Zum'rah wake-up: ZfZumrahAsleep does a 60yd
+            // FindNearestCreature for him, so it cannot read true until boss-nav
+            // has parked the party at him — and the hook it drives only writes his
+            // faction, which is meaningless from afar anyway.
+            {209, 3},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)
