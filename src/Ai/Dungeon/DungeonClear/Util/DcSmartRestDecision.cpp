@@ -14,22 +14,14 @@ namespace DcSmartRestDecision
         return m.isHealer ? in.healerManaTriggerPct : in.dpsManaTriggerPct;
     }
 
-    float HpReleaseBar(Member const& m, Inputs const& in)
+    float HpReleaseBar(Member const&, Inputs const&)
     {
-        if (m.isBot)
-            return kReleasePct;
-        // Human: owes trigger + margin, nothing when the dimension is disabled.
-        return in.hpTriggerPct > 0.0f ? in.hpTriggerPct + kHumanReleaseMarginPct : 0.0f;
+        return kReleasePct;
     }
 
-    float ManaReleaseBar(Member const& m, Inputs const& in)
+    float ManaReleaseBar(Member const& m, Inputs const&)
     {
-        if (!m.isManaUser)
-            return 0.0f;
-        if (m.isBot)
-            return kManaReleasePct;
-        float const trigger = ManaTriggerPct(m, in);
-        return trigger > 0.0f ? trigger + kHumanReleaseMarginPct : 0.0f;
+        return m.isManaUser ? kManaReleasePct : 0.0f;
     }
 
     bool BelowTrigger(Member const& m, Inputs const& in)
@@ -38,9 +30,7 @@ namespace DcSmartRestDecision
             return true;
         // Boss pull imminent: any mana user short of its RELEASE bar latches a
         // top-off rest — never open a boss fight on a half tank of mana that
-        // merely clears the low trash triggers. Humans owe only their own bar
-        // (trigger + margin, or nothing on a disabled trigger) — a human we
-        // can't force to drink must not deadlock the pull.
+        // merely clears the low trash triggers.
         if (in.bossPull && m.isManaUser && m.manaPct < ManaReleaseBar(m, in))
             return true;
         float const manaTrigger = ManaTriggerPct(m, in);

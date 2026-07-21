@@ -30,13 +30,13 @@
 
 namespace DcSmartRestDecision
 {
-    // HP release bar for BOT members: "full", float-safe. GetHealthPct/
+    // HP release bar, every member: "full", float-safe. GetHealthPct/
     // GetPowerPct return 100.0f exactly when full (cur/max with cur==max), but a
     // buff or aura shifting the max pool mid-rest could strand a bot at 99.x
     // forever — half a percent of slack costs nothing perceptible.
     constexpr float kReleasePct = 99.5f;
 
-    // Mana release bar for BOT members: deliberately short of full. The last
+    // Mana release bar, every member: deliberately short of full. The last
     // sliver of mana regenerates for free while the party walks to the next
     // pack, so holding the whole party at rest to claw back the final ~10% just
     // burns real time for no combat benefit. 90% stays far above every mana
@@ -45,11 +45,16 @@ namespace DcSmartRestDecision
     // send bots into the next pull hurt).
     constexpr float kManaReleasePct = 90.0f;
 
-    // Release bar for HUMAN members: their role trigger plus this margin. A
-    // human can't be forced to drink, so demanding kReleasePct of them would
-    // deadlock the latch; the margin also guarantees a release can never
-    // instantly re-latch on the same human sitting at the trigger edge.
-    constexpr float kHumanReleaseMarginPct = 5.0f;
+    // Humans hold to the SAME bars as bots. They used to owe only their role
+    // trigger plus a 5% margin, on the reasoning that a human can't be forced
+    // to drink and would otherwise deadlock the latch. That made the feature
+    // useless in a group with a real player: at the default DPS trigger of 10
+    // the human released at 15%, a five-point rest indistinguishable from the
+    // legacy gate, and the party walked off while the player was still sitting
+    // (mod-dungeon-clear#6). The deadlock it guarded against is already bounded
+    // by the maxRestMs failsafe below — an AFK human costs one timeout, not a
+    // stalled run — so the split bought nothing and cost the whole point of
+    // Smart Rest: the party waits for YOU to finish drinking.
 
     // One living, same-map group member, snapshotted by the glue. Dead and
     // off-map members are the snapshot builder's job to exclude, not ours.
@@ -59,7 +64,8 @@ namespace DcSmartRestDecision
         float manaPct = 100.0f;   // meaningful only when isManaUser
         bool  isManaUser = false; // powerType == POWER_MANA && maxMana > 0
         bool  isHealer = false;   // PlayerbotAI::IsHeal — selects the mana trigger
-        bool  isBot = true;       // GET_PLAYERBOT_AI(member) != nullptr
+        // No isBot: bots and humans are held to identical bars. See the
+        // kHumanReleaseMarginPct removal note above.
     };
 
     struct Inputs
@@ -94,11 +100,11 @@ namespace DcSmartRestDecision
     // The member's mana trigger for its role. 0 = that dimension disabled.
     float ManaTriggerPct(Member const& m, Inputs const& in);
 
-    // Release bars for one member: bots rest to kReleasePct on HP and
+    // Release bars for one member, bot and human alike: kReleasePct on HP and
     // kManaReleasePct on mana, on every applicable dimension even one whose
-    // trigger is disabled (a rest is a rest); humans only owe trigger + margin,
-    // and owe nothing on a disabled dimension (bar 0 — any value passes). Mana
-    // bar is 0 for non-mana users.
+    // trigger is disabled (a rest is a rest). Mana bar is 0 for non-mana users.
+    // Neither bar reads the triggers, so both ignore Inputs entirely — the
+    // parameter stays for call-site symmetry with the rest of the kernel.
     float HpReleaseBar(Member const& m, Inputs const& in);
     float ManaReleaseBar(Member const& m, Inputs const& in);
 

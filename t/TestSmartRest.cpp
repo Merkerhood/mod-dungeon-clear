@@ -11,7 +11,6 @@ using DcSmartRestDecision::Decide;
 using DcSmartRestDecision::Inputs;
 using DcSmartRestDecision::Member;
 using DcSmartRestDecision::Result;
-using DcSmartRestDecision::kHumanReleaseMarginPct;
 using DcSmartRestDecision::kManaReleasePct;
 using DcSmartRestDecision::kReleasePct;
 
@@ -27,7 +26,7 @@ namespace
         Member healer; healer.isManaUser = true; healer.isHealer = true;
         Member caster; caster.isManaUser = true;
         Member melee;  // no mana
-        Member human;  human.isManaUser = true; human.isBot = false;
+        Member human;  human.isManaUser = true;  // the real player's seat
         return {tank, healer, caster, melee, human};
     }
 
@@ -236,18 +235,20 @@ TEST(DcSmartRestTest, BossPullIsManaOnly)
     EXPECT_FALSE(Decide(in, party).latched);
 }
 
-TEST(DcSmartRestTest, BossPullHumanOwesOnlyItsOwnBar)
+TEST(DcSmartRestTest, BossPullHumanOwesTheSameBarAsBots)
 {
-    // A human at 50% mana (bar = trigger 10 + margin 5) must not hold the boss
-    // pull hostage — we can't force a human to drink.
+    // A human at 50% mana holds the boss pull exactly as a bot would: the
+    // boss entry is the 90% mana bar for every member. Waiting for the player
+    // to drink up before a boss IS the feature (mod-dungeon-clear#6); the
+    // maxRestMs failsafe, not a lower bar, is what bounds an AFK player.
     auto party = BaseParty();
     party[4].manaPct = 50.0f;
     Inputs in = BaseInputs();
     in.bossPull = true;
-    EXPECT_FALSE(Decide(in, party).latched);
-
-    party[4].manaPct = 12.0f;  // below ITS bar — latches like any member
     EXPECT_TRUE(Decide(in, party).latched);
+
+    party[4].manaPct = kManaReleasePct;  // topped off — pull is free to go
+    EXPECT_FALSE(Decide(in, party).latched);
 }
 
 TEST(DcSmartRestTest, BossPullCannotInstantlyRelatchAfterRelease)
@@ -353,38 +354,65 @@ TEST(DcSmartRestTest, ReleaseCannotInstantlyRelatch)
     EXPECT_FALSE(Decide(BaseInputs(), party).latched);
 }
 
-// ---- humans: trigger + margin, never 100% ---------------------------------------
+// ---- humans: identical bars to bots (mod-dungeon-clear#6) -----------------------
 
-TEST(DcSmartRestTest, HumanHoldsOnlyToTriggerPlusMargin)
+TEST(DcSmartRestTest, HumanHoldsToTheSameManaBarAsBots)
 {
+    // The bug: the human used to release at its trigger + a 5% margin, so at
+    // the default DPS trigger of 10 the party walked off the moment the player
+    // hit 15% — a five-point "rest" that made Smart Rest look inert. The human
+    // now holds the party until it reaches kManaReleasePct like everyone else.
     auto party = BaseParty();
-    // All bots full; the human sits below its release bar (10 + 5 = 15).
-    party[4].manaPct = 12.0f;
+    party[4].manaPct = 16.0f;
     Result const held = Decide(LatchedInputs(), party);
     EXPECT_TRUE(held.latched);
     ASSERT_EQ(held.blockers.size(), 1u);
     EXPECT_EQ(held.blockers[0], 4u);
 
-    party[4].manaPct = 16.0f;  // past the bar — releases well below 100%
+    party[4].manaPct = 89.0f;  // still short of the bar — still held
+    EXPECT_TRUE(Decide(LatchedInputs(), party).latched);
+
+    party[4].manaPct = kManaReleasePct;
     EXPECT_FALSE(Decide(LatchedInputs(), party).latched);
 }
 
-TEST(DcSmartRestTest, HumanHpBarIsTriggerPlusMargin)
+TEST(DcSmartRestTest, HumanHpBarIsTheSameAsBots)
 {
     auto party = BaseParty();
-    party[4].hpPct = 52.0f;    // bar = 50 + 5 = 55
-    EXPECT_TRUE(Decide(LatchedInputs(), party).latched);
-    party[4].hpPct = 56.0f;
+    party[4].hpPct = 56.0f;    // clears the old trigger+margin bar of 55...
+    EXPECT_TRUE(Decide(LatchedInputs(), party).latched);  // ...but not kReleasePct
+    party[4].hpPct = kReleasePct;
     EXPECT_FALSE(Decide(LatchedInputs(), party).latched);
 }
 
-TEST(DcSmartRestTest, HumanOwesNothingOnDisabledDimension)
+TEST(DcSmartRestTest, HumanRestsToBarOnDisabledDimension)
 {
+    // A rest is a rest, for humans too: a disabled trigger only means the
+    // human never STARTS a rest on that dimension, not that a rest already
+    // under way ignores it.
     Inputs in = LatchedInputs();
     in.hpTriggerPct = 0.0f;
     auto party = BaseParty();
-    party[4].hpPct = 3.0f;     // hp trigger disabled — no hp bar for humans
-    EXPECT_FALSE(Decide(in, party).latched);
+    party[4].hpPct = 3.0f;
+    EXPECT_TRUE(Decide(in, party).latched);
+}
+
+TEST(DcSmartRestTest, AfkHumanBelowBarIsFreedByTheTimeout)
+{
+    // The failsafe is what bounds a player who never drinks — this is the
+    // guard that lets humans owe the full bar without deadlocking the run.
+    Inputs in = LatchedInputs();
+    in.maxRestMs = 180000;
+    auto party = BaseParty();
+    party[4].manaPct = 4.0f;
+
+    in.restElapsedMs = 179000;
+    EXPECT_TRUE(Decide(in, party).latched);
+
+    in.restElapsedMs = 180000;
+    Result const freed = Decide(in, party);
+    EXPECT_FALSE(freed.latched);
+    EXPECT_TRUE(freed.timedOut);
 }
 
 TEST(DcSmartRestTest, BotsStillRestToBarOnDisabledDimension)

@@ -46,7 +46,6 @@ namespace
             if (m.isManaUser)
                 m.manaPct = leader->GetPowerPct(POWER_MANA);
             m.isHealer = PlayerbotAI::IsHeal(leader);
-            m.isBot = GET_PLAYERBOT_AI(leader) != nullptr;
             out.push_back(m);
             if (players)
                 players->push_back(leader);
@@ -70,7 +69,6 @@ namespace
             if (m.isManaUser)
                 m.manaPct = member->GetPowerPct(POWER_MANA);
             m.isHealer = PlayerbotAI::IsHeal(member);
-            m.isBot = GET_PLAYERBOT_AI(member) != nullptr;
             out.push_back(m);
             if (players)
                 players->push_back(member);
