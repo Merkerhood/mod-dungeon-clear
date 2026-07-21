@@ -152,3 +152,27 @@ TEST(DcDoorPolicyTest, ScarletMonasteryWingDoorsAreKeyExempt)
     EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(175611));  // Scholomance Iron Gate
     EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(0));
 }
+
+// --- Navigation-ignored allowlist -------------------------------------------
+//
+// The Steamvault's Main Chambers Access Panels are wall CONTROLS wearing a
+// GAMEOBJECT_TYPE_DOOR template. They spawn in GO_STATE_READY and never leave
+// it (their script's OnGossipHello returns true before GameObject::Use reaches
+// UseDoorOrButton), so the closed-door predicate reads them as shut corridor
+// gates forever. Left unlisted, the door-blocked action clicks one, sees it
+// still "closed", and auto-pauses the run at the panel — which is exactly where
+// the map-545 event needs the tank to be standing.
+TEST(DcDoorPolicyTest, SteamvaultAccessPanelsAreNavigationIgnored)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(184125));  // Thespia's panel
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(184126));  // Steamrigger's panel
+
+    // The real gate the panels open stays an ordinary blocking door: if it is
+    // still shut when the party heads for Kalithresh, that IS a genuine stall
+    // worth pausing on.
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(183049));  // Main Chambers Door
+
+    // Still not a blanket amnesty.
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(18895));   // SFK courtyard
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(0));
+}

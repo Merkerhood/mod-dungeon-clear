@@ -50,6 +50,21 @@ namespace DcEventDoorRegistry
             case 184393:  // Old Hillsbrad — Thrall's Prison Door (gossip through
                           // the gate; his script opens it via EVENT_OPEN_DOORS)
                 return true;
+            // The Steamvault — Main Chambers Access Panels. These are wall
+            // CONTROLS, not doors, but their template is GAMEOBJECT_TYPE_DOOR
+            // and they spawn (and permanently stay) in GO_STATE_READY, so the
+            // closed-door predicate reads each one as a shut gate sitting on
+            // the corridor. Clicking one runs go_main_chambers_access_panel's
+            // OnGossipHello, which returns true BEFORE GameObject::Use reaches
+            // UseDoorOrButton — so the panel's own GOState never flips, and the
+            // door-blocked action concluded "clicked it, still closed, can't
+            // open" and auto-paused the run 13.8yd from its objective (live run
+            // 2026-07-20, tank Fedrel). The panel is opened by nothing and
+            // blocks nothing; the Steamvault event (map 545 id 1) clicks it,
+            // which is what opens the real Main Chambers Door (183049).
+            case 184125:  // Hydromancer Thespia's panel
+            case 184126:  // Mekgineer Steamrigger's panel
+                return true;
             default:
                 return false;
         }
