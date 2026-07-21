@@ -51,6 +51,7 @@ namespace
             RegisterOldHillsbradRoster(t);
             RegisterMechanarRoster(t);
             RegisterShatteredHallsRoster(t);
+            RegisterSteamvaultRoster(t);
             return t;
         }();
         return kPatches;

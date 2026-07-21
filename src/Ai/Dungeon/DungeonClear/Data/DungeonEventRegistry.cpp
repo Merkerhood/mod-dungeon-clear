@@ -347,6 +347,7 @@ namespace
             RegisterOldHillsbradEvents(t);
             RegisterMechanarEvents(t);
             RegisterShatteredHallsEvents(t);
+            RegisterSteamvaultEvents(t);
             return t;
         }();
         return kEvents;
