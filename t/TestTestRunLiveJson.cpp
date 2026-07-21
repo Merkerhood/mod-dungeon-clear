@@ -209,3 +209,29 @@ TEST(DcTestRunLiveJsonTest, BotHealthAndCombatAreEmitted)
     EXPECT_NE(json.find("\"alive\":true,\"hp\":37,\"inCombat\":true"), std::string::npos);
     EXPECT_NE(json.find("\"alive\":false,\"hp\":0,\"inCombat\":false"), std::string::npos);
 }
+
+// ---- per-bot mana ------------------------------------------------------------
+// -1 is the contract the dashboard keys off to omit the bar for a class with no
+// mana pool; a real 0% must stay distinguishable from it.
+
+TEST(DcTestRunLiveJsonTest, BotManaIsEmittedAndNonManaClassesReportMinusOne)
+{
+    RunSnapshot s = Sample("tr-1", "ragefire");
+    BotPos priest{"heal", 5, 0.f, 0.f, 0.f, true};
+    priest.hp = 100;
+    priest.mp = 42;
+    BotPos rogue{"dps", 4, 0.f, 0.f, 0.f, true};
+    rogue.hp = 100;              // leaves mp at the -1 default
+    BotPos oom{"dps", 8, 0.f, 0.f, 0.f, true};
+    oom.hp = 100;
+    oom.mp = 0;
+    s.bots.push_back(priest);
+    s.bots.push_back(rogue);
+    s.bots.push_back(oom);
+
+    std::string const json = Build(1700000000ull, {s});
+
+    EXPECT_NE(json.find("\"inCombat\":false,\"mp\":42"), std::string::npos);
+    EXPECT_NE(json.find("\"inCombat\":false,\"mp\":-1"), std::string::npos);
+    EXPECT_NE(json.find("\"inCombat\":false,\"mp\":0"), std::string::npos);
+}

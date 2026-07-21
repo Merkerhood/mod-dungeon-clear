@@ -354,6 +354,13 @@ DcTestRunLive::RunSnapshot DcTestRunJob::Snapshot() const
         bp.z = p->GetPositionZ();
         bp.alive = p->IsAlive();
         bp.hp = static_cast<std::uint8_t>(bp.alive ? p->GetHealthPct() : 0.f);
+        // Gate on the mana POOL, not on getPowerType(): a druid shifted into
+        // bear/cat reports RAGE/ENERGY while still holding the mana it has to
+        // shift back and drink for. Keying off the active power type would blank
+        // the bar for exactly the member whose mana the run is waiting on.
+        // Non-mana classes have maxMana 0 and stay at the -1 "no bar" default.
+        if (bp.alive && p->GetMaxPower(POWER_MANA) > 0)
+            bp.mp = static_cast<std::int16_t>(p->GetPowerPct(POWER_MANA));
         bp.inCombat = p->IsInCombat();
         if (bp.inCombat)
             s.inCombat = true;

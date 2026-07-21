@@ -81,7 +81,8 @@ namespace DcTestRunLive
                   << ",\"z\":" << Dp1(p.z)
                   << ",\"alive\":" << (p.alive ? "true" : "false")
                   << ",\"hp\":" << static_cast<unsigned>(p.hp)
-                  << ",\"inCombat\":" << (p.inCombat ? "true" : "false") << '}';
+                  << ",\"inCombat\":" << (p.inCombat ? "true" : "false")
+                  << ",\"mp\":" << static_cast<int>(p.mp) << '}';
             }
             s << "]"
               << ",\"recent\":[";

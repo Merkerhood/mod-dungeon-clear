@@ -47,6 +47,9 @@ namespace DcTestRunLive
         bool alive = true;
         std::uint8_t hp = 0;           // health %, 0 when dead
         bool inCombat = false;
+        // Mana %, or -1 for a class with no mana pool (warrior/rogue/DK) so the
+        // dashboard can omit the bar entirely rather than draw a permanent 0%.
+        std::int16_t mp = -1;
     };
 
     // One active `.dc test plan` campaign, for the dashboard's plan progress
