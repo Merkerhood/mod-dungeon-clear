@@ -1185,3 +1185,58 @@ TEST(DungeonClearStuckCombatTest, ArmingAtTimeZeroAvoidsTheSentinel)
     EXPECT_FALSE(DungeonClearMath::ShouldBreakStuckCombat(true, 0, 15000, since));
     EXPECT_EQ(since, 1u);
 }
+
+// --- Camp-assist attack range ------------------------------------------------
+// Regression cover for the DC<->stock handoff dead band: DC's engage test and the
+// stock reach action's keep-closing test must partition the distance line with no
+// gap, or a ranged follower parks between them and never engages.
+
+TEST(DungeonClearAssistRangeTest, RangedEngagesWhereStockReachParksIt)
+{
+    // The live repro (Steamvault, 2026-07-20): SpellDistance 28.5, player+humanoid
+    // combat reach ~3.2. Stock reach spell goes inert at 28.5 + 3.2 = 31.7, so it
+    // parked ranged DPS at 29.4-29.7yd and stopped. The old test here demanded
+    // 28.5 - CONTACT_DISTANCE = 28.0, so every one of those ticks read "out of
+    // range -> yield to stock" and nobody ever acted.
+    float const spell = 28.5f;
+    float const reachSum = 3.2f;
+    for (float dist : {29.4f, 29.5f, 29.6f, 29.7f})
+        EXPECT_TRUE(DungeonClearMath::IsWithinAssistAttackRange(
+            /*isMelee*/ false, dist, /*meleeRange*/ 4.0f, spell, reachSum))
+            << "ranged must engage at " << dist << "yd — stock reach will not close further";
+}
+
+TEST(DungeonClearAssistRangeTest, RangedWindowIsExactComplementOfStockKeepClosing)
+{
+    // The invariant that keeps the dead band closed: stock keeps closing exactly
+    // while dist > spell + reachSum, so DC must engage from exactly dist <= that.
+    // Any daylight between these two bounds is a hang.
+    float const spell = 28.5f;
+    float const reachSum = 3.2f;
+    float const stockStopsAt = spell + reachSum;
+
+    EXPECT_TRUE(DungeonClearMath::IsWithinAssistAttackRange(false, stockStopsAt, 4.0f, spell, reachSum));
+    EXPECT_TRUE(DungeonClearMath::IsWithinAssistAttackRange(false, stockStopsAt - 0.01f, 4.0f, spell, reachSum));
+    // Beyond it stock is still walking the bot in, so yielding is correct.
+    EXPECT_FALSE(DungeonClearMath::IsWithinAssistAttackRange(false, stockStopsAt + 0.01f, 4.0f, spell, reachSum));
+}
+
+TEST(DungeonClearAssistRangeTest, RangedWindowTracksCombatReach)
+{
+    // A big-model target has a larger combat reach, which pushes stock's stop point
+    // further out; the engage window must follow it rather than stay pinned to a
+    // bare spell distance.
+    EXPECT_TRUE(DungeonClearMath::IsWithinAssistAttackRange(false, 34.0f, 4.0f, 28.5f, /*reachSum*/ 6.0f));
+    EXPECT_FALSE(DungeonClearMath::IsWithinAssistAttackRange(false, 34.0f, 4.0f, 28.5f, /*reachSum*/ 3.2f));
+}
+
+TEST(DungeonClearAssistRangeTest, MeleeKeepsItsOwnReachInclusiveThreshold)
+{
+    // Melee already overlaps stock reach-melee (reachSum + 1.0 vs reachSum + 0.75),
+    // so it passes its own precomputed threshold and must ignore the spell terms —
+    // double-counting reach here would let melee "engage" from yards away.
+    EXPECT_TRUE(DungeonClearMath::IsWithinAssistAttackRange(true, 4.0f, /*meleeRange*/ 4.2f, 28.5f, 3.2f));
+    EXPECT_FALSE(DungeonClearMath::IsWithinAssistAttackRange(true, 5.0f, /*meleeRange*/ 4.2f, 28.5f, 3.2f));
+    // Well inside spell range but outside melee reach: still not engageable.
+    EXPECT_FALSE(DungeonClearMath::IsWithinAssistAttackRange(true, 20.0f, /*meleeRange*/ 4.2f, 28.5f, 3.2f));
+}

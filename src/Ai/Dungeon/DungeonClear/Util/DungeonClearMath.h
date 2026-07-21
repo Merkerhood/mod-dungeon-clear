@@ -282,6 +282,32 @@ namespace DungeonClearMath
         return inCombat && !hasAttacker && !hasVictim && !hasLegitimateHolder;
     }
 
+    // "Can this follower attack from where it stands?" for the camp-assist handoff,
+    // expressed in the SAME metric the stock reach action enforces.
+    //
+    // This exists because the two halves of that handoff used different metrics and
+    // opened a dead band. Stock ReachSpellAction is constructed with
+    // GetRange("spell") but tests it as `!IsWithinCombatRange(target, spellRange)`,
+    // and Unit::IsWithinCombatRange adds GetCombatReach(bot) + GetCombatReach(target)
+    // to the threshold — so stock stops closing at spellRange + combatReachSum. DC
+    // previously required `dist <= spellRange - CONTACT_DISTANCE`, roughly
+    // combatReachSum + 0.5 yards TIGHTER than stock would ever walk. A ranged bot
+    // left in that window is simultaneously "in range, stop moving" (stock) and "out
+    // of range, yield to stock" (DC): neither side acts, the bot never engages, and
+    // the tank's spread gate waits on it until the run deadlocks.
+    //
+    // Ranged therefore mirrors IsWithinCombatRange exactly, making DC's engage window
+    // the precise complement of stock's keep-closing window — no gap by construction,
+    // and self-syncing if SpellDistance is retuned. Melee passes its own
+    // reach-inclusive threshold (reachSum + 1.0), which is already WIDER than stock
+    // reach-melee's stop point (reachSum + MeleeDistance, default 0.75) and so
+    // overlaps rather than gaps — which is why only ranged ever hung.
+    inline bool IsWithinAssistAttackRange(bool isMelee, float dist, float meleeRange,
+                                          float spellRange, float combatReachSum)
+    {
+        return isMelee ? dist <= meleeRange : dist <= spellRange + combatReachSum;
+    }
+
     // Stuck-combat fire gate (pure, streak clock by reference). Given whether the bot
     // is CURRENTLY in phantom combat (IsPhantomCombat above), arm/hold/reset a streak
     // clock and report when the phantom state has persisted continuously for

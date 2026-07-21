@@ -718,6 +718,7 @@ bool DungeonClearCampHoldActionBase::Execute(Event /*event*/)
                /*exact_waypoint*/ false, prio);
     DC_PULL_TRACE("[DC:{}] hold-at-camp: walking to camp ({:.1f}yd, passive={}, moved={})",
                   bot->GetName(), toCamp, passive, moved);
+
     return true;
 }
 
@@ -853,9 +854,31 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
     //     rotation runs THIS tick; returning true would starve it at rel 35.
     //   * out of range: just YIELD — stock reach spell/melee (rel 20) closes to the
     //     right distance and stops. We re-arm next tick until in range.
+    //
+    // The in-range test MUST use the metric the stock reach action enforces, or the
+    // handoff opens a dead band and the follower never engages at all. ReachSpell is
+    // built with GetRange("spell") but tests it via `!IsWithinCombatRange(target,
+    // dist)` (ReachTargetActions.cpp), and IsWithinCombatRange ADDS
+    // GetCombatReach(bot) + GetCombatReach(target) (~3yd) to the threshold. So stock
+    // stops closing at ~spellDistance + 3, while a bare `dist <= spellDistance -
+    // CONTACT_DISTANCE` here demands ~3.5yd closer than stock will ever walk. A
+    // ranged DPS parked in that gap is "in range, stop moving" to stock and "out of
+    // range, yield to stock" to us — nobody acts and it stands there until the tank's
+    // spread gate deadlocks the run (observed live: pinned at 29.4-29.7yd for
+    // hundreds of ticks). Mirroring stock's own predicate makes the two windows a
+    // clean partition with no gap, and keeps them in sync if SpellDistance is retuned.
+    //
+    // Melee is deliberately left on its own threshold: reachSum + 1.0 is already
+    // WIDER than stock reach-melee's stop point (reachSum + MeleeDistance, 0.75), so
+    // that side overlaps rather than gapping — which is why only ranged ever hung.
+    bool const inAttackRange = DungeonClearMath::IsWithinAssistAttackRange(
+        botAI->IsMelee(bot), dist, /*meleeRange*/ range,
+        /*spellRange*/ botAI->GetRange("spell"),
+        /*combatReachSum*/ bot->GetCombatReach() + target->GetCombatReach());
+
     if (bot->IsWithinLOSInMap(target))
     {
-        if (dist <= range)
+        if (inAttackRange)
         {
             if (!bot->HasInArc(CAST_ANGLE_IN_FRONT, target))
                 ServerFacade::instance().SetFacingTo(bot, target);
@@ -883,13 +906,15 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
             ? MovementPriority::MOVEMENT_COMBAT
             : MovementPriority::MOVEMENT_NORMAL;
 
-    DC_PULL_TRACE("[DC:{}] assist camp: no-LOS, closing on mob {} ({:.1f}yd, prio={})",
-                  bot->GetName(), target->GetGUID().ToString(), dist,
-                  prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
+    bool const closing =
+        DcMoveTo(target->GetMapId(), target->GetPositionX(), target->GetPositionY(),
+               target->GetPositionZ(), /*idle*/ false, /*react*/ false,
+               /*normal_only*/ false, /*exact_waypoint*/ false, prio);
 
-    DcMoveTo(target->GetMapId(), target->GetPositionX(), target->GetPositionY(),
-           target->GetPositionZ(), /*idle*/ false, /*react*/ false,
-           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    DC_PULL_TRACE("[DC:{}] assist camp: no-LOS, closing on mob {} ({:.1f}yd, prio={}, "
+                  "moved={})", bot->GetName(), target->GetGUID().ToString(), dist,
+                  prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal", closing);
+
     return true;
 }
 

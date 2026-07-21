@@ -524,8 +524,100 @@ bool DcMovementAction::DcMoveTo(uint32 mapId, float x, float y, float z, bool id
     if (!DcMovement::DcMovementAllowed(botAI))
         return false;
     DcMovement::ResolveEscortConflict(bot);
-    return MoveTo(mapId, x, y, z, idle, react, normal_only, exact_waypoint, priority, lessDelay,
-                  backwards);
+
+    // (1) GROUND-SNAP THE DESTINATION Z.
+    // Stock SearchForBestPath only takes its fast path when the requested z is within
+    // 0.5yd of GetMapHeight at that xy (MovementActions.cpp:1734). Miss that window and
+    // it drops into a z-search that samples just THREE candidates
+    // (AiPlayerbot.MaxMovementSearchTime = 3, a count despite the name) — so a
+    // destination whose z is merely a yard off the local floor can fail outright. DC
+    // hands out exactly such points: the heal-reposition fallback interpolates x/y
+    // toward the target but keeps the TARGET's z (DcFollowerActions.cpp), which is not
+    // the ground height at the interpolated xy. Snap here, once, so every DC caller
+    // gets a well-formed destination instead of each fixing it by hand.
+    //
+    // Take only the SNAPPED Z, and only when the snap landed essentially under the
+    // requested point — this must correct height, never relocate the destination. A
+    // caller that asked for an exact waypoint gets its literal point untouched.
+    //
+    // The Z delta is capped deliberately. NavmeshSnap searches a 10yd VERTICAL extent,
+    // so in stacked geometry (Steamvault's walkways over the pump room, any multi-level
+    // instance) the nearest poly can belong to a different FLOOR — applying that would
+    // silently retarget the move one storey off. The miss we are correcting is the
+    // 0.5yd fast-path window, so real corrections are small; anything larger means the
+    // caller's z is probably the honest one and we leave it alone.
+    constexpr float kMaxSnapZCorrection = 3.0f;
+    float destZ = z;
+    if (!exact_waypoint)
+    {
+        NavmeshSnap::Result const snap = NavmeshSnap::Snap(bot, x, y, z, /*maxRadius*/ 5.0f);
+        if (snap.ok && std::fabs(snap.x - x) < 1.0f && std::fabs(snap.y - y) < 1.0f &&
+            std::fabs(snap.z - z) < kMaxSnapZCorrection)
+            destZ = snap.z;
+    }
+
+    bool moved = MoveTo(mapId, x, y, destZ, idle, react, normal_only, exact_waypoint, priority,
+                        lessDelay, backwards);
+
+    // (2) BYPASS THE Z-SEARCH ON REFUSAL.
+    // SearchForBestPath seeds `min_length` from its FIRST path attempt whether or not
+    // that attempt succeeded, then only accepts a later candidate that is STRICTLY
+    // SHORTER (MovementActions.cpp:1755). Once that seed is a short degenerate path,
+    // no genuine route can ever beat it: `found` stays false, `modified_z` keeps its
+    // INVALID_HEIGHT initialiser, and MoveTo returns false on that destination
+    // forever. Live, this froze bots for thousands of consecutive ticks — including
+    // Xomja refused 45x on a destination 1.7yd away, which is how we know it is not
+    // route length or connectivity. The map-545 nav probe
+    // (t/fixtures/nav/steamvault_stranded_origin.json) confirms the mesh under every
+    // one of those strand origins is walkable and routable.
+    //
+    // exact_waypoint routes stock to DoMovePoint and skips SearchForBestPath entirely
+    // (MovementActions.cpp:215), so one retry defeats the ratchet whatever seeded it.
+    // Gated on "refused AND standing still" so healthy movement never reaches here: a
+    // refusal mid-walk is the ordinary duplicate/last-move guard and must stay a no-op.
+    // Path generation is still on inside DoMovePoint — this trades stock's z-search for
+    // MotionMaster's own pathing, it does not straight-line the bot through geometry.
+    if (!moved && !bot->isMoving() && !exact_waypoint)
+    {
+        moved = MoveTo(mapId, x, y, destZ, idle, react, normal_only, /*exact_waypoint*/ true,
+                       priority, lessDelay, backwards);
+        if (moved)
+            DC_PULL_TRACE("[DC:{}] move refused by the z-search -> exact-waypoint retry "
+                          "RESCUED it (dest {:.1f},{:.1f},{:.1f} at {:.1f}yd)",
+                          bot->GetName(), x, y, destZ, bot->GetExactDist(x, y, destZ));
+    }
+
+    // A refused move that leaves the bot STANDING STILL is the signature behind every
+    // "follower stranded at a fixed spot" deadlock we have chased, and the logs never
+    // said which of stock MoveTo's several early-outs did the refusing — so the cause
+    // stayed a guess across multiple fix attempts. Name it. A refusal while the bot is
+    // already walking is normal (the duplicate/last-move guards reject a re-issue), so
+    // only the standing-still case is worth a line. These are protected members of
+    // MovementAction, which we derive from, so no core change is needed. Note the
+    // guards are re-evaluated here: cheap, but they are a SECOND read, so treat a
+    // disagreement with the real call as a timing artifact rather than a lie.
+    if (!moved && !bot->isMoving())
+    {
+        char const* why;
+        if (!IsMovingAllowed())
+            why = "IsMovingAllowed=false (CanMove: rooted/charmed/frozen/stunned, a "
+                  "CONTROLLED motion slot, or being teleported)";
+        else if (IsDuplicateMove(x, y, destZ))
+            why = "IsDuplicateMove (same destination re-issued inside maxWaitForMove)";
+        else if (IsWaitingForLastMove(priority))
+            why = "IsWaitingForLastMove (an equal-or-higher priority move still holds "
+                  "the delay window — this one is being starved)";
+        else
+            why = "path/other — and the exact-waypoint retry ALSO failed, so this is "
+                  "not the SearchForBestPath z-search ratchet";
+        // Report the z actually attempted (post-snap) plus the raw request, so a
+        // destination the snap moved is still traceable back to its caller.
+        DC_PULL_TRACE("[DC:{}] move REFUSED and not moving -> {} (dest {:.1f},{:.1f},{:.1f} "
+                      "[requested z {:.1f}] at {:.1f}yd, prio={})",
+                      bot->GetName(), why, x, y, destZ, z, bot->GetExactDist(x, y, destZ),
+                      static_cast<uint32>(priority));
+    }
+    return moved;
 }
 
 bool DcMovementAction::FindStandoffPoint(Map* map, Position const& center, float ringRadius,
