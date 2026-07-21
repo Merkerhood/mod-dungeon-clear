@@ -189,6 +189,10 @@ private:
 
     uint32 _pausedForMs = 0;
     uint32 _stalledForMs = 0;
+    uint32 _wipedForMs = 0;
+    // Who was still standing the tick before the wipe latched — the last dead
+    // member's name is the one worth naming in the fail reason.
+    std::string _lastAliveMember;
     bool _wasPaused = false;
 
     // --- observer-written (any thread) --------------------------------------

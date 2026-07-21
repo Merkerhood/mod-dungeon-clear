@@ -18,6 +18,12 @@ namespace DcTestRun
         if (o.abortRequested || o.leaderMissing || !o.gmOnline)
             return Verdict::FailAborted;
 
+        // Above pause/stall/no-progress: a corpse party reads as paused, stalled
+        // AND frozen all at once, and "wipe" is the only one of the four that
+        // says anything useful about the run.
+        if (o.partyWiped && o.wipedForMs >= l.wipeGraceMs)
+            return Verdict::FailPartyWiped;
+
         if (o.paused && o.pausedForMs >= l.pauseGraceMs)
             return Verdict::FailPausedTimeout;
 
@@ -39,6 +45,7 @@ namespace DcTestRun
         {
             case Verdict::Success:            return "success";
             case Verdict::FailDisabled:       return "disabled";
+            case Verdict::FailPartyWiped:     return "wipe";
             case Verdict::FailPausedTimeout:  return "paused_timeout";
             case Verdict::FailStalledTimeout: return "stalled_timeout";
             case Verdict::FailNoProgress:     return "no_progress";

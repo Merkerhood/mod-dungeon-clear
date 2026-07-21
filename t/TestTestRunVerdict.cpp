@@ -71,6 +71,64 @@ TEST(DcTestRunVerdictTest, SuccessBeatsEverySimultaneousTimer)
     EXPECT_EQ(Classify(o, DefaultLimits()), Verdict::Success);
 }
 
+// ---- wipe ------------------------------------------------------------------------
+
+TEST(DcTestRunVerdictTest, WipeInsideItsGraceStillContinues)
+{
+    // A battle rez / soulstone gets the grace period to un-wipe the run.
+    Observation o = Healthy();
+    o.partyWiped = true;
+    o.wipedForMs = DefaultLimits().wipeGraceMs - 1;
+    EXPECT_EQ(Classify(o, DefaultLimits()), Verdict::Continue);
+}
+
+TEST(DcTestRunVerdictTest, WipePastItsGraceFails)
+{
+    Observation o = Healthy();
+    o.partyWiped = true;
+    o.wipedForMs = DefaultLimits().wipeGraceMs;
+    EXPECT_EQ(Classify(o, DefaultLimits()), Verdict::FailPartyWiped);
+}
+
+TEST(DcTestRunVerdictTest, WipeBeatsTheWatchdogsItAlsoTrips)
+{
+    // The regression this rung exists for: a corpse party stops progressing,
+    // so the no-progress net used to claim the run — reporting a livelock
+    // where the truth was a wipe. Same for the pause/stall trackers, which a
+    // dead party pins high too. Wipe must outrank all three.
+    Observation o = Healthy();
+    o.partyWiped = true;
+    o.wipedForMs = 10'000'000;
+    o.paused = true;
+    o.pausedForMs = 10'000'000;
+    o.stalled = true;
+    o.stalledForMs = 10'000'000;
+    o.sinceProgressMs = 10'000'000;
+    o.elapsedMs = 10'000'000;
+    EXPECT_EQ(Classify(o, DefaultLimits()), Verdict::FailPartyWiped);
+}
+
+TEST(DcTestRunVerdictTest, DisableStillOutranksAWipe)
+{
+    // The tank dying with a survivor left routes through the in-run death
+    // bailout, which disables with the death reason; that verdict is richer
+    // than a bare "wipe" and must not be overwritten if both land at once.
+    Observation o = Healthy();
+    o.disableFired = true;
+    o.partyWiped = true;
+    o.wipedForMs = 10'000'000;
+    EXPECT_EQ(Classify(o, DefaultLimits()), Verdict::FailDisabled);
+}
+
+TEST(DcTestRunVerdictTest, AbortStillOutranksAWipe)
+{
+    Observation o = Healthy();
+    o.abortRequested = true;
+    o.partyWiped = true;
+    o.wipedForMs = 10'000'000;
+    EXPECT_EQ(Classify(o, DefaultLimits()), Verdict::FailAborted);
+}
+
 // ---- abort cluster ---------------------------------------------------------------
 
 TEST(DcTestRunVerdictTest, AbortRequestFails)
@@ -199,6 +257,7 @@ TEST(DcTestRunVerdictTest, EveryTerminalVerdictHasAStableName)
 {
     EXPECT_STREQ(VerdictName(Verdict::Success), "success");
     EXPECT_STREQ(VerdictName(Verdict::FailDisabled), "disabled");
+    EXPECT_STREQ(VerdictName(Verdict::FailPartyWiped), "wipe");
     EXPECT_STREQ(VerdictName(Verdict::FailPausedTimeout), "paused_timeout");
     EXPECT_STREQ(VerdictName(Verdict::FailStalledTimeout), "stalled_timeout");
     EXPECT_STREQ(VerdictName(Verdict::FailNoProgress), "no_progress");

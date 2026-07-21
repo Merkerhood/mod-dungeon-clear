@@ -934,6 +934,42 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
         obs.paused = rs.paused;
         obs.pausedForMs = _pausedForMs;
 
+        // Wipe tracker. The in-run death bailout (DungeonClearPartyDiedTrigger)
+        // covers every case where SOMEONE is left alive to notice — it fires and
+        // the disable funnel above ends the run with the death reason. It cannot
+        // cover a full wipe: the trigger lives in the `dungeon clear` strategy,
+        // which is on the non-combat and combat engines only, and a corpse runs
+        // BOT_STATE_DEAD. So the harness has to see this one for itself.
+        //
+        // Dead = dead OR ghost (a released bot is still a wiped bot). Members off
+        // the leader's map are ignored, matching the trigger's own convention:
+        // someone alive back in town is not a party that is still fighting.
+        bool anyAlive = tank->IsAlive();
+        if (anyAlive)
+            _lastAliveMember = tank->GetName();
+        else if (Group* group = tank->GetGroup())
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (!member || member == tank || member->GetMapId() != tank->GetMapId())
+                    continue;
+                if (member->IsAlive())
+                {
+                    anyAlive = true;
+                    _lastAliveMember = member->GetName();
+                    break;
+                }
+            }
+        }
+
+        if (anyAlive)
+            _wipedForMs = 0;
+        else
+            _wipedForMs += dt;
+        obs.partyWiped = !anyAlive;
+        obs.wipedForMs = _wipedForMs;
+
         stallReason = ctx->GetValue<std::string&>(DcKey::StallReason)->Get();
         if (!stallReason.empty())
             _stalledForMs += dt;
@@ -960,6 +996,11 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
             failReason = "run disabled: " + _disableReason;
             break;
         }
+        case DcTestRun::Verdict::FailPartyWiped:
+            failReason = "party wiped" +
+                         (_lastAliveMember.empty() ? std::string()
+                                                   : " (last standing: " + _lastAliveMember + ")");
+            break;
         case DcTestRun::Verdict::FailPausedTimeout:
             failReason = "paused for over " + std::to_string(_limits.pauseGraceMs / 1000) +
                          "s: " + (pauseReason.empty() ? "(no reason)" : pauseReason);
