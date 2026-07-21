@@ -44,6 +44,25 @@ struct DungeonEventProgress
     uint32 lastDriveMs{0};  // ms-time Drive last ran this event (gap detector)
     uint32 instanceId{0};   // instance this progress belongs to (new-instance reset)
 
+    // Forward-progress watchdog, independent of stepStartMs.
+    //
+    // stepStartMs is the timeout base for the ACTIVE step, and it is re-stamped
+    // every time a step reports Done — including the harmless re-Done of an
+    // already-satisfied leading MoveTo after a stale-gap rewind. So a rewind loop
+    // (rewind -> MoveTo Done -> step 1 -> rewind -> ...) keeps stepStartMs fresh
+    // forever and the step timeout in Advance can never fire: the event runs
+    // Running for the whole instance with no stall, no retry, and no log. That is
+    // exactly how Steamvault's access-panel event wedged (see Drive).
+    //
+    // These two fields measure something a rewind cannot forge: the HIGH-WATER
+    // step index and when it last actually increased. Oscillating between steps
+    // 0 and 1 never raises the high-water mark, so the wedge is caught even when
+    // every other clock keeps being reset. Re-stamped on a genuine (re)activation
+    // — new event, new instance, real lapse — so a legitimately dormant event
+    // (persistent, driven only between fights) is never charged for the gap.
+    uint32 maxStepIndex{0};  // highest stepIndex reached this activation
+    uint32 progressMs{0};    // ms-time maxStepIndex last increased (or activation)
+
     // EscortCreature watchdog: ms-time the escort last made genuine progress
     // (escortee moved, combat occurred, a reachable threat existed, or the final
     // boss is pending within grace). The escort step has no flat timeout (the
@@ -73,6 +92,8 @@ struct DungeonEventProgress
         attempts = 0;
         lastDriveMs = 0;
         instanceId = 0;
+        maxStepIndex = 0;
+        progressMs = 0;
         escortProgressMs = 0;
         escortCombatWedgeMs = 0;
         lastLoggedStep = -1;

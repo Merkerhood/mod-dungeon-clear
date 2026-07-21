@@ -18,6 +18,11 @@ namespace
         p.eventId = eventId;
         p.stepIndex = stepIndex;
         p.stepStartMs = stepStartMs;
+        // Drive stamps progressMs on activation and on every high-water step
+        // advance; baseline it to the step start so the forward-progress watchdog
+        // isn't spuriously charged for time before the scenario under test began.
+        p.maxStepIndex = stepIndex;
+        p.progressMs = stepStartMs;
         return p;
     }
 }
@@ -184,6 +189,77 @@ TEST(DungeonEventAdvance, EscortCreatureNeverTimesOut)
     EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Running, 10u * 60u * 1000u, 30000),
               EventDriveOutcome::Running);
     EXPECT_EQ(p.stepIndex, 0u);  // still on the escort step
+}
+
+TEST(DungeonEventAdvance, RewindLoopReDoningStepZeroIsCaughtByForwardProgress)
+{
+    // Regression: Steamvault's "Open the Main Chambers Door" wedged for a whole
+    // run with no stall and no log. The stale-gap rewind fired every tick (the
+    // tank's out-of-combat AI tick is slower than the old flat 1s threshold), so
+    // each Drive re-ran the already-satisfied leading MoveTo, which reports Done
+    // and re-stamps stepStartMs. The per-step timeout could therefore never
+    // accumulate, the UseGO step was never reached, and the event returned Running
+    // forever. The high-water step index is the clock the rewind can't forge.
+    DungeonEvent ev = EventBuilder(545, 1, "Open the Main Chambers Door")
+                          .MoveTo(1.0f, 2.0f, 3.0f, 6.0f)
+                          .UseGO(184126, 14.0f)
+                          .Wait(6000)
+                          .Build();
+
+    DungeonEventProgress p = Prog(1, 0, 0);
+    uint32 now = 0;
+
+    // Simulate the loop: rewind to step 0, MoveTo reports Done, step -> 1, repeat.
+    // The first Done is genuine forward progress (0 -> 1) and stamps progressMs;
+    // every later one is not.
+    for (int i = 0; i < 100; ++i)
+    {
+        now += 2000;  // a tick slower than the old 1s gap threshold
+        p.stepIndex = 0;
+        p.stepStartMs = now;  // what the rewind used to do
+        EventDriveOutcome const out =
+            DungeonEventExecutor::Advance(ev, p, StepResult::Done, now, 30000);
+        if (out == EventDriveOutcome::Stalled)
+            return;  // escalated as it should
+    }
+    FAIL() << "rewind loop never escalated: the event would run Running forever";
+}
+
+TEST(DungeonEventAdvance, ForwardProgressWatchdogDoesNotFireWhileStepsAdvance)
+{
+    // The watchdog must only catch a wedge. An event whose steps keep advancing —
+    // even slowly, well past a single step timeout in total — is healthy.
+    DungeonEvent ev = EventBuilder(545, 2, "e")
+                          .MoveTo(0.0f, 0.0f, 0.0f, 5.0f)
+                          .MoveTo(1.0f, 0.0f, 0.0f, 5.0f)
+                          .MoveTo(2.0f, 0.0f, 0.0f, 5.0f)
+                          .Wait(1000)
+                          .Build();
+    DungeonEventProgress p = Prog(2, 0, 0);
+
+    uint32 now = 0;
+    for (int i = 0; i < 3; ++i)
+    {
+        now += 25000;  // each step takes most of, but not all of, its timeout
+        EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Done, now, 30000),
+                  EventDriveOutcome::Running);
+    }
+    now += 25000;
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Done, now, 30000),
+              EventDriveOutcome::Completed);
+}
+
+TEST(DungeonEventAdvance, ForwardProgressWatchdogSpareEscortCreature)
+{
+    // EscortCreature owns its own liveness (see EscortCreatureNeverTimesOut); the
+    // forward-progress watchdog must respect that exemption too, or a long escort
+    // that legitimately sits on one step would be failed at 3x the step timeout.
+    DungeonEvent ev = EventBuilder(43, 3, "e")
+                          .EscortCreature(3678, 0, 3654, 7)
+                          .Build();
+    DungeonEventProgress p = Prog(3, 0, 0);
+    EXPECT_EQ(DungeonEventExecutor::Advance(ev, p, StepResult::Running, 10u * 60u * 1000u, 30000),
+              EventDriveOutcome::Running);
 }
 
 TEST(DungeonEventAdvance, BlockedAlwaysStallsEvenWhenOptional)

@@ -5,6 +5,7 @@
 
 #include "DungeonEventExecutor.h"
 
+#include <algorithm>
 #include <cmath>
 #include <list>
 #include <optional>
@@ -48,6 +49,39 @@ namespace
     // Range from which a GameObject may legitimately be Use()d (it has no range
     // check of its own — same rule the door system enforces).
     constexpr float DC_EVENT_GO_USE_RANGE = 5.0f;
+    // Absolute floor for the "the event lapsed" gap (see EventStaleGapMs). Never
+    // below a few ticks of headroom even if the playerbots delays are configured
+    // down to nothing.
+    constexpr uint32 DC_EVENT_STALE_FLOOR_MS = 3000;
+    // How many step-timeouts an event may run without its high-water step index
+    // increasing before it is declared wedged. Generous: a Wait/WaitForSpawn step
+    // legitimately sits for its whole timeout, so this only fires well past the
+    // point where the per-step timeout should already have escalated.
+    constexpr uint32 DC_EVENT_NO_PROGRESS_FACTOR = 3;
+
+    // Gap after which a Drive call reads as a FRESH activation rather than a
+    // tick-to-tick continuation.
+    //
+    // This used to be a flat 1000ms, which quietly assumed the driving bot ticks
+    // faster than 1s. Stock playerbots does not guarantee that: PlayerbotAI::
+    // GetReactDelay() returns reactDelay * urand(10, 30) — 1000-3000ms at the
+    // default 100ms base — for a bot that is out of combat, not resting and has
+    // no real-player master, and AllowActivity() going minimal parks it at
+    // passiveDelay (10s) outright. A tank standing at an event anchor is exactly
+    // that bot. Every Drive then read as a fresh activation, rewound to step 0,
+    // and the event could never reach step 1 — a silent permanent livelock that
+    // scaled in with server load (it needed 8-10 concurrent test instances to
+    // show up, which is why single-instance validation missed it).
+    //
+    // So derive the threshold from the same config the throttle uses, and give it
+    // 2x headroom: a gap only means "lapsed" if it is longer than any tick stock
+    // playerbots can legitimately hand us.
+    uint32 EventStaleGapMs()
+    {
+        uint32 const slowestTick = std::max<uint32>(sPlayerbotAIConfig.passiveDelay,
+                                                    sPlayerbotAIConfig.reactDelay * 30u);
+        return std::max<uint32>(DC_EVENT_STALE_FLOOR_MS, slowestTick * 2u);
+    }
     // How far out WaitForSpawn / KillCreature scan for the named creature.
     constexpr float DC_EVENT_CREATURE_SCAN = 250.0f;
     // Range from which a creature can be gossiped (mirrors the core's
@@ -323,6 +357,22 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             if (!bot->IsWithinDistInMap(go, DC_EVENT_GO_USE_RANGE))
             {
                 HopTo(bot, go->GetPositionX(), go->GetPositionY(), go->GetPositionZ());
+                return StepResult::Running;
+            }
+            // GameObject::Use() silently early-returns on GO_FLAG_NOT_SELECTABLE,
+            // so clicking one is a guaranteed no-op — reporting Done here would
+            // latch the objective complete on a click that never happened and send
+            // the party on to content the click was supposed to unlock. Several
+            // scripted interactables spawn not-selectable and are cleared only by a
+            // prerequisite (Steamvault's access panels, flagged until their own
+            // mini-boss dies). Stay Running so the step's timeout escalates it into
+            // a visible stall the human can act on.
+            if (go->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE))
+            {
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] {} event-step Use GO {} '{}' is NOT_SELECTABLE "
+                          "— click would be swallowed, holding",
+                          bot->GetName(), go->GetGUID().ToString(), go->GetName());
                 return StepResult::Running;
             }
             LOG_DEBUG("playerbots.dungeonclear",
@@ -798,13 +848,24 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
     EventStep const& step = ev.steps[prog.stepIndex];
     uint32 const timeout = step.timeoutMs ? step.timeoutMs : defaultTimeoutMs;
 
-    if (result == StepResult::Running)
+    // The EscortCreature step has NO flat timeout: a 30s default would mis-fire
+    // during the Disciple's 32.5s banish channel and the long ritual hold. Its
+    // own dead-air watchdog (DriveEscortCreature) owns liveness instead, so the
+    // step is never escalated to Failed here regardless of elapsed time.
+    bool const watchdogOwned = step.kind == EventStepKind::EscortCreature;
+
+    // Forward-progress backstop, checked BEFORE the result dispatch because the
+    // wedge it catches never reports Running: a stale-gap rewind loop re-runs an
+    // already-satisfied leading MoveTo, which reports Done every tick, so both the
+    // Running branch below and the per-step timeout are bypassed entirely while
+    // stepStartMs is re-stamped on each Done. The high-water step index is the one
+    // clock a rewind cannot forge — if it has not moved in this long, the event is
+    // going nowhere no matter what the individual steps keep claiming.
+    if (!watchdogOwned && timeout > 0 &&
+        static_cast<uint32>(nowMs - prog.progressMs) >= timeout * DC_EVENT_NO_PROGRESS_FACTOR)
+        result = StepResult::Failed;
+    else if (result == StepResult::Running)
     {
-        // The EscortCreature step has NO flat timeout: a 30s default would mis-fire
-        // during the Disciple's 32.5s banish channel and the long ritual hold. Its
-        // own dead-air watchdog (DriveEscortCreature) owns liveness instead, so the
-        // step is never escalated to Failed here regardless of elapsed time.
-        bool const watchdogOwned = step.kind == EventStepKind::EscortCreature;
         // Escalate a step that has run too long to Failed. uint32 subtraction is
         // wrap-safe for an elapsed interval.
         if (!watchdogOwned && timeout > 0 &&
@@ -819,6 +880,13 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
         ++prog.stepIndex;
         prog.attempts = 0;
         prog.stepStartMs = nowMs;
+        // Only a NEW high-water step index counts as forward progress. Re-running
+        // step 0 after a rewind reports Done too, and must not refresh the clock.
+        if (prog.stepIndex > prog.maxStepIndex)
+        {
+            prog.maxStepIndex = prog.stepIndex;
+            prog.progressMs = nowMs;
+        }
         return (prog.stepIndex >= ev.steps.size()) ? EventDriveOutcome::Completed
                                                    : EventDriveOutcome::Running;
     }
@@ -858,6 +926,8 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
         prog.stepIndex = 0;
         prog.attempts = 0;
         prog.stepStartMs = now;
+        prog.maxStepIndex = 0;
+        prog.progressMs = now;
     }
     // A gap since the last drive means this is a FRESH activation — a new run /
     // re-enter, or the event lapsed (condition went false) and re-fired — NOT a
@@ -868,17 +938,30 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // Safe because the steps are idempotent (UseGameObject skips an already-
     // activated GO, MoveTo/Gossip/WaitFor* re-run harmlessly).
     //
-    // EXCEPTION: a Persistent event keeps its progress across gaps. A long,
-    // multi-combat anchored event (ZulFarrak's temple) sees a >1s gap after every
-    // wave / boss fight (the bot is on the combat engine, so Drive isn't called),
-    // and rewinding to step 0 each time would re-run the whole chain endlessly and
-    // strand WaitForSpawn(wantAlive) steps whose creature has since died. The
-    // eventId-mismatch reset above still re-inits it for a genuine new run.
-    else if (!ev.persistent && getMSTimeDiff(prog.lastDriveMs, now) > 1000)
+    // The gap that counts as "lapsed" is EventStaleGapMs(), not a flat 1s — see
+    // there for why 1s silently livelocked every passive multi-step event on a
+    // loaded server. Both clocks are re-based on a real lapse; only the rewind
+    // itself is skipped for a persistent event.
+    else if (getMSTimeDiff(prog.lastDriveMs, now) > EventStaleGapMs())
     {
-        prog.stepIndex = 0;
-        prog.attempts = 0;
+        // A real lapse: for this whole gap nothing was driving the event, so none
+        // of that dead time may be charged to the step timeout or the
+        // forward-progress watchdog. True for a PERSISTENT event too — it goes
+        // dormant for the length of every fight (the bot is on the combat engine),
+        // and charging those minutes would fail it the instant combat ended.
         prog.stepStartMs = now;
+        prog.progressMs = now;
+
+        // Only a non-persistent event rewinds. A persistent one keeps its step
+        // index across the gap: rewinding a long multi-combat anchored event
+        // (ZulFarrak's temple) would re-run the whole chain endlessly and strand
+        // WaitForSpawn(wantAlive) steps whose creature has since died.
+        if (!ev.persistent)
+        {
+            prog.stepIndex = 0;
+            prog.attempts = 0;
+            prog.maxStepIndex = 0;
+        }
     }
     prog.lastDriveMs = now;
 
