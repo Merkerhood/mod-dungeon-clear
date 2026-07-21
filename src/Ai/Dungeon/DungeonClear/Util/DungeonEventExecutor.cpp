@@ -64,8 +64,9 @@ namespace
     //
     // This used to be a flat 1000ms, which quietly assumed the driving bot ticks
     // faster than 1s. Stock playerbots does not guarantee that: PlayerbotAI::
-    // GetReactDelay() returns reactDelay * urand(10, 30) — 1000-3000ms at the
-    // default 100ms base — for a bot that is out of combat, not resting and has
+    // GetReactDelay() returns reactDelay times a random 10-30 multiplier — so
+    // 1000-3000ms at the default 100ms base — for a bot that is out of combat,
+    // not resting and has
     // no real-player master, and AllowActivity() going minimal parks it at
     // passiveDelay (10s) outright. A tank standing at an event anchor is exactly
     // that bot. Every Drive then read as a fresh activation, rewound to step 0,
