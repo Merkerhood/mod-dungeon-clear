@@ -82,9 +82,28 @@ TEST(DungeonClearRelevanceTest, CombatLadderStrictlyDescends)
     EXPECT_GT(DcRel::HakkarSuppressorCombat, DcRel::HakkarFlameCombat);
     EXPECT_GT(DcRel::HakkarFlameCombat,      DcRel::HakkarLootBloodCombat);
     EXPECT_GT(DcRel::HakkarLootBloodCombat,  DcRel::PullManeuver);
-    EXPECT_GT(DcRel::PullManeuver,           DcRel::HealReposition);
+    // Hazard vacate (survival, any role) sits below the camp owners (60) and above
+    // the role repositions — it must win over normal combat movement but not fight
+    // the camp/Hakkar orchestration.
+    EXPECT_GT(DcRel::PullManeuver,           DcRel::HazardVacate);
+    EXPECT_GT(DcRel::HazardVacate,         DcRel::HealReposition);
     EXPECT_GT(DcRel::HealReposition,         DcRel::AssistCampCombat);
     EXPECT_GT(DcRel::AssistCampCombat,       DcRel::RegroupCombat);
+}
+
+// Hazard vacate is dual-engine. In the NON-combat engine it must outrank the whole
+// driving ladder (so a bot leaves the Destroyed Sentinel's pulse instead of
+// looting/resting/advancing on the death spot) but stay below the terminal death/
+// chat bailouts.
+TEST(DungeonClearRelevanceTest, HazardVacateOutranksNonCombatDrivers)
+{
+    EXPECT_GT(DcRel::HazardVacate, DcRel::AllCleared);
+    EXPECT_GT(DcRel::HazardVacate, DcRel::HealReposition);
+    EXPECT_GT(DcRel::HazardVacate, DcRel::Advance);
+    EXPECT_GT(DcRel::HazardVacate, DcRel::FilterLoot);
+    EXPECT_GT(DcRel::HazardVacate, DcRel::NeedsRest);
+    EXPECT_LT(DcRel::HazardVacate, DcRel::PartyDied);
+    EXPECT_LT(DcRel::HazardVacate, DcRel::Chat);
 }
 
 // Contribution-gated combat regroup (Option B) is pinned BELOW the stock combat
@@ -97,6 +116,10 @@ TEST(DungeonClearRelevanceTest, RegroupCombatSitsBelowStockMovers)
     EXPECT_LT(DcRel::RegroupCombat,    kStockMove);
     EXPECT_LT(kStockMove,              DcRel::AssistCampCombat);
     EXPECT_LT(DcRel::AssistCampCombat, DcRel::HealReposition);
+    // The hazard vacate must out-drive stock melee movement (else the bot chases
+    // its target right back into the pulse) and out-rank the role repositions.
+    EXPECT_LT(kStockMove,              DcRel::HazardVacate);
+    EXPECT_LT(DcRel::HealReposition,   DcRel::HazardVacate);
     // The combat-side objective engage (stealthed-sapper break) sits ABOVE stock
     // movers so it owns the tick and walks the tank onto the undetected sapper, and
     // BELOW the follower assist / camp owners (35) which never contend (leader-only).

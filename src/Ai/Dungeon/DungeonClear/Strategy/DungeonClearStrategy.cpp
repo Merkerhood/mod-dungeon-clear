@@ -197,6 +197,19 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear heal reposition",
         { NextAction("dungeon clear heal reposition", DcRel::HealReposition) }));
 
+    // Hazard vacate, NON-combat side — the essential half. After the party kills
+    // an Arcatraz Sentinel, the Destroyed Sentinel (21761) summon pulses 15yd/1s
+    // at the corpse and combat usually drops (it is NOT_SELECTABLE, so it does not
+    // hold anyone in combat) — so the bot idles ON the corpse in the non-combat
+    // engine, taking the pulse, until this walks it clear. Relevance 55 outranks
+    // the whole non-combat driving ladder (advance 15, rest, loot, follow) so the
+    // bot leaves before it loots/regroups on the death spot. Same node runs in the
+    // combat strategy for the case combat is still up. See
+    // DungeonClearHazardVacateTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hazard vacate",
+        { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance 26.5 (DcRel::NeedsRest) — above advance (15) and follow-tank (25)
     // so a bot below target sits and rests instead of walking, and tie-broken just
@@ -360,6 +373,19 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear heal reposition",
         { NextAction("dungeon clear heal reposition", DcRel::HealReposition) }));
+
+    // Survival: move out of an unfightable hazard's pulse — the Arcatraz Destroyed
+    // Sentinel (21761) summoned at a Sentinel's corpse, pulsing 15yd/1s until it
+    // despawns. Fires for EVERY bot in the pulse (nothing to tank — it is
+    // NOT_SELECTABLE). Relevance 55 — above every stock combat mover (MoveChase
+    // ~30) and the DC role repositions (heal 41 / assist 35 / regroup 29) so it
+    // owns the tick, below the camp owners (60) and Hakkar (62-64) which never
+    // contend. Also registered in the NON-combat strategy, because the summon
+    // ticks after the kill once combat has dropped. See
+    // DungeonClearHazardVacateTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hazard vacate",
+        { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
 
     // Sunken Temple Avatar of Hakkar orchestration, COMBAT side — THE place these
     // run. The encounter is a continuous wave fight, so every member is in combat

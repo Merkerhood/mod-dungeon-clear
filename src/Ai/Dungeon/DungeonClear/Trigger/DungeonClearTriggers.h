@@ -461,4 +461,24 @@ public:
     bool IsActive() override;
 };
 
+// ANY role, BOTH engines. Fires when the bot is standing inside the pulse of an
+// active-vacate DcHazardRegistry emitter it cannot fight — the Arcatraz
+// "Destroyed Sentinel" (21761) summoned at a Sentinel's corpse, NOT_SELECTABLE,
+// pulsing 15yd/1s until it despawns. Drives DungeonClearHazardVacateAction to
+// clear the pulse; once out, normal driving resumes and the party advances past
+// the corpse (it does NOT hold at the rim for the summon's whole lifetime — see
+// the band note in DcHazard.h). No combat gate (the pulse ticks after the kill,
+// often out of combat) and no role exemption (the summon can't be tanked). Inert
+// on maps with no emitters, while CC'd/rooted (can't move), and when
+// DungeonClear.HazardVacate is off. See DcHazard::NearestVacate.
+class DungeonClearHazardVacateTrigger : public Trigger
+{
+public:
+    DungeonClearHazardVacateTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear hazard vacate", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

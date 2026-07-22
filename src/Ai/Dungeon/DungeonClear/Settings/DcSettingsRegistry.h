@@ -136,6 +136,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "HealRepositionHpFloor", DcType::Float, 90,   1, 100,  true  },
     { "HealRepositionTankBias",DcType::Float, 15,   0,  50,  true  },
     { "HealRepositionMaxRange",DcType::Float, 60,  20, 120,  true  },
+
+    // Hazard vacate (DcHazardRegistry, threat 2). Master toggle for actively
+    // moving OUT of an unfightable persistent-pulse creature — the Arcatraz
+    // "Destroyed Sentinel" (21761), summoned at a Sentinel's corpse, NOT_SELECTABLE,
+    // pulsing 15yd/1s until it despawns. With this on, any party bot standing in
+    // the pulse walks clear and the run then advances past the corpse. OFF leaves
+    // bots standing on the corpse taking the pulse (a likely wipe). See
+    // DungeonClearHazardVacate{Trigger,Action}.
+    { "HazardVacate",          DcType::Bool,   1,   0,   1,  true  },
     // Room-wide-aggro pre-clear (RoomAggroRegistry). ClearRoomBeforeBoss is the
     // master toggle: for the handful of bosses that force the whole room into
     // combat on engage (SM Cathedral, Shadow Lab, Pandemonius, Dagran, …), clear

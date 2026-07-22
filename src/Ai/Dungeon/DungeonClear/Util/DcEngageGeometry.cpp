@@ -6,6 +6,7 @@
 #include "DcEngageGeometry.h"
 
 #include "DcDoorIndex.h"
+#include "DcHazard.h"
 #include "DungeonClearUtil.h"   // DcTargeting::GetLiveBoss (until DcTargeting moves)
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
@@ -192,6 +193,12 @@ namespace
     // path can't be completed (not PATHFIND_NORMAL) or that plunges back through
     // the sphere (the only route on that side hugs a wall through the boss's aggro
     // range) is rejected so the caller can try the other way around the ring.
+    //
+    // It also rejects a leg that walks through a hazard emitter's keep-out
+    // cylinder (DcHazardRegistry). Both the short-arc and long-arc candidates go
+    // through here, so a single check covers the whole ring solver — and the
+    // orbit latch then naturally prefers whichever way around is clean of BOTH
+    // the boss sphere and the hazard.
     bool SkirtLegIsClean(Player* bot, float dx, float dy, float dz,
                          float bx, float by, float safeRadius)
     {
@@ -217,6 +224,20 @@ namespace
                     return false;
             }
         }
+
+        // Hazard screen: a skirt that swings wide of the boss straight into a
+        // damage aura trades one problem for a worse one.
+        //
+        // Tested as SEGMENTS, not vertices. PathGenerator hands back string-pulled
+        // CORNER points, not a densified line — an open-room skirt leg is often
+        // just {start, end}, so a per-vertex scan would only ever check the
+        // destination and wave through a leg that walks clean across an emitter.
+        for (size_t i = 1; i < path.size(); ++i)
+            if (DcHazard::SegmentIsHot(bot,
+                                       path[i - 1].x, path[i - 1].y, path[i - 1].z,
+                                       path[i].x, path[i].y, path[i].z))
+                return false;
+
         return true;
     }
 }

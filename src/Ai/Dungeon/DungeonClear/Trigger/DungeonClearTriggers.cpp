@@ -26,6 +26,8 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
@@ -1276,6 +1278,32 @@ bool DungeonClearHealRepositionTrigger::IsActive()
     // sight, or beyond heal range.
     float const healRange = botAI->GetRange("heal");
     return !bot->IsWithinLOSInMap(target) || bot->GetExactDist2d(target) > healRange;
+}
+
+bool DungeonClearHazardVacateTrigger::IsActive()
+{
+    if (!bot || bot->isDead())
+        return false;
+
+    // Cheap map early-out before anything else touches game state.
+    if (!DcHazardRegistry::HasEmitters(bot->GetMapId()))
+        return false;
+
+    // Feature toggle.
+    if (!DcSettings::GetBool(bot, "HazardVacate"))
+        return false;
+
+    // Can't move out of the pulse if rooted/stunned/etc — don't claim the tick
+    // from something that might (a trinket, stock CC break).
+    if (bot->HasUnitState(UNIT_STATE_STUNNED | UNIT_STATE_FLEEING |
+                          UNIT_STATE_CONFUSED | UNIT_STATE_ROOT))
+        return false;
+
+    // The signal: the bot is standing inside an unfightable emitter's pulse.
+    // No combat gate (the Destroyed Sentinel pulses after the kill, often once
+    // combat has dropped) and no role exemption (there is nothing to tank — it is
+    // NOT_SELECTABLE). Every bot in the pulse leaves.
+    return DcHazard::NearestVacate(bot).ok;
 }
 
 bool DungeonClearFilterLootTrigger::IsActive()

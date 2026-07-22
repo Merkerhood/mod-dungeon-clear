@@ -8,6 +8,7 @@
 
 #include "DungeonClearUtil.h"   // DC_PULL_* macros + DcTargeting::GetPullTarget (until DcTargeting moves)
 
+#include "DcHazard.h"
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -94,6 +95,25 @@ namespace
                    bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ(),
                    DC_DOOR_BAND);
     }
+
+    // True when a candidate camp sits in — or the walk to it transits — a
+    // persistent damage aura (DcHazardRegistry). A camp is where the party
+    // deliberately STANDS AND FIGHTS for the length of a pull, so it is the
+    // worst possible place to be inside an aura: the Arcatraz Sentinel's
+    // 563-937/second at 15yd kills a camped party outright, and nothing in the
+    // combat AI attributes the damage to a mob it is not fighting.
+    //
+    // Both halves matter. PointIsHot rejects a camp planted in the cylinder;
+    // LegIsHot rejects a clean camp whose drag-back route walks the tank and the
+    // pack straight through one on the way. Cheap on maps with no rows (one
+    // registry bool), so it sits beside CampBlockedByDoor at every site.
+    bool CampInHazard(Player* bot, Position const& c)
+    {
+        if (!bot)
+            return false;
+        return DcHazard::PointIsHot(bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ()) ||
+               DcHazard::LegIsHot(bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ());
+    }
 }
 
 Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
@@ -132,6 +152,15 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     Position const slot(end.x, end.y, end.z, camp.GetOrientation());
     if (camp.GetExactDist(&slot) > 3.0f)
         return camp;
+
+    // The anchor was screened for hazards when it was chosen, but this fan-out
+    // moves each follower 1-2yd off it — enough to push a bot camped just
+    // outside an emitter's rim back inside it. Fall back to the exact camp,
+    // which is known clean; a couple of stacked followers is a much cheaper
+    // problem than one standing in the aura.
+    if (DcHazard::PointIsHot(bot, slot.GetPositionX(), slot.GetPositionY(), slot.GetPositionZ()))
+        return camp;
+
     return slot;
 }
 Position DcPullPlanner::ComputeHealApproach(Player* bot, Unit* healTarget,
@@ -882,7 +911,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             // door we have not opened — the navmesh is blind to it. (Note: an
             // unreachable crumb skips the maxDrag cap below, matching the original
             // `continue`.)
-            if (!IsNavReachable(bot, c) || CampBlockedByDoor(bot, c))
+            if (!IsNavReachable(bot, c) || CampBlockedByDoor(bot, c) || CampInHazard(bot, c))
                 return true;
             float const clear = clearanceAt(c);
             float const drag = tankPos.GetExactDist(&c);
@@ -960,7 +989,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
                 DungeonPathFollower::PointBehind(bot, path, follower, setback))
         {
             Position cand(back->x, back->y, back->z);
-            if (IsNavReachable(bot, cand) && !CampBlockedByDoor(bot, cand))
+            if (IsNavReachable(bot, cand) && !CampBlockedByDoor(bot, cand) && !CampInHazard(bot, cand))
             {
                 clearanceOut = clearanceAt(cand);
                 dragOut = tankPos.GetExactDist(&cand);
@@ -1010,7 +1039,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             // but on the far side of a wall / on another level. Only keep it if a
             // complete generated path reaches it, so the move never straight-lines
             // through the geometry in between — and never across/into a shut door.
-            if (!IsNavReachable(bot, cand) || CampBlockedByDoor(bot, cand))
+            if (!IsNavReachable(bot, cand) || CampBlockedByDoor(bot, cand) || CampInHazard(bot, cand))
                 continue;
             float const c = clearanceAt(cand);
             float const drag = tankPos.GetExactDist(&cand);

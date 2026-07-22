@@ -11,6 +11,7 @@
 #include "Ai/Dungeon/DungeonClear/Value/DungeonBossesValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearBlockingDoorValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearFarTargetsValue.h"
+#include "Ai/Dungeon/DungeonClear/Value/DungeonClearHazardsValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLiveBossValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearLongPathValue.h"
 #include "Ai/Dungeon/DungeonClear/Value/DungeonClearPartyTankValue.h"
@@ -46,6 +47,7 @@ public:
         creators[DcKey::LongPath] = &DungeonClearValueContext::dungeon_clear_long_path;
         creators[DcKey::CurrentHop] = &DungeonClearValueContext::dungeon_clear_current_hop;
         creators[DcKey::FarTargets] = &DungeonClearValueContext::dungeon_clear_far_targets;
+        creators[DcKey::Hazards] = &DungeonClearValueContext::dungeon_clear_hazards;
         creators[DcKey::RoomTrashRemaining] = &DungeonClearValueContext::dungeon_clear_room_trash_remaining;
         creators[DcKey::BlockingDoor] = &DungeonClearValueContext::dungeon_clear_blocking_door;
         creators[DcKey::EngageTrashTarget] = &DungeonClearValueContext::dungeon_clear_engage_trash_target;
@@ -90,6 +92,7 @@ private:
     static UntypedValue* dungeon_clear_long_path(PlayerbotAI* ai) { return new DungeonClearLongPathValue(ai); }
     static UntypedValue* dungeon_clear_current_hop(PlayerbotAI* ai) { return new DungeonClearCurrentHopValue(ai); }
     static UntypedValue* dungeon_clear_far_targets(PlayerbotAI* ai) { return new DungeonClearFarTargetsValue(ai); }
+    static UntypedValue* dungeon_clear_hazards(PlayerbotAI* ai) { return new DungeonClearHazardsValue(ai); }
     static UntypedValue* dungeon_clear_room_trash_remaining(PlayerbotAI* ai) { return new DungeonClearRoomTrashValue(ai); }
     static UntypedValue* dungeon_clear_blocking_door(PlayerbotAI* ai) { return new DungeonClearBlockingDoorValue(ai); }
     static UntypedValue* dungeon_clear_engage_trash_target(PlayerbotAI* ai) { return new DungeonClearEngageTrashTargetValue(ai); }

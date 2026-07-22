@@ -35,6 +35,8 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
@@ -1095,6 +1097,86 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
 
     DcMoveTo(map->GetId(), dx, dy, dz, /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
+    return true;
+}
+
+bool DungeonClearHazardVacateAction::Execute(Event /*event*/)
+{
+    // The nearest unfightable emitter whose pulse the bot is in. Re-read here
+    // (trigger/action gap); bail if it despawned or the bot cleared in between.
+    DcHazard::VacateEmitter const danger = DcHazard::NearestVacate(bot);
+    if (!danger.ok)
+        return false;
+
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+
+    // Aim just PAST the pulse rim: far enough that a step of jitter doesn't drop
+    // the bot straight back in. Measured from the emitter centre.
+    float const clearDist = danger.pulseRadius + DcHazard::VacateRetreatSlack;
+
+    // Bearing directly away from the emitter. If the bot is somehow exactly on
+    // the centre (degenerate), fall back to its own facing so the direction is
+    // still defined.
+    float const ex = danger.x, ey = danger.y;
+    float away = std::atan2(bot->GetPositionY() - ey, bot->GetPositionX() - ex);
+    if (!std::isfinite(away) ||
+        (bot->GetPositionX() == ex && bot->GetPositionY() == ey))
+        away = bot->GetOrientation();
+
+    // Try straight-away first, then fan the bearing out symmetrically so a wall
+    // directly behind the bot doesn't trap it in the pulse — mirrors the
+    // MoveAwayFromCreature sampler, but navmesh-validated + path-reachable like
+    // the rest of DC. First candidate that snaps, lands outside the pulse, and
+    // is reachable wins.
+    static constexpr float kFan[] = { 0.0f, 0.5f, -0.5f, 1.0f, -1.0f, 1.6f, -1.6f, 2.4f, -2.4f, 3.14159f };
+    for (float delta : kFan)
+    {
+        float const ang = away + delta;
+        float const cx = ex + clearDist * std::cos(ang);
+        float const cy = ey + clearDist * std::sin(ang);
+
+        NavmeshSnap::Result const snap = NavmeshSnap::Snap(map, cx, cy, bot->GetPositionZ(), 12.0f);
+        if (!snap.ok)
+            continue;
+
+        // The snap can pull the point back toward the emitter (onto the only
+        // nearby mesh) — keep it only if it truly clears the pulse.
+        float const dxp = snap.x - ex, dyp = snap.y - ey;
+        if (dxp * dxp + dyp * dyp < danger.pulseRadius * danger.pulseRadius)
+            continue;
+
+        // Don't flee this pulse straight into ANOTHER hazard's — Sentinels and
+        // their summons sit in overlapping clusters on this map. PointIsHot covers
+        // every live emitter's keep-out cylinder (the fled emitter's own is only
+        // its raw pulse, which this 19yd point already clears), so a candidate
+        // that trades one pulse for another is rejected and the fan tries again.
+        if (DcHazard::PointIsHot(bot, snap.x, snap.y, snap.z))
+            continue;
+
+        Position const cand(snap.x, snap.y, snap.z);
+        if (!DcEngageGeometry::IsNavReachable(bot, cand))
+            continue;
+
+        DC_PULL_TRACE("[DC:{}] hazard vacate: clearing {:.0f}yd pulse, moving to "
+                      "({:.1f},{:.1f}) delta={:.1f}",
+                      bot->GetName(), danger.pulseRadius, snap.x, snap.y, delta);
+        DcMoveTo(map->GetId(), snap.x, snap.y, snap.z, /*idle*/ false, /*react*/ false,
+                 /*normal_only*/ false, /*exact_waypoint*/ false,
+                 MovementPriority::MOVEMENT_COMBAT);
+        return true;
+    }
+
+    // No validated bearing (boxed in on every side). Last resort: drive the raw
+    // straight-away point through the mover anyway — it pathfinds and clamps, so
+    // the bot at least tries to open distance rather than standing in the pulse
+    // owning the tick for nothing.
+    float const rx = ex + clearDist * std::cos(away);
+    float const ry = ey + clearDist * std::sin(away);
+    DcMoveTo(map->GetId(), rx, ry, bot->GetPositionZ(), /*idle*/ false, /*react*/ false,
+             /*normal_only*/ false, /*exact_waypoint*/ false,
+             MovementPriority::MOVEMENT_COMBAT);
     return true;
 }
 

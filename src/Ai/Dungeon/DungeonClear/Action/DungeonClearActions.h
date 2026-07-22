@@ -655,6 +655,24 @@ public:
     bool Execute(Event event) override;
 };
 
+// ANY role, BOTH engines. Moves the bot OUT of an active-vacate hazard emitter's
+// pulse (DcHazard::NearestVacate — the Arcatraz Destroyed Sentinel's 15yd Energy
+// Discharge). Aims a point directly away from the emitter, just past its pulse
+// radius plus slack, snapped to the navmesh, clear of every OTHER hazard, and
+// path-reachable; if the straight-away point is blocked it fans the away-bearing
+// around until one validates. Re-issued each tick. MOVEMENT_COMBAT priority so it
+// overrides the bot's MoveChase / advance. Driven by
+// DungeonClearHazardVacateTrigger.
+class DungeonClearHazardVacateAction : public DcMovementAction
+{
+public:
+    DungeonClearHazardVacateAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear hazard vacate")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

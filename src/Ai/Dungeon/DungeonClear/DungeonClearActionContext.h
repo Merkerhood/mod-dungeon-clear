@@ -43,6 +43,7 @@ public:
         creators["dungeon clear leader assist"] = &DungeonClearActionContext::leader_assist;
         creators["dungeon clear regroup combat"] = &DungeonClearActionContext::regroup_combat;
         creators["dungeon clear heal reposition"] = &DungeonClearActionContext::heal_reposition;
+        creators["dungeon clear hazard vacate"] = &DungeonClearActionContext::hazard_vacate;
         creators["dungeon clear hakkar suppressor"] = &DungeonClearActionContext::hakkar_suppressor;
         creators["dungeon clear hakkar flame"] = &DungeonClearActionContext::hakkar_flame;
         creators["dungeon clear hakkar loot blood"] = &DungeonClearActionContext::hakkar_loot_blood;
@@ -100,6 +101,7 @@ private:
     static Action* leader_assist(PlayerbotAI* ai) { return new DungeonClearLeaderAssistAction(ai); }
     static Action* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatAction(ai); }
     static Action* heal_reposition(PlayerbotAI* ai) { return new DungeonClearHealRepositionAction(ai); }
+    static Action* hazard_vacate(PlayerbotAI* ai) { return new DungeonClearHazardVacateAction(ai); }
     static Action* hakkar_suppressor(PlayerbotAI* ai) { return new DungeonClearHakkarSuppressorAction(ai); }
     static Action* hakkar_flame(PlayerbotAI* ai) { return new DungeonClearHakkarFlameAction(ai); }
     static Action* hakkar_loot_blood(PlayerbotAI* ai) { return new DungeonClearHakkarLootBloodAction(ai); }

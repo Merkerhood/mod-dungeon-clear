@@ -77,6 +77,20 @@ namespace DcRel
     inline constexpr float HakkarLootBloodCombat  = 62.0f;
     inline constexpr float PullManeuver           = 60.0f; // leader: drag the pack back to camp
     inline constexpr float StayAtCamp             = 60.0f; // follower: pin at camp (role peer of PullManeuver)
+    // Survival: move OUT of an active-vacate hazard's pulse. The Arcatraz
+    // "Destroyed Sentinel" (21761) is summoned on a Sentinel's death at the corpse,
+    // is NOT_SELECTABLE (can't be fought), and pulses ~563-937 every second in
+    // 15yd until it despawns. The party is standing right on it after the kill and
+    // nothing else moves them off, so they die where they stand. This drives EVERY
+    // bot (no tank exemption — there is nothing to tank) out of the pulse, after
+    // which normal driving advances them past it. Registered in BOTH engines because the summon
+    // ticks after the kill, often once combat has already dropped. Outranks stock
+    // MoveChase (~30), the DC role repositions (heal 41 / assist 35 / regroup 29),
+    // and the whole non-combat driving ladder (advance 15, rest, loot). Kept BELOW
+    // the combat camp owners (60) and Hakkar (62-64), which never contend (the
+    // summon isn't a fight; different map than Hakkar), and BELOW the terminal
+    // death/chat bailouts (100). See DungeonClearHazardVacate{Trigger,Action}.
+    inline constexpr float HazardVacate           = 55.0f; // any role: clear an unfightable hazard's pulse
     inline constexpr float AssistCampCombat       = 35.0f; // follower: onto the leader's pack
     // Leader-only, combat side of the KillCreature-engage objective. A stealthed
     // sapper (Shattered Halls' Shattered Hand Assassins) flags the party into combat

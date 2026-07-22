@@ -74,6 +74,7 @@ void RegisterOldHillsbradEvents(std::vector<DungeonEvent>& out);
 void RegisterMechanarEvents(std::vector<DungeonEvent>& out);
 void RegisterShatteredHallsEvents(std::vector<DungeonEvent>& out);
 void RegisterSteamvaultEvents(std::vector<DungeonEvent>& out);
+void RegisterArcatrazEvents(std::vector<DungeonEvent>& out);
 
 // --- roster patches (one appender per dungeon that corrects the boss list) -
 // Each relocates that dungeon's BossRosterPatch out of BossRosterRegistry.cpp
@@ -99,6 +100,7 @@ void RegisterOldHillsbradRoster(std::vector<BossRosterPatch>& t);
 void RegisterMechanarRoster(std::vector<BossRosterPatch>& t);
 void RegisterShatteredHallsRoster(std::vector<BossRosterPatch>& t);
 void RegisterSteamvaultRoster(std::vector<BossRosterPatch>& t);
+void RegisterArcatrazRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;

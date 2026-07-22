@@ -193,6 +193,109 @@ namespace
         return ObjectiveArriveResult::Done;
     }
 
+    // --- The Arcatraz: DriveMellicharWaves (hook id 6) --------------------
+    // Warden Mellichar's stasis-pod finale is started by DAMAGING him — there is
+    // no gossip, no area trigger and no clickable object anywhere in the
+    // encounter (arcatraz.cpp, npc_warden_mellicharAI::DamageTaken). He is
+    // SetImmuneToAll and zeroes all incoming damage, so the hit costs him
+    // nothing; it exists purely as the signal that schedules the intro EventMap.
+    // He never enters combat and never loses HP, so a KillCreatureEngage step
+    // aimed at him would run forever — hence a Custom step.
+    //
+    // DO NOT "simplify" THIS TO SetBossState(DATA_WARDEN_MELLICHAR, IN_PROGRESS).
+    // The intro events are scheduled inside DamageTaken, NOT inside SetBossState,
+    // so setting the state directly starts nothing — AND it permanently locks the
+    // encounter out, because DamageTaken's own guard is
+    // `GetBossState(...) != IN_PROGRESS`. That is a one-way trap: the run can
+    // never be recovered without a full instance reset.
+    //
+    // THIS HOOK OWNS THE WHOLE WAVE PHASE (poke + garrison), rather than poking
+    // once and handing off to a MoveToHoldUntilSpawn step, SPECIFICALLY so a wipe
+    // recovers. The event must be .Persistent() (it holds a KillCreatureEngage),
+    // and DungeonEventExecutor::Drive only rewinds stepIndex for NON-persistent
+    // events — so a poke-once step that has already returned Done can never fire
+    // again. A wipe mid-waves puts Mellichar's own Reset() back to NOT_STARTED
+    // and despawns every summon, and a separate hold step would then sit waiting
+    // on a Skyriss that nobody will ever release, burning the full step timeout.
+    // Keeping the poke live for the entire phase makes that self-healing: the
+    // party corpse-runs back, this sees NOT_STARTED again, and re-pokes.
+    constexpr uint32 ARC_MELLICHAR = 20904;
+    constexpr uint32 ARC_SKYRISS = 20912;
+    constexpr uint32 ARC_DATA_WARDEN_MELLICHAR = 3;  // arcatraz.h DATA_WARDEN_MELLICHAR
+    constexpr uint32 ARC_NOT_STARTED = 0;            // EncounterState::NOT_STARTED
+    constexpr uint32 ARC_DONE = 3;                   // EncounterState::DONE
+    // He is a fixed spawn on the dais ~8yd from the arena centroid the event
+    // parks on; 60 covers the whole pod room without reaching outside it.
+    constexpr float ARC_MELLICHAR_SCAN = 60.0f;
+    // Skyriss is a TempSummon, so only a grid scan finds him; he is released
+    // ~30yd from the centroid.
+    constexpr float ARC_SKYRISS_SCAN = 100.0f;
+    // The arena floor centroid, mirrored from ArcatrazEvents.cpp. Re-centring
+    // matters because the encounter evades outright if no player is within 100yd
+    // of Mellichar (EVENT_WARDEN_CHECK_PLAYERS, every 1s).
+    constexpr float ARC_ARENA_X = 445.9f;
+    constexpr float ARC_ARENA_Y = -161.5f;
+    constexpr float ARC_ARENA_Z = 42.56f;
+    constexpr float ARC_ARENA_LEASH = 15.0f;
+
+    ObjectiveArriveResult DriveMellicharWaves(Player* bot, AiObjectContext* /*context*/,
+                                              DungeonBossInfo const& /*info*/)
+    {
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (!inst)
+            return ObjectiveArriveResult::Running;  // not in the instance yet
+
+        // Skyriss is on the field — hand off to the kill step.
+        if (bot->FindNearestCreature(ARC_SKYRISS, ARC_SKYRISS_SCAN, /*alive*/ true))
+            return ObjectiveArriveResult::Done;
+
+        // Already won (a resumed run, or the human finished it) — don't restart it.
+        if (inst->GetBossState(ARC_DATA_WARDEN_MELLICHAR) == ARC_DONE)
+            return ObjectiveArriveResult::Done;
+
+        if (inst->GetBossState(ARC_DATA_WARDEN_MELLICHAR) == ARC_NOT_STARTED)
+        {
+            Creature* mellichar = bot->FindNearestCreature(ARC_MELLICHAR, ARC_MELLICHAR_SCAN);
+            if (mellichar && mellichar->IsAlive())
+            {
+                // Any nonzero player-sourced damage will do; DamageTaken checks
+                // only `attacker->GetCharmerOrOwnerOrOwnGUID().IsPlayer() &&
+                // damage > 0`. Unit::DealDamage hands the AI its DamageTaken
+                // callback BEFORE any HP arithmetic, and Mellichar's override
+                // zeroes the value, so this cannot overkill him or otherwise
+                // perturb the script.
+                Unit::DealDamage(bot, mellichar, 1);
+                // Throttled: if the poke ever fails to take (another module's
+                // DealDamage hook zeroing damage ahead of the script, say) this
+                // retries every tick, and an unthrottled INFO would bury the log.
+                static uint32 lastPokeLog = 0;
+                uint32 const now = getMSTime();
+                if (!lastPokeLog || GetMSTimeDiffToNow(lastPokeLog) > 10000)
+                {
+                    lastPokeLog = now;
+                    LOG_INFO("playerbots.dungeonclear",
+                             "DungeonClear: Arcatraz — poking Warden Mellichar ({}) to open the "
+                             "stasis pods for {} (the encounter has no trigger but player damage)",
+                             ARC_MELLICHAR, bot->GetName());
+                }
+            }
+        }
+
+        // Garrison the centroid between waves. The executor's own MoveTo
+        // re-centring is unavailable here (this is one Custom step, deliberately
+        // — see above), so mirror it: only nudge when actually displaced and not
+        // already moving, so this never fights the combat AI mid-wave.
+        if (!bot->isMoving() &&
+            bot->GetExactDist(ARC_ARENA_X, ARC_ARENA_Y, ARC_ARENA_Z) > ARC_ARENA_LEASH)
+        {
+            bot->GetMotionMaster()->MovePoint(0, ARC_ARENA_X, ARC_ARENA_Y, ARC_ARENA_Z,
+                                              FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
+                                              /*generatePath*/ true, false);
+        }
+
+        return ObjectiveArriveResult::Running;
+    }
+
     // --- Old Hillsbrad: GrantIncendiaryBombs (hook id 3) ------------------
     // Brazen (18725) only offers his drake ride to Durnholde Keep when the player
     // HOLDS the Pack of Incendiary Bombs (item 25853) — gossip menu 7959 option 0
@@ -321,6 +424,7 @@ namespace
             { 3, &GrantIncendiaryBombs },    // Old Hillsbrad — pack of bombs (unlocks Brazen)
             { 4, &GrantCacheKeyAndLoot },    // The Mechanar — Cache of the Legion key + loot
             { 5, &WakeZumrah },              // ZulFarrak — flip Zum'rah hostile (AT 962)
+            { 6, &DriveMellicharWaves },     // Arcatraz — poke Mellichar, hold through the waves
         };
         return kHooks;
     }

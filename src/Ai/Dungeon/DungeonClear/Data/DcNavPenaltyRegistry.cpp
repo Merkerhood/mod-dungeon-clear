@@ -46,10 +46,34 @@ namespace
     // platform — x 25..68, y 150..248, z -5..30 — so every edge on the shortcut is
     // taxed while the upper room / platform (y>=250) and the lower lobby (y<150)
     // stay untaxed and the legitimate west-ramp route is left at base cost.
-    constexpr std::array<DcNavPenaltyVolume, 3> kVolumes = {{
+    // The Arcatraz (map 552) — the five Arcatraz Sentinel (20869) spawns. NOT a
+    // navmesh shortcut: this is the route half of DcHazardRegistry. Each rooted
+    // Sentinel pulses 563-937 damage in 15yd every second, forever, so the
+    // router should prefer a line that hugs the far wall. Boxes are the emitter
+    // position +-22 in XY and +-12 in Z (the registry's radius / zBand), matching
+    // DcHazardRegistry's rows so the route half and the live half agree.
+    //
+    // COST MULTIPLIER IS 8, NOT 40, AND HAZARDS ARE DELIBERATELY NOT WIRED INTO
+    // THE StridedPathfinder HARD REJECT. Sentinels 138931 (255.5,158.9) and
+    // 138932 (253.9,131.9) sit 27yd apart in what is the only corridor through
+    // that stretch of the Containment Core: their boxes overlap and span it.
+    // A cost is survivable there (the route still goes through, just last) —
+    // a rejection would strand the party. 8 is enough to bend a route around an
+    // emitter when floor space exists, without making an unavoidable corridor
+    // rank worse than a genuinely broken navmesh shortcut at 40.
+    //
+    // If test runs show bots still walking the pulse, NARROW THE BOXES rather
+    // than raising the multiplier — a wider tax on a mandatory corridor buys
+    // nothing and starts competing with the shortcut rows above.
+    constexpr std::array<DcNavPenaltyVolume, 8> kVolumes = {{
         { 229, -134.0f, -406.0f, 33.0f, -118.0f, -374.0f, 56.0f, 40.0f },
         { 229,  -65.5f, -384.0f, 49.4f,  -60.5f, -377.0f, 54.2f, 40.0f },
         { 556,   25.0f,  150.0f, -5.0f,   68.0f,  248.0f, 30.0f, 40.0f },
+        { 552,  233.5f,  136.9f, 10.4f,  277.5f,  180.9f, 34.4f,  8.0f },
+        { 552,  231.9f,  109.9f, 10.4f,  275.9f,  153.9f, 34.4f,  8.0f },
+        { 552,  242.3f,  -83.3f, 10.5f,  286.3f,  -39.3f, 34.5f,  8.0f },
+        { 552,  314.5f,    5.4f, 36.4f,  358.5f,   49.4f, 60.4f,  8.0f },
+        { 552,  373.4f,   -3.8f, 36.3f,  417.4f,   40.2f, 60.3f,  8.0f },
     }};
 }
 

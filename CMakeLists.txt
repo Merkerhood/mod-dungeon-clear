@@ -202,4 +202,28 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    watchdog counters, the stall reason, and the roster with WHICH completion
 #    path fired per boss. Captured in DcTestRunJob::Teardown before the party is
 #    disbanded, serialized under "diag" in dc_testruns.jsonl (schema 3).)
+# Data/DcHazardRegistry.{h,cpp}
+#   (per-map table of creatures emitting a persistent damaging aura bots must
+#    stand outside of — the Arcatraz Sentinel's 15yd/1s Energy Discharge is the
+#    forcing case. Split in two halves because they run on different threads:
+#    the ROUTE half is hand-authored DcNavPenaltyRegistry boxes (the emitters are
+#    rooted, and DcRouteFilter runs on the worker thread where no Map* exists);
+#    the LIVE half is DcHazard::PointIsHot/LegIsHot over DungeonClearHazardsValue,
+#    consumed by the camp/standoff solvers on the map thread.)
+# Value/DungeonClearHazardsValue.{h,cpp}
+#   (500ms-cached NearestUnitsValue of live hazard emitters near the bot. Needs a
+#    PERMISSIVE AcceptUnit — the Arcatraz corpse bombs carry UNIT_DYNFLAG_DEAD and
+#    are filtered out by AttackersValue::IsPossibleTarget, so DcKey::FarTargets
+#    cannot be reused for this.)
+# Util/DcHazard.{h,cpp}
+#   (the live predicates the camp/standoff solvers call: PointIsHot/SegmentIsHot
+#    for the persistent pulse, plus NearestVacate for the active retreat from an
+#    unfightable pulse creature — the Arcatraz Destroyed Sentinel summon.)
+# Trigger/DungeonClearHazardVacateTrigger + Action/DungeonClearHazardVacateAction
+#   (survival move: walk every party bot out of an unfightable hazard emitter's
+#    pulse and hold until it despawns. Registered in BOTH strategies at
+#    DcRel::HazardVacate = 55 — the Destroyed Sentinel pulses after the kill, once
+#    combat has usually dropped.)
+# Data/Events/ArcatrazEvents.cpp
+#   (map 552: Warden Mellichar's stasis-pod wave finale + roster patch.)
 # (this comment bumps mtime to force CMake re-glob on next build)
