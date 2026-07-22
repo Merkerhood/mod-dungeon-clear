@@ -349,6 +349,7 @@ namespace
             RegisterShatteredHallsEvents(t);
             RegisterSteamvaultEvents(t);
             RegisterArcatrazEvents(t);
+            RegisterSethekkHallsEvents(t);
             return t;
         }();
         return kEvents;

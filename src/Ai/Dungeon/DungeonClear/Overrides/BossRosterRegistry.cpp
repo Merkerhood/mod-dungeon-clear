@@ -53,6 +53,7 @@ namespace
             RegisterShatteredHallsRoster(t);
             RegisterSteamvaultRoster(t);
             RegisterArcatrazRoster(t);
+            RegisterSethekkHallsRoster(t);
             return t;
         }();
         return kPatches;

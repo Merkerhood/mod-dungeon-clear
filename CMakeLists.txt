@@ -226,4 +226,7 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    combat has usually dropped.)
 # Data/Events/ArcatrazEvents.cpp
 #   (map 552: Warden Mellichar's stasis-pod wave finale + roster patch.)
+# Data/Events/SethekkHallsEvents.cpp
+#   (map 556: force-summon & kill Anzu — send-event 14797 via ObjectiveHook 7 —
+#    + Objective-anchor roster patch. Bonus boss, works on normal difficulty.)
 # (this comment bumps mtime to force CMake re-glob on next build)

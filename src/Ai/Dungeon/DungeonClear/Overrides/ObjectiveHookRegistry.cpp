@@ -296,6 +296,50 @@ namespace
         return ObjectiveArriveResult::Running;
     }
 
+    // --- Sethekk Halls: DriveAnzuSummon (hook id 7) -----------------------
+    // Anzu is normally summoned by a DRUID using item 32449 (which sends event
+    // 14797 to the instance). instance_sethekk_halls::ProcessEvent has NO
+    // IsHeroic()/difficulty gate — "heroic-only" is enforced purely by the
+    // item/quest being heroic-gated — so we replicate the send-event directly to
+    // force the summon on ANY difficulty (no druid / item / quest / heroic key).
+    // The instance guard self-de-dupes (no Voice && Anzu != DONE), but we also
+    // gate our own poke on "no Anzu yet" so we never spawn a SECOND Voice/Anzu
+    // once he is on the field. ~40s of theatrics then a ~16s intro precede a
+    // fightable Anzu; the Custom step's 120s Timeout covers it, and Anzu's own
+    // SetInCombatWithZone() (post-intro) pulls the party into the fight.
+    constexpr uint32 SH_ANZU_SEND_EVENT = 14797;
+    constexpr uint32 SH_ANZU_NPC        = 23035;  // TempSummon boss
+    constexpr uint32 SH_VOICE_NPC       = 21851;  // TempSummon theatrics NPC
+    constexpr uint32 SH_DATA_ANZU       = 1;      // sethekk_halls.h DATA_ANZU
+    constexpr float  SH_ANZU_SCAN       = 60.0f;
+
+    ObjectiveArriveResult DriveAnzuSummon(Player* bot, AiObjectContext* /*context*/,
+                                          DungeonBossInfo const& /*info*/)
+    {
+        InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
+        if (!inst)
+            return ObjectiveArriveResult::Running;  // not in the instance yet
+
+        // Already killed (a resumed run, or the human did it) — don't re-summon.
+        if (inst->GetBossState(SH_DATA_ANZU) == DONE)
+            return ObjectiveArriveResult::Done;
+
+        // Anzu is on the field (even mid-intro, still NON_ATTACKABLE) — hand off
+        // to the KillCreatureEngage step and STOP poking so no second Voice fires.
+        if (bot->FindNearestCreature(SH_ANZU_NPC, SH_ANZU_SCAN, /*alive*/ true))
+            return ObjectiveArriveResult::Done;
+
+        // Theatrics in progress — the Voice is alive running action list 2185100
+        // toward the ~40s summon. Hold without re-poking.
+        if (bot->FindNearestCreature(SH_VOICE_NPC, SH_ANZU_SCAN, /*alive*/ true))
+            return ObjectiveArriveResult::Running;
+
+        // No Voice, no Anzu, not DONE -> fire the send-event. Idempotent (the
+        // instance guard no-ops if a Voice somehow already exists).
+        inst->ProcessEvent(bot, SH_ANZU_SEND_EVENT);
+        return ObjectiveArriveResult::Running;
+    }
+
     // --- Old Hillsbrad: GrantIncendiaryBombs (hook id 3) ------------------
     // Brazen (18725) only offers his drake ride to Durnholde Keep when the player
     // HOLDS the Pack of Incendiary Bombs (item 25853) — gossip menu 7959 option 0
@@ -425,6 +469,7 @@ namespace
             { 4, &GrantCacheKeyAndLoot },    // The Mechanar — Cache of the Legion key + loot
             { 5, &WakeZumrah },              // ZulFarrak — flip Zum'rah hostile (AT 962)
             { 6, &DriveMellicharWaves },     // Arcatraz — poke Mellichar, hold through the waves
+            { 7, &DriveAnzuSummon },         // Sethekk Halls — force-summon Anzu (send-event 14797)
         };
         return kHooks;
     }

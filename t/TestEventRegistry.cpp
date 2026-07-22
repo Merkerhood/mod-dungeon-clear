@@ -325,3 +325,43 @@ TEST(DungeonEventIntegrityTest, IsolatedWingObjectivesAppearInExactlyOneWing)
         }
     }
 }
+
+// --- Sethekk Halls (556): force-summon & kill Anzu ------------------------
+// A focused regression over the specific wiring of the forced-Anzu bonus boss.
+// The generic integrity tests above already cover it structurally; this pins the
+// exact shape so a future edit that, say, drops .Persistent() or renumbers the
+// hook fails loudly with intent rather than as an anonymous parametrized row.
+TEST(DungeonEventIntegrityTest, SethekkAnzuEventIsWiredForForcedSummon)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 556, /*eventId*/ 1);
+    ASSERT_NE(ev, nullptr) << "Sethekk Halls (556) event 1 (force-summon Anzu) is missing";
+
+    // Bonus boss: never stall the clear to Ikiss (Optional == !required), and it
+    // spans the ~40s summon + the fight across combat gaps (Persistent).
+    EXPECT_FALSE(ev->required) << "Anzu event must be Optional (bonus boss)";
+    EXPECT_TRUE(ev->persistent) << "Anzu event must be Persistent (summon + fight span combat gaps)";
+    EXPECT_EQ(ev->activation, EventActivation::Anchored);
+
+    // Step order matters: clear the room BEFORE poking the summon (Anzu's
+    // SetInCombatWithZone would otherwise drag surviving trash into the fight).
+    int clearStep = -1;
+    int pokeStep = -1;
+    int killStep = -1;
+    for (size_t i = 0; i < ev->steps.size(); ++i)
+    {
+        EventStep const& s = ev->steps[i];
+        if (s.kind == EventStepKind::ClearRadius)
+            clearStep = static_cast<int>(i);
+        if (s.kind == EventStepKind::Custom && s.hookId == 7)
+            pokeStep = static_cast<int>(i);
+        // KillCreatureEngage builds a KillCreature step with engage == true.
+        if (s.kind == EventStepKind::KillCreature && s.engage && s.creatureEntry == 23035)
+            killStep = static_cast<int>(i);
+    }
+    EXPECT_GE(clearStep, 0) << "Anzu event must pre-clear the room (a ClearRadius step)";
+    EXPECT_GE(pokeStep, 0) << "Anzu event must poke via Custom hook 7 (DriveAnzuSummon)";
+    EXPECT_GE(killStep, 0) << "Anzu event must KillCreatureEngage Anzu (23035)";
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(7)) << "hook 7 (DriveAnzuSummon) must be registered";
+    EXPECT_LT(clearStep, pokeStep) << "room must be cleared BEFORE the Anzu summon poke";
+    EXPECT_LT(pokeStep, killStep) << "the summon poke must precede the Anzu kill step";
+}

@@ -37,6 +37,26 @@ TEST(DcNavPenaltyRegistry, PenalizesTheSethekkBackDoorRamp)
     EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(556, -250.0f, 210.0f, 27.0f), 1.0f);
 }
 
+TEST(DcNavPenaltyRegistry, FencesTheSethekkFallThroughCorner)
+{
+    // The five measured arc vertices round off a room corner where the navmesh
+    // stitches a sliver of floor over a drop. A point in the middle of the pocket
+    // (centroid of the arc, on the z≈26.7 floor) must be taxed.
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(556, -211.69f, 297.73f, 26.7f), 1.0f);
+
+    // The arc's bounding-box top corners sit OUTSIDE the arc (the curve pulls
+    // away from them) — open floor that must stay untaxed, which a box couldn't
+    // achieve.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(556, -233.0f, 326.0f, 26.7f), 1.0f);
+
+    // Same XY as the pocket but well below the floor band → a level below this
+    // corner is not this hazard, so it is untaxed.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(556, -211.69f, 297.73f, 5.0f), 1.0f);
+
+    // Geometrically inside the pocket, but a different map → no region applies.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(0, -211.69f, 297.73f, 26.7f), 1.0f);
+}
+
 TEST(DcNavPenaltyRegistry, PenalizesInsideTheLbrsShaft)
 {
     // The midpoint of the observed shortcut climb

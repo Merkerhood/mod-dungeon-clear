@@ -75,12 +75,52 @@ namespace
         { 552,  314.5f,    5.4f, 36.4f,  358.5f,   49.4f, 60.4f,  8.0f },
         { 552,  373.4f,   -3.8f, 36.3f,  417.4f,   40.2f, 60.3f,  8.0f },
     }};
+
+    // ---- polygonal no-go regions ----------------------------------------
+    // Same contract as kVolumes (a route cost, and a hard reject in the
+    // StridedPathfinder corridor screen), but a polygon footprint for a spot a
+    // box can't hug.
+    //
+    // Sethekk Halls (map 556) — a room corner where the navmesh stitches a sliver
+    // of floor out over a drop, so a bot that clips the corner falls under the
+    // world. The five vertices are the measured arc that rounds the corner off,
+    // all on the z≈26.7 floor; the polygon they enclose is the pocket to keep
+    // routes out of. The corner is fenced with the arc itself rather than a box
+    // because the arc's bounding box would spill well past it into open floor,
+    // and the StridedPathfinder screen HARD-rejects (doesn't just tax) any
+    // corridor entering the region — an over-sized footprint there could wall off
+    // a legitimate lane and strand the party. costMult 40 matches the other 556
+    // shortcut row (a spot a real player can't be, not a survivable hazard).
+    constexpr std::array<DcNavPenaltyPolygon, 1> kPolygons = {{
+        { 556, 15.0f, 38.0f, 40.0f, 5,
+          { -233.29f, -230.34f, -209.82f, -192.94f, -192.04f },
+          {  275.04f,  309.39f,  326.92f,  305.38f,  271.93f } },
+    }};
+
+    // Even-odd ray cast — true iff (x,y) is inside the polygon's XY footprint.
+    // Handles convex or concave simple polygons and is winding-agnostic.
+    bool PointInPolygonXY(DcNavPenaltyPolygon const& p, float x, float y)
+    {
+        bool inside = false;
+        for (uint32 i = 0, j = p.vertCount - 1; i < p.vertCount; j = i++)
+        {
+            float const xi = p.vx[i], yi = p.vy[i];
+            float const xj = p.vx[j], yj = p.vy[j];
+            bool const straddles = (yi > y) != (yj > y);
+            if (straddles && x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+                inside = !inside;
+        }
+        return inside;
+    }
 }
 
 bool DcNavPenaltyRegistry::HasVolumes(uint32 mapId)
 {
     for (auto const& v : kVolumes)
         if (v.mapId == mapId)
+            return true;
+    for (auto const& p : kPolygons)
+        if (p.mapId == mapId)
             return true;
     return false;
 }
@@ -100,6 +140,17 @@ float DcNavPenaltyRegistry::PenaltyAt(uint32 mapId, float x, float y, float z)
             continue;
         if (v.costMult > worst)
             worst = v.costMult;
+    }
+    for (auto const& p : kPolygons)
+    {
+        if (p.mapId != mapId)
+            continue;
+        if (z < p.minZ || z > p.maxZ)
+            continue;
+        if (!PointInPolygonXY(p, x, y))
+            continue;
+        if (p.costMult > worst)
+            worst = p.costMult;
     }
     return worst;
 }
