@@ -108,6 +108,19 @@ struct DcRunState
     uint32 smartRestSinceMs   = 0;      // getMSTime() when latched (timeout clock)
     uint32 smartRestRearmAtMs = 0;      // after a timeout release: no re-latch before this
 
+    // === post-combat rez recovery (leader-owned, written cross-bot) ===============
+    // Maintained by DcRezRecovery::Evaluate — called from the (alive) leader's
+    // relaxed party-died trigger and from every bot's rez-party trigger, so the
+    // clocks stay live even when the leader itself is the corpse (a follower
+    // writes them cross-bot, the same access pattern as the latches above).
+    uint32 rezPendingSinceMs = 0;  // getMSTime() recovery went pending OUT of combat;
+                                   // 0 = not pending (cleared while the party fights,
+                                   // so combat never burns the timeout budget)
+    uint32 rezAnnounceMs     = 0;  // getMSTime() of the episode's start announcement
+                                   // (dedup: one announce per recovery episode; also
+                                   // marks the episode so the "party restored" resume
+                                   // line fires exactly once when deaths clear)
+
     // Full run teardown: every session + signal field. Used on dc on / dc off /
     // death / all-cleared. (The pull preference/bool are NOT here — see the header
     // note; they are reset explicitly by ApplyPullSetting / DisableDungeonClear.)

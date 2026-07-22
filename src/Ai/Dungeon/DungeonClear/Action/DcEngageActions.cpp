@@ -57,6 +57,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBreadcrumb.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -1326,6 +1327,13 @@ DungeonClearEngageActionBase::EventRest DungeonClearEngageActionBase::EventRestD
     if (!bot || bot->IsInCombat() || bot->IsNonMeleeSpellCast(false))
         return EventRest::None;
 
+    // Post-combat rez recovery: a dead same-map member holds the drive outright.
+    // Checked AHEAD of the Smart Rest branch split (and outside it) so it binds
+    // with SmartRest=0, the default — engage/Wait-at-Boss/event set-pieces can
+    // never fire over a corpse while a recovery is in progress.
+    if (DcRezRecovery::IsPending(bot))
+        return EventRest::Hold;
+
     if (DcSmartRest::Enabled(bot))
     {
         // SmartRest owns the whole decision. Refresh the party-wide hysteresis
@@ -1874,32 +1882,35 @@ bool DcRunEventAction::Execute(Event /*event*/)
 
 bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
 {
-    std::string deadName = "Someone";
-    if (bot && bot->isDead())
+    // Re-evaluate for the disable REASON (the kernel is deterministic, so this
+    // matches the verdict the trigger fired on). The funnel is untouched — only
+    // the message says why recovery wasn't attempted / gave up.
+    DcRezRecovery::Plan const plan = bot ? DcRezRecovery::Evaluate(bot)
+                                         : DcRezRecovery::Plan{};
+    std::string const& deadName = plan.deadName;
+
+    std::string reason;
+    switch (plan.verdict.reason)
     {
-        deadName = bot->GetName();
-    }
-    else if (bot)
-    {
-        if (Group* group = bot->GetGroup())
-        {
-            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-            {
-                Player* member = ref->GetSource();
-                if (!member || member == bot)
-                    continue;
-                if (member->GetMapId() != bot->GetMapId())
-                    continue;
-                if (member->isDead())
-                {
-                    deadName = member->GetName();
-                    break;
-                }
-            }
-        }
+        case DcRezDecision::Reason::Wipe:
+            reason = "The party wiped \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.";
+            break;
+        case DcRezDecision::Reason::NoRezzer:
+            reason = deadName + " died and no one left alive can resurrect \xe2\x80\x94 dungeon clear "
+                     "disabled. Type 'dc on' when ready to resume.";
+            break;
+        case DcRezDecision::Reason::TimedOut:
+            reason = "Couldn't get " + deadName + " resurrected in time \xe2\x80\x94 dungeon clear "
+                     "disabled. Type 'dc on' when ready to resume.";
+            break;
+        default:
+            // Feature off (Reason::Disabled) or a race resolved the deaths
+            // between trigger and action — the classic message.
+            reason = deadName + " died \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.";
+            break;
     }
 
-    DisableDungeonClear(botAI, deadName + " died \xe2\x80\x94 dungeon clear disabled. Type 'dc on' when ready to resume.");
+    DisableDungeonClear(botAI, reason);
     return true;
 }
 

@@ -34,6 +34,10 @@ While enabled, the tank bot handles a run end to end:
 - **Resting** between fights, tracking playerbots' own eat and drink thresholds.
 - **Party support**: followers stay with the tank, healers reposition to keep the
   tank in line of sight, and the group regroups after a fight pulls it apart.
+- **Death recovery**: when a member dies and a living Priest, Paladin, Shaman, or
+  Druid remains, the run holds while they resurrect the fallen and resumes once
+  everyone is back up, instead of ending on the first death (`DungeonClear.PostCombatRez`).
+  The run still ends on a full wipe, with no living resurrector, or on timeout.
 
 ## Requirements
 

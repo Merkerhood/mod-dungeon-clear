@@ -89,10 +89,29 @@ public:
     bool IsActive() override;
 };
 
+// Fires the disable-on-death bailout when a same-map party member is dead AND
+// post-combat rez recovery is NOT viable (full wipe, no living rez class,
+// recovery timed out, or DungeonClear.PostCombatRez off). While recovery IS
+// viable the trigger stays silent — the rez-party rung below drives the
+// resurrection and the readiness gates hold the run. See DcRezRecovery.
 class DungeonClearPartyDiedTrigger : public Trigger
 {
 public:
     DungeonClearPartyDiedTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear party died", 1) {}
+    bool IsActive() override;
+};
+
+// ALL bots (leader AND followers), non-combat. Fires when post-combat rez
+// recovery is in progress and THIS bot is the elected rezzer (deterministic
+// from group order: first living rez-class bot, healers first — every member
+// computes the same answer, so exactly one bot fires). Drives
+// DungeonClearRezPartyAction: walk to the corpse, cast the class rez. Inert
+// for off/paused runs, with no deaths, when a stock class-strategy rez already
+// raised everyone, or when only the human can rez (the hold + prompt path).
+class DungeonClearRezPartyTrigger : public Trigger
+{
+public:
+    DungeonClearRezPartyTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear rez party", 1) {}
     bool IsActive() override;
 };
 

@@ -60,7 +60,8 @@ namespace
             if (member->GetMapId() != leader->GetMapId())
                 continue;
             if (member->isDead())
-                continue;  // Dead members handled by the party-died trigger.
+                continue;  // Dead members hold the run via the rez recovery
+                           // (DcRezRecovery::IsPending), never the rest latch.
 
             Member m;
             m.hpPct = member->GetHealthPct();

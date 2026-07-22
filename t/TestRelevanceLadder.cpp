@@ -27,7 +27,8 @@ TEST(DungeonClearRelevanceTest, NonCombatLadderStrictlyDescends)
     EXPECT_GT(DcRel::HakkarSuppressor, DcRel::HakkarFlame);
     EXPECT_GT(DcRel::HakkarFlame,     DcRel::Pull);        // tie-broken (was ==)
     EXPECT_GT(DcRel::Pull,            DcRel::HakkarLootBlood);
-    EXPECT_GT(DcRel::HakkarLootBlood, DcRel::EventDue);
+    EXPECT_GT(DcRel::HakkarLootBlood, DcRel::RezParty);
+    EXPECT_GT(DcRel::RezParty,        DcRel::EventDue);
     EXPECT_GT(DcRel::EventDue,        DcRel::AtBoss);
     EXPECT_GT(DcRel::AtBoss,          DcRel::AssistCamp);
     EXPECT_GT(DcRel::AssistCamp,      DcRel::HoldAtCamp);
@@ -61,6 +62,29 @@ TEST(DungeonClearRelevanceTest, LeaderAssistFillsGapBelowOwnEngageScans)
     EXPECT_LT(DcRel::LeaderAssist, DcRel::BlockingTrash);
     EXPECT_LT(DcRel::LeaderAssist, DcRel::RoomTrash);
     EXPECT_LT(DcRel::LeaderAssist, DcRel::AtBoss);
+}
+
+TEST(DungeonClearRelevanceTest, RezPartyOutranksEveryLadderItCanLandOn)
+{
+    // The elected rezzer may be the LEADER (a prot paladin raising its healer)
+    // or any FOLLOWER, so the rung must beat both ladders: the leader's event/
+    // boss drivers — recover the party before running a gate or pulling — and
+    // every follower rung. It deliberately does NOT tie EventDue (31): both are
+    // leader-armable on the same tick (a corpse plus a due conditional gate has
+    // no role/engine/map partition), so the ordering must be strict.
+    EXPECT_GT(DcRel::RezParty, DcRel::EventDue);
+    EXPECT_GT(DcRel::RezParty, DcRel::AtBoss);
+    EXPECT_GT(DcRel::RezParty, DcRel::AtObjective);
+    EXPECT_GT(DcRel::RezParty, DcRel::AssistCamp);
+    EXPECT_GT(DcRel::RezParty, DcRel::HoldAtCamp);
+    EXPECT_GT(DcRel::RezParty, DcRel::NeedsRest);   // rez first; OOM rezzer's
+                                                    // action defers, THEN drinks
+    EXPECT_GT(DcRel::RezParty, DcRel::FollowTank);
+    // Below the pull maneuver (inert during recovery via the readiness gate)
+    // and the map-partitioned Hakkar band; below the terminal bailouts.
+    EXPECT_LT(DcRel::RezParty, DcRel::HakkarLootBlood);
+    EXPECT_LT(DcRel::RezParty, DcRel::Pull);
+    EXPECT_LT(DcRel::RezParty, DcRel::PartyDied);
 }
 
 TEST(DungeonClearRelevanceTest, HakkarSuppressorOutranksFlameOutranksBlood)

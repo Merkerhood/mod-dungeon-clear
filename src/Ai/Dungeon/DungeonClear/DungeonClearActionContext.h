@@ -29,6 +29,7 @@ public:
         creators["dungeon clear clear stalled"] = &DungeonClearActionContext::clear_stalled;
         creators["dungeon clear follow tank"] = &DungeonClearActionContext::follow_tank;
         creators["dungeon clear disable on death"] = &DungeonClearActionContext::disable_on_death;
+        creators["dungeon clear rez party"] = &DungeonClearActionContext::rez_party;
         creators["dungeon clear disable on cleared"] = &DungeonClearActionContext::disable_on_cleared;
         creators["dungeon clear break stuck combat"] = &DungeonClearActionContext::break_stuck_combat;
         creators["dungeon clear door blocked"] = &DungeonClearActionContext::door_blocked;
@@ -87,6 +88,7 @@ private:
     static Action* clear_stalled(PlayerbotAI* ai) { return new DungeonClearClearStalledAction(ai); }
     static Action* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankAction(ai); }
     static Action* disable_on_death(PlayerbotAI* ai) { return new DungeonClearDisableOnDeathAction(ai); }
+    static Action* rez_party(PlayerbotAI* ai) { return new DungeonClearRezPartyAction(ai); }
     static Action* disable_on_cleared(PlayerbotAI* ai) { return new DungeonClearDisableOnClearedAction(ai); }
     static Action* break_stuck_combat(PlayerbotAI* ai) { return new DungeonClearBreakStuckCombatAction(ai); }
     static Action* door_blocked(PlayerbotAI* ai) { return new DungeonClearDoorBlockedAction(ai); }

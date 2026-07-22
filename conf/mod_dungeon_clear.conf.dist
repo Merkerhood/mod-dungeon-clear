@@ -223,6 +223,40 @@ DungeonClear.SmartRestDpsManaPct = 10
 DungeonClear.SmartRestHealerManaPct = 40
 
 #
+#    DungeonClear.PostCombatRez
+#        Recover from deaths instead of ending the run. When on, a party member
+#        dying no longer disables dungeon clear the moment combat drops: if a
+#        living member's class can resurrect (Priest, Paladin, Shaman, Druid),
+#        the run holds in place, a bot rezzer walks to the corpse and casts
+#        (dead bots auto-accept; a dead player gets the normal accept dialog),
+#        and the run resumes once nobody is dead — the freshly-raised member's
+#        low health/mana then holds the tank at the normal between-pulls rest
+#        floors until they recover. If only YOU can rez, the party holds and
+#        asks you to. The run still disables on a full wipe, when no living
+#        member can resurrect, or when recovery exceeds the timeout below.
+#        Overridable per run from the companion addon.
+#            0 = off (any death disables the run immediately, as before)
+#            1 = on
+#
+#        Default: 1
+#
+
+DungeonClear.PostCombatRez = 1
+
+#
+#    DungeonClear.PostCombatRezTimeoutSecs
+#        Post-combat rez only. Seconds of OUT-OF-COMBAT time the recovery may
+#        take before the run gives up and disables (combat freezes the clock —
+#        an add pull mid-recovery never burns the budget). Generous by default:
+#        the budget must also cover the rezzer drinking back enough mana to
+#        afford the cast, and a prompted human finding the corpse.
+#
+#        Default: 90
+#
+
+DungeonClear.PostCombatRezTimeoutSecs = 90
+
+#
 #    DungeonClear.WaitAtBoss
 #        Auto-pause the run right before every boss pull and wait for you to
 #        resume (the addon's Pause/Resume button, or `dc pause`). The pause

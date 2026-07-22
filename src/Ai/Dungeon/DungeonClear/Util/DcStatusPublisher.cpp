@@ -56,6 +56,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -286,6 +287,16 @@ std::string DcStatusPublisher::BuildStatusPayload(PlayerbotAI* botAI)
         {
             stateStr = "door_blocked";
             // The stall reason already rides in its own field; leave detail empty.
+        }
+        // Post-combat rez recovery: a corpse is being handled (or waiting on
+        // the player). Reported ahead of loot/rest — the run is parked for the
+        // recovery, whatever else is also pending. Read-only (DescribeWait
+        // never touches the recovery clock).
+        else if (DcRezRecovery::IsPending(bot))
+        {
+            stateStr = "resting";
+            std::string const who = DcRezRecovery::DescribeWait(bot);
+            detail = who.empty() ? "Recovering a fallen party member." : who;
         }
         else if (AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot) ||
                  DcPartyState::IsAnyPartyMemberLooting(bot))
