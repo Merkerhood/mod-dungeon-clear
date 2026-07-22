@@ -87,6 +87,19 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "SmartRestDpsManaPct",    DcType::UInt,  10,   0, 100,  true  },
     { "SmartRestHealerManaPct", DcType::UInt,  40,   0, 100,  true  },
 
+    // Post-combat party resurrection. With PostCombatRez on, a death no longer
+    // ends the run outright: when combat drops with dead member(s) and a living
+    // member's class can resurrect (Priest/Paladin/Shaman/Druid), the run HOLDS
+    // — an elected bot rezzer walks to the corpse and casts (a human-only
+    // rezzer is prompted instead) — and resumes once nobody is dead. The run
+    // still disables on a full wipe, when no living member can rez, or when the
+    // out-of-combat recovery clock exceeds PostCombatRezTimeoutSecs (combat
+    // time never burns the budget). The timeout is generous by design: it must
+    // cover the rezzer drinking back the mana to afford the cast. OFF restores
+    // the classic disable-on-first-death. See Util/DcRezDecision.h.
+    { "PostCombatRez",            DcType::Bool,   1,  0,   1,  true  },
+    { "PostCombatRezTimeoutSecs", DcType::UInt,  90, 10, 600,  true  },
+
     // Wait at Boss: auto-pause the run at the moment the tank would commit a
     // boss pull and hold for the human's resume (the addon Pause/Resume button
     // or `dc pause`), so the party can prepare instead of the tank rushing in

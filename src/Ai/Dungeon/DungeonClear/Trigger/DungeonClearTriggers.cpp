@@ -29,6 +29,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -481,24 +482,59 @@ bool DungeonClearPartyDiedTrigger::IsActive()
     if (!bot)
         return false;
 
-    if (bot->isDead())
-        return true;
+    bool anyDead = bot->isDead();
+    if (!anyDead)
+    {
+        Group* group = bot->GetGroup();
+        if (!group)
+            return false;
 
-    Group* group = bot->GetGroup();
-    if (!group)
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member == bot)
+                continue;
+            if (member->GetMapId() != bot->GetMapId())
+                continue;
+            if (member->isDead())
+            {
+                anyDead = true;
+                break;
+            }
+        }
+    }
+    if (!anyDead)
         return false;
 
-    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
-    {
-        Player* member = ref->GetSource();
-        if (!member || member == bot)
-            continue;
-        if (member->GetMapId() != bot->GetMapId())
-            continue;
-        if (member->isDead())
-            return true;
-    }
-    return false;
+    // Post-combat rez: a death only fires the disable bailout when recovery is
+    // NOT viable — full wipe, no living rez class, recovery timed out, or the
+    // feature switched off (Evaluate returns Disable/Disabled then, preserving
+    // the classic behavior). While viable, the verdict is Hold: this trigger
+    // stays silent, the rez-party rung drives the recovery, and the between-
+    // pulls / event-rest IsPending gates keep the run parked over the corpse.
+    // Evaluate also maintains the recovery clock + announcements as its side
+    // effect — this per-tick call is one of the clock's two update sites (the
+    // rez trigger on every bot is the other, covering a dead leader).
+    return DcRezRecovery::Evaluate(bot).verdict.outcome ==
+           DcRezDecision::Outcome::Disable;
+}
+
+bool DungeonClearRezPartyTrigger::IsActive()
+{
+    // Runs on EVERY bot with the DC strategy — the elected rezzer may be a
+    // follower, or the leader itself (a prot paladin raising its healer). No
+    // IsEnabled leader gate: Evaluate resolves the run owner dead-tolerantly
+    // (the leader may BE the corpse) and returns None for off/paused runs.
+    if (!bot || bot->isDead() || bot->IsInCombat())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    DcRezRecovery::Plan const plan = DcRezRecovery::Evaluate(bot);
+    return plan.verdict.outcome == DcRezDecision::Outcome::Hold &&
+           plan.verdict.reason == DcRezDecision::Reason::Recovering &&
+           plan.rezzer == bot->GetGUID();
 }
 
 bool DungeonClearAllClearedTrigger::IsActive()

@@ -55,6 +55,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
@@ -104,7 +105,12 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
         if (member->GetMapId() != bot->GetMapId())
             continue;
         if (member->isDead())
-            continue;  // Dead members handled by the party-died trigger.
+            continue;  // Dead members hold the run via DcRezRecovery::IsPending
+                       // (or, with PostCombatRez off / recovery unviable, the
+                       // party-died bailout) — never via these readiness floors.
+                       // The moment one is rezzed they re-enter this walk as a
+                       // living-but-low member and the floors hold the tank
+                       // while they eat/drink back up.
 
         if (member != bot)
         {
@@ -174,6 +180,13 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
 bool DcPartyState::IsBetweenPullsReady(Player* bot, AiObjectContext* context, bool requireNoLoot)
 {
     if (!bot || !context)
+        return false;
+    // Post-combat rez recovery: a dead same-map member holds the tank outright.
+    // Placed AHEAD of the Smart Rest branch split so it binds in BOTH branches
+    // (Smart Rest is off by default) — with the party-died bailout relaxed,
+    // this is what keeps advance/at-boss/pull parked over a corpse while the
+    // elected rezzer works. See DcRezRecovery.
+    if (DcRezRecovery::IsPending(bot))
         return false;
     if (DcSmartRest::Enabled(bot))
     {
@@ -253,7 +266,8 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
         if (member->GetMapId() != bot->GetMapId())
             continue;
         if (member->isDead())
-            continue;  // Dead members handled by the party-died trigger.
+            continue;  // Dead members are the rez recovery's to report, not a
+                       // readiness reason (mirrors IsPartyReady's skip).
 
         // Mirror IsPartyReady's checks, but record the limiting reason. Order
         // matters only for which single reason we surface first; distance reads

@@ -229,4 +229,14 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 # Data/Events/SethekkHallsEvents.cpp
 #   (map 556: force-summon & kill Anzu — send-event 14797 via ObjectiveHook 7 —
 #    + Objective-anchor roster patch. Bonus boss, works on normal difficulty.)
+# Util/DcRezDecision.h + Util/DcRezRecovery.{h,cpp}
+#   (post-combat party resurrection: a death HOLDS the run while a living
+#    Priest/Paladin/Shaman/Druid can recover it instead of disabling on the
+#    spot. Pure header-only election/timeout kernel Decide(Inputs, members) ->
+#    Result, edge-pinned by t/TestPostCombatRez; DcRezRecovery is the engine
+#    glue — dead-tolerant run-owner resolution, same-map snapshot KEEPING dead
+#    members, the DcRunState rezPendingSinceMs/rezAnnounceMs clocks, and the
+#    IsPending hold-gate read used by the between-pulls + event-rest gates.
+#    Paired with the relaxed party-died trigger and the all-bots
+#    DungeonClearRezParty{Trigger,Action} rung at DcRel::RezParty = 31.5.)
 # (this comment bumps mtime to force CMake re-glob on next build)

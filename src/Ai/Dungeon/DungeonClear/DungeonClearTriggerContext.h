@@ -24,6 +24,7 @@ public:
         creators["dungeon clear room trash"] = &DungeonClearTriggerContext::room_trash;
         creators["dungeon clear room preclear hold"] = &DungeonClearTriggerContext::room_preclear_hold;
         creators["dungeon clear party died"] = &DungeonClearTriggerContext::party_died;
+        creators["dungeon clear rez party"] = &DungeonClearTriggerContext::rez_party;
         creators["dungeon clear all cleared"] = &DungeonClearTriggerContext::all_cleared;
         creators["dungeon clear stalled"] = &DungeonClearTriggerContext::stalled;
         creators["dungeon clear follow tank"] = &DungeonClearTriggerContext::follow_tank;
@@ -72,6 +73,7 @@ private:
     static Trigger* room_trash(PlayerbotAI* ai) { return new DungeonClearRoomTrashTrigger(ai); }
     static Trigger* room_preclear_hold(PlayerbotAI* ai) { return new DungeonClearRoomPreClearHoldTrigger(ai); }
     static Trigger* party_died(PlayerbotAI* ai) { return new DungeonClearPartyDiedTrigger(ai); }
+    static Trigger* rez_party(PlayerbotAI* ai) { return new DungeonClearRezPartyTrigger(ai); }
     static Trigger* all_cleared(PlayerbotAI* ai) { return new DungeonClearAllClearedTrigger(ai); }
     static Trigger* stalled(PlayerbotAI* ai) { return new DungeonClearStalledTrigger(ai); }
     static Trigger* follow_tank(PlayerbotAI* ai) { return new DungeonClearFollowTankTrigger(ai); }

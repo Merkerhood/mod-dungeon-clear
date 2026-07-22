@@ -21,6 +21,17 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear all cleared",
         { NextAction("dungeon clear disable on cleared", DcRel::AllCleared) }));
 
+    // Post-combat rez driver. Registered for ALL bots (the elected rezzer may
+    // be a follower or the leader itself — a prot paladin raising its healer);
+    // the trigger fires only on the one deterministically-elected rezzer.
+    // Relevance 31.5 outranks the leader's event/boss drivers (31/30) and every
+    // follower rung (<= 29) so the rezzer walks to the corpse instead of
+    // following/holding/pulling; the between-pulls + event-rest IsPending gates
+    // (DcRezRecovery) hold everyone else. See DungeonClearRezPartyTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear rez party",
+        { NextAction("dungeon clear rez party", DcRel::RezParty) }));
+
     // Advanced pull (LOS pull-to-camp). Sits ABOVE the engage triggers so, when
     // pull mode is on, the tank runs the pull-to-camp maneuver instead of the
     // normal walk-in — but it is trash-only (the pull-target scan vetoes dungeon

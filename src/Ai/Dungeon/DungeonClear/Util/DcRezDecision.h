@@ -1,0 +1,190 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#ifndef _PLAYERBOT_DCREZDECISION_H
+#define _PLAYERBOT_DCREZDECISION_H
+
+#include <cstdint>
+#include <vector>
+
+// Pure decision kernel for post-combat party resurrection. Historically the
+// FIRST death of any party member ended the run: the party-died trigger fired
+// the disable-on-death bailout the moment combat dropped. That throws away runs
+// a Priest/Paladin/Shaman/Druid in the party could trivially recover — the
+// module even preserves rez-able corpses (StayDeadAction / PreventBotRelease)
+// naming a party rez as the intended wake path, but nothing ever performed it.
+//
+// This kernel answers, from a plain snapshot of the same-map party: should the
+// run HOLD for a resurrection (and if so, who rezzes whom), or DISABLE because
+// recovery is not viable (full wipe, no living rez class, out-of-combat
+// recovery clock expired)?
+//
+// Election is deterministic from group order so every bot computes the same
+// answer independently (no cross-bot negotiation, no stored rezzer that can go
+// stale — a dead rezzer simply drops out of the next evaluation and the next
+// candidate is elected):
+//   rezzer: first living rez-class BOT, healers before non-healers. If only
+//           non-bot (human) rezzers are alive -> WaitingOnHuman.
+//   target: dead healer -> dead tank -> group order (recover the run's spine
+//           first).
+//
+// The recovery clock is OWNED BY THE GLUE (DcRezRecovery stamps/clears
+// DcRunState::rezPendingSinceMs); the kernel only compares. partyInCombat
+// freezes the timeout so combat time never burns the recovery budget (a
+// mid-recovery add pull must not expire the clock).
+//
+// Extracted engine-free so it is unit-testable in isolation, mirroring
+// DcSmartRestDecision / DecidePull. Header-only; nothing here touches a
+// Player/Unit/context, so no game headers are needed.
+
+namespace DcRezDecision
+{
+    // One same-map group member, snapshotted by the glue (which, unlike the
+    // Smart Rest snapshot, KEEPS dead members — they are the whole point).
+    struct Member
+    {
+        bool isDead = false;
+        bool canRezClass = false;  // Priest / Paladin / Shaman / Druid
+        bool isHealerRole = false; // PlayerbotAI::IsHeal — healers rez first
+        bool isTankRole = false;   // PlayerbotAI::IsTank — target priority
+        bool isBot = false;        // has a PlayerbotAI to drive (humans don't)
+    };
+
+    struct Inputs
+    {
+        bool          enabled = true;         // DungeonClear.PostCombatRez
+        std::uint32_t nowMs = 0;
+        std::uint32_t pendingSinceMs = 0;     // recovery clock; 0 = not running
+        std::uint32_t timeoutMs = 90000;      // PostCombatRezTimeoutSecs * 1000
+        bool          partyInCombat = false;  // freezes the timeout
+    };
+
+    enum class Outcome
+    {
+        None,     // no deaths (or the feature is disabled — the glue converts)
+        Hold,     // suppress the bailout; recovery is in progress
+        Disable   // recovery not viable — run the classic disable funnel
+    };
+
+    enum class Reason
+    {
+        NoDeaths,
+        Disabled,        // feature off — kernel stands down (glue decides)
+        Recovering,      // a bot rezzer is elected and will act
+        WaitingOnHuman,  // only a human can rez — hold and prompt
+        Wipe,            // everyone on the map is dead
+        NoRezzer,        // no living member's class can rez
+        TimedOut         // out-of-combat recovery clock expired
+    };
+
+    struct Result
+    {
+        Outcome outcome = Outcome::None;
+        Reason  reason  = Reason::NoDeaths;
+        int     rezzerIdx = -1;  // elected rezzer (the human for WaitingOnHuman)
+        int     targetIdx = -1;  // dead member to raise first
+    };
+
+    // Target priority: dead healer -> dead tank -> group order. The healer
+    // back up first restores the party's ability to survive the next mistake;
+    // the tank next restores the run's driver.
+    inline int PickTarget(std::vector<Member> const& members)
+    {
+        int firstDead = -1, deadTank = -1;
+        for (std::size_t i = 0; i < members.size(); ++i)
+        {
+            if (!members[i].isDead)
+                continue;
+            if (members[i].isHealerRole)
+                return static_cast<int>(i);
+            if (deadTank < 0 && members[i].isTankRole)
+                deadTank = static_cast<int>(i);
+            if (firstDead < 0)
+                firstDead = static_cast<int>(i);
+        }
+        return deadTank >= 0 ? deadTank : firstDead;
+    }
+
+    // The verdict. Empty roster / no deaths -> None. See the header comment
+    // for the election and timeout rules.
+    inline Result Decide(Inputs const& in, std::vector<Member> const& members)
+    {
+        Result r;
+
+        bool anyDead = false, anyAlive = false;
+        for (Member const& m : members)
+        {
+            anyDead  = anyDead  || m.isDead;
+            anyAlive = anyAlive || !m.isDead;
+        }
+        if (!anyDead)
+            return r;  // None / NoDeaths
+
+        if (!in.enabled)
+        {
+            // Feature off: the kernel stands down entirely. The glue converts
+            // this into the classic immediate disable.
+            r.reason = Reason::Disabled;
+            return r;
+        }
+
+        if (!anyAlive)
+        {
+            // Full wipe. A dead self-res candidate (soulstone/reincarnation)
+            // deliberately does not count in v1.
+            r.outcome = Outcome::Disable;
+            r.reason = Reason::Wipe;
+            return r;
+        }
+
+        // Election: first living rez-class bot, healers before non-healers;
+        // remember the first living human rezzer for the WaitingOnHuman path.
+        int botHealer = -1, botAny = -1, humanAny = -1;
+        for (std::size_t i = 0; i < members.size(); ++i)
+        {
+            Member const& m = members[i];
+            if (m.isDead || !m.canRezClass)
+                continue;
+            if (m.isBot)
+            {
+                if (m.isHealerRole && botHealer < 0)
+                    botHealer = static_cast<int>(i);
+                if (botAny < 0)
+                    botAny = static_cast<int>(i);
+            }
+            else if (humanAny < 0)
+                humanAny = static_cast<int>(i);
+        }
+
+        int const botRezzer = botHealer >= 0 ? botHealer : botAny;
+        if (botRezzer < 0 && humanAny < 0)
+        {
+            r.outcome = Outcome::Disable;
+            r.reason = Reason::NoRezzer;
+            return r;
+        }
+
+        r.targetIdx = PickTarget(members);
+        r.rezzerIdx = botRezzer >= 0 ? botRezzer : humanAny;
+
+        // Timeout: only while the glue's out-of-combat clock is running.
+        // Combat freezes it (the glue additionally clears the stamp, so a
+        // fight resets the budget rather than expiring it early — the safe
+        // direction).
+        if (!in.partyInCombat && in.pendingSinceMs != 0 && in.timeoutMs != 0 &&
+            in.nowMs - in.pendingSinceMs >= in.timeoutMs)
+        {
+            r.outcome = Outcome::Disable;
+            r.reason = Reason::TimedOut;
+            return r;
+        }
+
+        r.outcome = Outcome::Hold;
+        r.reason = botRezzer >= 0 ? Reason::Recovering : Reason::WaitingOnHuman;
+        return r;
+    }
+}
+
+#endif  // _PLAYERBOT_DCREZDECISION_H

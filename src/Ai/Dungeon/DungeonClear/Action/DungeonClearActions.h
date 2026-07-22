@@ -373,6 +373,29 @@ public:
     bool Execute(Event event) override;
 };
 
+// ALL bots, non-combat — paired with DungeonClearRezPartyTrigger (which fires
+// only on the elected rezzer). Walks the rezzer within cast range + line of
+// sight of the first recoverable corpse (target priority: healer > tank >
+// group order) with the module's standard no-force pathing, then casts the
+// class resurrection via DoSpecificAction ("resurrection" / "redemption" /
+// "ancestral spirit" / "revive"). Returns false while the cast is not yet
+// possible (out of mana, target vanished) so the lower rungs — the drink/eat
+// rung at 26.5 in particular — get the tick and the rezzer can afford the
+// cast; the recovery timeout in DcRezRecovery backstops a rezzer that never
+// manages it. The stock class-strategy pairing ("party member dead" -> class
+// rez at rel 40) acts as an independent backup; both converge safely because
+// the stock "party member to resurrect" value excludes targets with a pending
+// rez request or an in-flight rez cast.
+class DungeonClearRezPartyAction : public DcMovementAction
+{
+public:
+    DungeonClearRezPartyAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear rez party")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Drives a travel OBJECTIVE (DungeonAnchorKind::Objective from
 // BossRosterRegistry) once the tank has reached it (DungeonClearAtObjectiveTrigger
 // fired). Runs the objective's declarative event (DungeonEventRegistry) or its

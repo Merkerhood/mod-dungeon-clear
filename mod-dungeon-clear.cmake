@@ -9,6 +9,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestHealReposition.cpp"
             "${MOD_PATH}/t/TestCombatRegroup.cpp"
             "${MOD_PATH}/t/TestSmartRest.cpp"
+            "${MOD_PATH}/t/TestPostCombatRez.cpp"
             "${MOD_PATH}/t/TestWaitAtBoss.cpp"
             "${MOD_PATH}/t/TestDungeonClearUtil.cpp"
             "${MOD_PATH}/t/TestDungeonClearApproach.cpp"

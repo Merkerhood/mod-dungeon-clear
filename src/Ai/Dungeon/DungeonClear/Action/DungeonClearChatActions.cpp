@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonWingRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -255,7 +256,10 @@ bool DcOnAction::Execute(Event event)
         return false;
     }
 
-    if (AnyPartyMemberDead(bot))
+    // A corpse only refuses enabling when the post-combat rez flow can't
+    // recover it (feature off, or no living rez class) — otherwise the run
+    // starts and the recovery immediately holds it while the rez happens.
+    if (AnyPartyMemberDead(bot) && !DcRezRecovery::CanRecover(bot))
     {
         DcRefuse(botAI, bot, FirstDeadName(bot) + " is dead — rez and try again.");
         return false;
@@ -1105,8 +1109,9 @@ bool DcPauseAction::Execute(Event event)
     }
 
     // Resume on the same boss. Refuse if anyone is dead (mirrors dc on) so we
-    // don't unpause straight into a wipe.
-    if (AnyPartyMemberDead(bot))
+    // don't unpause straight into a wipe — unless the post-combat rez flow can
+    // recover them, in which case resuming hands the corpse to the recovery.
+    if (AnyPartyMemberDead(bot) && !DcRezRecovery::CanRecover(bot))
     {
         DcRefuse(botAI, bot, FirstDeadName(bot) + " is dead — rez and try again.");
         return false;
@@ -1134,8 +1139,9 @@ bool DcResumeOnDoorOpenedAction::Execute(Event event)
 
     // Don't unpause straight into a wipe (mirrors `dc on` / the manual resume).
     // The trigger keeps firing while the door stays open, so this retries on its
-    // own once everyone is back up.
-    if (AnyPartyMemberDead(bot))
+    // own once everyone is back up — or resumes at once when the post-combat rez
+    // flow can recover the corpse (the resumed run immediately holds for it).
+    if (AnyPartyMemberDead(bot) && !DcRezRecovery::CanRecover(bot))
         return false;
 
     ResetForResume(context);

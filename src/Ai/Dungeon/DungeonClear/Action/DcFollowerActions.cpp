@@ -50,6 +50,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -1289,4 +1290,75 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
            moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
            /*normal_only*/ false, /*exact_waypoint*/ false, prio);
     return true;
+}
+
+namespace
+{
+    // The stock playerbots out-of-combat rez action per class (each subclasses
+    // ResurrectPartyMemberAction and targets "party member to resurrect").
+    // Druid battle-rez ("rebirth") is deliberately out of scope for v1 — this
+    // rung only runs out of combat.
+    char const* RezActionNameFor(uint8 playerClass)
+    {
+        switch (playerClass)
+        {
+            case CLASS_PRIEST:  return "resurrection";
+            case CLASS_PALADIN: return "redemption";
+            case CLASS_SHAMAN:  return "ancestral spirit";
+            case CLASS_DRUID:   return "revive";
+            default:            return nullptr;
+        }
+    }
+
+    // Comfortably inside the 30yd rez spell range, so a corpse a step beyond
+    // the exact edge (or a snap on approach) never leaves the cast flapping
+    // in and out of range.
+    constexpr float DC_REZ_CAST_RANGE = 20.0f;
+}
+
+bool DungeonClearRezPartyAction::Execute(Event /*event*/)
+{
+    // Re-derive everything (the trigger's verdict is deterministic within the
+    // tick): confirm this bot is still the elected rezzer and resolve the
+    // target member kernel-index -> GUID -> Player at execution time.
+    DcRezRecovery::Plan const plan = DcRezRecovery::Evaluate(bot);
+    if (plan.verdict.outcome != DcRezDecision::Outcome::Hold ||
+        plan.verdict.reason != DcRezDecision::Reason::Recovering ||
+        plan.rezzer != bot->GetGUID())
+        return false;
+
+    char const* rezAction = RezActionNameFor(bot->getClass());
+    if (!rezAction)
+        return false;  // election guarantees a rez class; belt-and-braces
+
+    Player* target = ObjectAccessor::FindPlayer(plan.target);
+    if (!target || !target->isDead() || target->GetMapId() != bot->GetMapId())
+        return false;  // vanished between trigger and action — re-elect next tick
+
+    // Beyond cast range (or no line of sight): close on the body. Standard
+    // module pathing — never forced-destination — at NORMAL priority (out of
+    // combat by the trigger's gate; nothing to plow through).
+    float const dist = bot->GetExactDist(target);
+    if (dist > DC_REZ_CAST_RANGE || !bot->IsWithinLOSInMap(target))
+    {
+        DC_PULL_TRACE("[DC:{}] rez party: approaching {}'s body ({:.1f}yd)",
+                      bot->GetName(), target->GetName(), dist);
+        return DcMoveTo(target->GetMapId(), target->GetPositionX(),
+                        target->GetPositionY(), target->GetPositionZ(),
+                        /*idle*/ false, /*react*/ false, /*normal_only*/ false,
+                        /*exact_waypoint*/ false,
+                        MovementPriority::MOVEMENT_NORMAL);
+    }
+
+    // In range: settle (a cast can't start mid-glide), then fire the stock
+    // class rez through DoSpecificAction. A false return (out of mana, target
+    // acquired an in-flight rez from the stock backup pairing) yields the tick
+    // so the lower rungs — drink/eat at 26.5 — run; the recovery timeout
+    // backstops a rezzer that never affords the cast.
+    DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+    bool const cast = botAI->DoSpecificAction(rezAction, Event(), /*silent*/ true);
+    DC_PULL_TRACE("[DC:{}] rez party: cast '{}' on {} -> {}",
+                  bot->GetName(), rezAction, target->GetName(),
+                  cast ? "started" : "not possible yet");
+    return cast;
 }

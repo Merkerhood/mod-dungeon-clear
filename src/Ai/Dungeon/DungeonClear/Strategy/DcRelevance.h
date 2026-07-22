@@ -47,6 +47,18 @@ namespace DcRel
     inline constexpr float HakkarFlame      = 35.5f; // ST Hakkar: douse (tie-broken above Pull)
     inline constexpr float Pull             = 35.0f; // advanced/dynamic pull-to-camp maneuver
     inline constexpr float HakkarLootBlood  = 34.0f; // ST Hakkar: grab blood (below flame)
+    // Post-combat rez driver. Runs on ALL bots (the elected rezzer may be a
+    // follower OR the leader — a prot paladin raising its healer), so it must
+    // outrank BOTH ladders it can land on: on the leader, EventDue (31) and
+    // AtBoss/AtObjective (30) — recover the party before running an event gate
+    // or pulling the next boss; on a follower, every follower rung (assist 29 /
+    // hold-at-camp 28 / follow-tank 25). 31.5 (not the plan's proposed 31,
+    // which EventDue already occupies with no role/engine partition — both are
+    // leader-armable on the same tick). Kept BELOW Pull (35): the pull trigger
+    // gates on the between-pulls readiness, which the rez IsPending hold makes
+    // false, so Pull is inert during a recovery anyway; and below the Hakkar
+    // band (34-36, map-partitioned mid-encounter orchestration).
+    inline constexpr float RezParty         = 31.5f; // elected rezzer: raise the corpse
     inline constexpr float EventDue         = 31.0f; // off-path conditional event gate due
     inline constexpr float AtBoss           = 30.0f; // engage the next boss
     inline constexpr float AtObjective      = 30.0f; // arrive at a travel objective (anchor-kind peer)
