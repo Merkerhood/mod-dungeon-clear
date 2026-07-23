@@ -903,6 +903,13 @@ EventDriveOutcome DungeonEventExecutor::Advance(DungeonEvent const& ev, DungeonE
 EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* context,
                                               DungeonEvent const& ev, DungeonEventProgress& prog)
 {
+    // Difficulty-gated event on the wrong difficulty: never drive it. The
+    // primary gate is upstream (a gated roster anchor / the Conditional
+    // difficulty overload), so reaching here means an authoring slip — skip the
+    // event so the clear advances rather than stalling on inert content.
+    if (bot && bot->GetMap() && !DcGateMatches(ev.gate, bot->GetMap()->GetDifficulty()))
+        return EventDriveOutcome::Skipped;
+
     uint32 const now = getMSTime();
     uint32 const instanceId = bot ? bot->GetInstanceId() : 0;
 
@@ -1008,7 +1015,10 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
     if (!bot || !context)
         return nullptr;
 
-    std::vector<DungeonEvent const*> const conditional = DungeonEventRegistry::Conditional(mapId);
+    Difficulty const difficulty =
+        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+    std::vector<DungeonEvent const*> const conditional =
+        DungeonEventRegistry::Conditional(mapId, difficulty);
     if (conditional.empty())
         return nullptr;
 
@@ -1033,7 +1043,10 @@ void DungeonEventExecutor::SweepCompletedConditionalEvents(Player* bot,
     if (!bot || !context)
         return;
 
-    std::vector<DungeonEvent const*> const conditional = DungeonEventRegistry::Conditional(mapId);
+    Difficulty const difficulty =
+        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+    std::vector<DungeonEvent const*> const conditional =
+        DungeonEventRegistry::Conditional(mapId, difficulty);
     if (conditional.empty())
         return;
 

@@ -61,7 +61,7 @@ TEST(BossRosterRegistryTest, UldamanAltarObjectivesSortBeforeArchaedas)
         Boss(4854, 6, "Grimlok", 70),
         Boss(2748, 7, "Archaedas", 70),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(70, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(70, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int grimlokIdx = -1, keeperIdx = -1, archAltarIdx = -1, archaedasIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -97,7 +97,7 @@ TEST(BossRosterRegistryTest, ZfSummitObjectiveSortsBeforeUkorz)
         Boss(7795, 0, "Hydromancer Velratha", 209),
         Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int objIdx = -1, ukorzIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -125,7 +125,7 @@ TEST(BossRosterRegistryTest, ZfGahzrillaObjectiveSortsAfterUkorz)
         Boss(7795, 0, "Hydromancer Velratha", 209),
         Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int gahzIdx = -1, ukorzIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -156,7 +156,7 @@ TEST(BossRosterRegistryTest, ZfFullClearOrder)
         Boss(7271, 4, "Witch Doctor Zum'rah", 209),
         Boss(7267, 7, "Chief Ukorz Sandscalp", 209),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(209, DUNGEON_DIFFICULTY_NORMAL, base);
 
     auto pos = [&](uint32 entry)
     {
@@ -210,7 +210,7 @@ TEST(BossRosterRegistryTest, MechanarAddsGatewatchersAheadOfCapacitus)
         Boss(19221, 1, "Nethermancer Sepethrea", 554),
         Boss(19220, 2, "Pathaleon the Calculator", 554),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(554, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(554, DUNGEON_DIFFICULTY_NORMAL, base);
 
     DungeonBossInfo const* gyro = Find(out, 19218);
     DungeonBossInfo const* iron = Find(out, 19710);
@@ -244,7 +244,7 @@ TEST(BossRosterRegistryTest, HellfireRampartsAddsFinalBoss)
         Boss(17306, 0, "Watchkeeper Gargolmar", 543),
         Boss(17308, 1, "Omor the Unscarred", 543),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(543, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(543, DUNGEON_DIFFICULTY_NORMAL, base);
 
     DungeonBossInfo const* vaz = Find(out, 17537);
     ASSERT_NE(vaz, nullptr) << "Vazruden must be injected";
@@ -289,7 +289,7 @@ TEST(BossRosterRegistryTest, StratholmeFullClearPathOrder)
         Boss(10435, 10, "Magistrate Barthilas", 329),
         Boss(10440, 12, "Baron Rivendare", 329),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(329, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(329, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int timmyIdx = -1, malorIdx = -1, cannonIdx = -1, unforgivenIdx = -1,
         hearthIdx = -1, galfordIdx = -1, dathrohanIdx = -1, barthIdx = -1,
@@ -371,7 +371,7 @@ TEST(BossRosterRegistryTest, RingOfLawObjectiveSortsBetweenGrebmarAndLoregrain)
         Boss(9319, 2, "Houndmaster Grebmar", 230),
         Boss(9024, 4, "Pyromancer Loregrain", 230),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(230, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int grebmarIdx = -1, ringIdx = -1, loregrainIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -401,7 +401,7 @@ TEST(BossRosterRegistryTest, IronCladDoorSortsBetweenGilnidAndMrSmite)
         Boss(1763, 2, "Gilnid", 36),
         Boss(646, 3, "Mr. Smite", 36),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(36, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(36, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int gilnidIdx = -1, doorIdx = -1, smiteIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -433,7 +433,7 @@ TEST(BossRosterRegistryTest, SlavePensDropSortsBetweenMennuAndRokmar)
         Boss(17991, 1, "Rokmar the Crackler", 547),
         Boss(17942, 2, "Quagmirran", 547),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(547, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(547, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int mennuIdx = -1, dropIdx = -1, rokmarIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -468,7 +468,7 @@ TEST(BossRosterRegistryTest, UnderbogDropSortsBetweenGhazanAndSwamplord)
         Boss(17826, 2, "Swamplord Musel'ek", 546),
         Boss(17882, 3, "The Black Stalker", 546),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(546, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(546, DUNGEON_DIFFICULTY_NORMAL, base);
 
     int ghazanIdx = -1, dropIdx = -1, swamplordIdx = -1;
     for (int i = 0; i < (int)out.size(); ++i)
@@ -504,7 +504,7 @@ TEST(BossRosterRegistryTest, DireMaulEastIronbarkSortsBeforeAlzzin)
         Boss(14327, 2, "Lethtendris", 429),
         Boss(11492, 3, "Alzzin the Wildshaper", 429),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, DUNGEON_DIFFICULTY_NORMAL, base);
 
     // NOTE: Dire Maul shares ONE map-429 patch across wings, so Apply() also
     // appends the West pylon objectives (eventId 4-8). Identify Ironbark by his
@@ -548,7 +548,7 @@ TEST(BossRosterRegistryTest, DireMaulWestPylonsAndOrder)
         Boss(11488, 3, "Illyanna Ravenoak", 429),
         Boss(11489, 4, "Tendris Warpwood", 429),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(429, DUNGEON_DIFFICULTY_NORMAL, base);
 
     // All five West bosses survive with their real kill-bits untouched.
     ASSERT_NE(Find(out, 11489), nullptr);
@@ -667,7 +667,7 @@ TEST(BossRosterRegistryTest, SunkenTempleReordersPhaseGatedBosses)
         Boss(5722, 6, "Hazzas", 109),
         Boss(5709, 8, "Shade of Eranikus", 109),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(109, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(109, DUNGEON_DIFFICULTY_NORMAL, base);
 
     // The three phase/puzzle-gated bosses are gone as combat bosses.
     EXPECT_EQ(Find(out, 8580), nullptr);
@@ -727,7 +727,7 @@ TEST(BossRosterRegistryTest, UnpatchedMapReturnsBaseUnchanged)
         Boss(1001, 0, "A"),
         Boss(1002, 1, "B"),
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(34, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(34, DUNGEON_DIFFICULTY_NORMAL, base);
     ASSERT_EQ(out.size(), 2u);
     EXPECT_EQ(out[0].entry, 1001u);
     EXPECT_EQ(out[1].entry, 1002u);
@@ -746,7 +746,7 @@ TEST(BossRosterRegistryTest, SmCathedralSwapsWhitemaneForMograine)
         Boss(3977, 5, "High Inquisitor Whitemane", 189),
     };
 
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, DUNGEON_DIFFICULTY_NORMAL, base);
 
     // Whitemane removed.
     EXPECT_EQ(Find(out, 3977), nullptr);
@@ -799,7 +799,7 @@ TEST(BossRosterRegistryTest, ScholomanceMergesMardukAndVectus)
         Boss(10433, 4, "Marduk Blackpool", 289),
     };
 
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(289, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(289, DUNGEON_DIFFICULTY_NORMAL, base);
 
     // Both originals collapse: Marduk is gone entirely and Vectus's entry is
     // re-added as the single merged anchor.
@@ -834,7 +834,7 @@ TEST(BossRosterRegistryTest, ResultStaysClearOrdered)
         Boss(3977, 5, "High Inquisitor Whitemane", 189),
     };
 
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, DUNGEON_DIFFICULTY_NORMAL, base);
 
     // The result is sorted by clear ORDER key (orderOverride when set, else
     // encounterIndex), NOT by raw encounterIndex — Mograine's orderOverride 3
@@ -854,7 +854,7 @@ TEST(BossRosterRegistryTest, InheritResolvesBeforeRemoval)
     std::vector<DungeonBossInfo> base = {
         Boss(3977, 9, "High Inquisitor Whitemane", 189),  // non-default idx
     };
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(189, DUNGEON_DIFFICULTY_NORMAL, base);
 
     DungeonBossInfo const* mograine = Find(out, 3976);
     ASSERT_NE(mograine, nullptr);
@@ -881,7 +881,7 @@ TEST(BossRosterRegistryTest, WailingCavernsEscortObjectiveSortsBeforeMutanus)
         Boss(5775, 6, "Verdan the Everliving", 43),
     };
 
-    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(43, base);
+    std::vector<DungeonBossInfo> out = BossRosterRegistry::Apply(43, DUNGEON_DIFFICULTY_NORMAL, base);
 
     DungeonBossInfo const* escort = nullptr;
     DungeonBossInfo const* drop = nullptr;

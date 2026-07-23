@@ -576,8 +576,11 @@ bool DcBossesAction::Execute(Event event)
     {
         return ev->panelTeam != TEAM_NEUTRAL && ev->panelTeam != myTeam;
     };
+    // Difficulty-gated events are hidden from the other difficulty's panel.
+    Difficulty const panelDifficulty =
+        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
 
-    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
+    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId(), panelDifficulty))
     {
         if (hiddenForTeam(ev))
             continue;
@@ -771,7 +774,7 @@ bool DcBossesAction::Execute(Event event)
     // line with a synthetic entry (the latch key); status is the latch state.
     // Room-aggro pre-clears sort just before their boss (see above); every other
     // off-path event uses index 99 so it sorts last.
-    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
+    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId(), panelDifficulty))
     {
         // Faction-specific events are hidden from the other team's panel.
         if (hiddenForTeam(ev))
@@ -935,7 +938,9 @@ bool DcGoAction::Execute(Event event)
     {
         std::string query = param;
         std::transform(query.begin(), query.end(), query.begin(), ::tolower);
-        for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId()))
+        Difficulty const goDifficulty =
+            bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+        for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId(), goDifficulty))
         {
             bool keyMatch = isNumeric &&
                 std::stoul(param) == DungeonEventExecutor::ConditionalLatchKey(ev->id);
