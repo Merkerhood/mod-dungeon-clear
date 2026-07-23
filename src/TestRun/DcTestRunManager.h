@@ -56,14 +56,17 @@ public:
 
     // Validate + launch a run. On success sets *msg to the start confirmation
     // and returns true; on failure sets *msg to the reason and returns false.
-    // Rejections: unknown dungeon, no playerbot manager, concurrency cap hit,
-    // MaxAddedBots pre-check, or no free pool character for a comp class.
+    // Rejections: unknown dungeon, heroic on a row without a heroic mode, no
+    // playerbot manager, concurrency cap hit, MaxAddedBots pre-check, or no
+    // free pool character for a comp class.
     // seed 0 rolls a random comp; a nonzero seed reproduces a specific comp.
+    // heroic runs the instance at DUNGEON_DIFFICULTY_HEROIC with the row's
+    // heroicLevel as the default bot level (level override still wins).
     // planId ties the run to a `.dc test plan` campaign ("" = ad-hoc); errOut /
     // runIdOut are optional feedback for the plan scheduler.
     bool Start(Player* gm, std::string const& dungeonToken, uint32 levelOverride, uint32 seed,
-               std::string* msg, std::string const& planId = "", StartErr* errOut = nullptr,
-               std::string* runIdOut = nullptr);
+               bool heroic, std::string* msg, std::string const& planId = "",
+               StartErr* errOut = nullptr, std::string* runIdOut = nullptr);
 
     // Stop the run(s) the selector resolves to (see DcTestRunSelect). Bare
     // selector = the single active run. False (with an explanatory *msg) on

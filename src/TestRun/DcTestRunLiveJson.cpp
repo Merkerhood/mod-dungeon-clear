@@ -44,6 +44,7 @@ namespace DcTestRunLive
               << ",\"failed\":" << plan.failed
               << ",\"active\":" << plan.activeNow
               << ",\"concurrent\":" << plan.concurrent
+              << ",\"heroic\":" << (plan.heroic ? "true" : "false")
               << ",\"state\":\"" << EscapeJson(plan.state) << '"'
               << ",\"elapsedS\":" << plan.elapsedS << '}';
         }
@@ -59,6 +60,7 @@ namespace DcTestRunLive
               << ",\"dungeonName\":\"" << EscapeJson(run.dungeonName) << '"'
               << ",\"stage\":\"" << EscapeJson(run.stage) << '"'
               << ",\"level\":" << run.level
+              << ",\"heroic\":" << (run.heroic ? "true" : "false")
               << ",\"elapsedS\":" << run.elapsedS
               << ",\"bossesKilled\":" << run.bossesKilled
               << ",\"bossesTotal\":" << run.bossesTotal

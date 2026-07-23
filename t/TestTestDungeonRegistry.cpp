@@ -34,6 +34,23 @@ TEST(DcTestDungeonRegistryTest, EveryRowIsPlausible)
     }
 }
 
+TEST(DcTestDungeonRegistryTest, HeroicLevelEncodesTbcOnlyScope)
+{
+    // heroicLevel is both the heroic default level AND the "heroic offered"
+    // gate. Current scope: every TBC row is exactly 70; classic rows have no
+    // heroic mode and WotLK rows are deliberately 0 until their heroic content
+    // pass lands (flip them to 80 then, and update this lint).
+    std::set<std::uint32_t> const tbcMaps =
+        {543, 542, 547, 546, 557, 558, 556, 560, 555, 545, 540, 269, 553, 554, 552, 585};
+    for (Row const& row : All())
+    {
+        if (tbcMaps.count(row.mapId))
+            EXPECT_EQ(row.heroicLevel, 70u) << row.token;
+        else
+            EXPECT_EQ(row.heroicLevel, 0u) << row.token;
+    }
+}
+
 TEST(DcTestDungeonRegistryTest, FindByToken)
 {
     Row const* row = Find("deadmines");

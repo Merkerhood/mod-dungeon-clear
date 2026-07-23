@@ -122,6 +122,7 @@ namespace DcTestPlanSummary
           << ",\"requested\":{\"total\":" << h.total
           << ",\"concurrent\":" << h.concurrent
           << ",\"level\":" << h.level
+          << ",\"heroic\":" << (h.heroic ? "true" : "false")
           << ",\"seedBase\":" << h.seedBase
           << "},\"startedAtMs\":" << h.startedAtMs
           << ",\"endedAtMs\":" << h.endedAtMs

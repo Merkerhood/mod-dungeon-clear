@@ -53,13 +53,15 @@ namespace DcTestPlanSummary
     // Plan identity + disposition, carried alongside the aggregated stats.
     struct Header
     {
-        std::uint32_t schema = 1;
+        // 2: added heroic
+        std::uint32_t schema = 2;
         std::string planId;
         std::string dungeon;
         std::string dungeonName;
         std::uint32_t total = 0;
         std::uint32_t concurrent = 0;
         std::uint32_t level = 0;
+        bool heroic = false;
         std::uint32_t seedBase = 0;
         std::uint64_t startedAtMs = 0;
         std::uint64_t endedAtMs = 0;

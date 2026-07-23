@@ -64,6 +64,7 @@ namespace DcTestRunLive
         std::uint32_t failed = 0;
         std::uint32_t activeNow = 0;
         std::uint32_t concurrent = 0;
+        bool heroic = false;
         std::string state;             // "running" | "backoff" | "draining"
                                        // | "waiting for test driver"
         std::uint32_t elapsedS = 0;
@@ -78,6 +79,7 @@ namespace DcTestRunLive
         std::string stage;
         std::string state;             // last publisher state token
         std::uint32_t level = 0;
+        bool heroic = false;
         std::uint32_t elapsedS = 0;
         std::uint32_t bossesKilled = 0;
         std::uint32_t bossesTotal = 0;

@@ -200,8 +200,8 @@ public:
         return nullptr;
     }
 
-    // `.dc test start <dungeon> [level=N]` — dungeon is a registry token
-    // (`.dc test list`) or a mapId.
+    // `.dc test start <dungeon> [heroic] [level=N]` — dungeon is a registry
+    // token (`.dc test list`) or a mapId.
     static bool HandleTestStart(ChatHandler* handler, Tail args)
     {
         Player* issuer = ResolveTestIssuer(handler);
@@ -211,6 +211,7 @@ public:
         std::string token;
         uint32 level = 0;
         uint32 seed = 0;  // 0 = roll a random comp; seed=N replays a specific one
+        bool heroic = false;
         std::istringstream in{std::string(args)};
         std::string word;
         while (in >> word)
@@ -219,22 +220,24 @@ public:
                 level = static_cast<uint32>(std::strtoul(word.c_str() + 6, nullptr, 10));
             else if (word.rfind("seed=", 0) == 0)
                 seed = static_cast<uint32>(std::strtoul(word.c_str() + 5, nullptr, 10));
+            else if (word == "heroic")
+                heroic = true;
             else if (token.empty())
                 token = word;
             else
             {
-                handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N] [seed=N]");
+                handler->SendSysMessage("Usage: .dc test start <dungeon> [heroic] [level=N] [seed=N]");
                 return true;
             }
         }
         if (token.empty())
         {
-            handler->SendSysMessage("Usage: .dc test start <dungeon> [level=N] [seed=N] — see .dc test list");
+            handler->SendSysMessage("Usage: .dc test start <dungeon> [heroic] [level=N] [seed=N] — see .dc test list");
             return true;
         }
 
         std::string msg;
-        DcTestRunManager::Instance().Start(issuer, token, level, seed, &msg);
+        DcTestRunManager::Instance().Start(issuer, token, level, seed, heroic, &msg);
         handler->SendSysMessage(msg);
         return true;
     }
@@ -316,11 +319,13 @@ public:
 
     static bool HandleTestList(ChatHandler* handler)
     {
-        handler->SendSysMessage("Supported test dungeons (.dc test start <token>):");
+        handler->SendSysMessage("Supported test dungeons (.dc test start <token> [heroic]):");
         for (DcTestDungeonRegistry::Row const& row : DcTestDungeonRegistry::All())
             handler->SendSysMessage(Acore::StringFormat(
-                "  {:<16} {} (map {}, level {})", row.token, row.name, row.mapId,
-                row.recommendedLevel));
+                "  {:<16} {} (map {}, level {}{})", row.token, row.name, row.mapId,
+                row.recommendedLevel,
+                row.heroicLevel ? Acore::StringFormat(", heroic {}", row.heroicLevel)
+                                : std::string()));
         return true;
     }
 };

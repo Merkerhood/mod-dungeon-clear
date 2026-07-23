@@ -50,22 +50,22 @@ namespace DcTestDungeonRegistry
             { "scholo",          "Scholomance",                   289,   196.37f,   127.05f,  134.91f, 6.090f, 60, "" },
             { "strat",           "Stratholme",                    329,  3593.15f, -3646.56f,  138.50f, 5.330f, 60, "" },
             // --- The Burning Crusade --------------------------------------
-            { "ramparts",        "Hellfire Ramparts",             543, -1355.24f,  1641.12f,   68.25f, 0.669f, 62, "" },
-            { "blood-furnace",   "The Blood Furnace",             542,    -4.00f,    14.64f,  -44.80f, 4.887f, 63, "" },
-            { "slave-pens",      "The Slave Pens",                547,   120.10f,  -131.96f,   -0.80f, 1.476f, 64, "" },
-            { "underbog",        "The Underbog",                  546,     9.71f,   -16.20f,   -2.75f, 5.571f, 64, "" },
-            { "mana-tombs",      "Mana-Tombs",                    557,     0.02f,     0.95f,   -0.95f, 3.032f, 66, "" },
-            { "auchenai",        "Auchenai Crypts",               558,   -21.90f,     0.16f,   -0.12f, 0.035f, 67, "" },
-            { "sethekk",         "Sethekk Halls",                 556,    -4.68f,    -0.09f,    0.01f, 0.035f, 68, "" },
-            { "old-hillsbrad",   "Old Hillsbrad Foothills",       560,  2741.87f,  1315.25f,   14.04f, 2.960f, 68, "" },
-            { "shadow-labs",     "Shadow Labyrinth",              555,     0.49f,    -0.22f,   -1.13f, 3.159f, 70, "" },
-            { "steamvault",      "The Steamvault",                545,   -13.84f,     6.75f,   -4.26f, 0.000f, 70, "" },
-            { "shattered-halls", "The Shattered Halls",           540,   -40.87f,   -19.75f,  -13.81f, 1.111f, 70, "" },
-            { "black-morass",    "The Black Morass",              269, -1496.24f,  7034.70f,   32.56f, 1.757f, 70, "" },
-            { "botanica",        "The Botanica",                  553,    40.04f,   -28.61f,   -1.12f, 2.359f, 70, "" },
-            { "mechanar",        "The Mechanar",                  554,   -28.91f,     0.68f,   -1.81f, 0.035f, 70, "" },
-            { "arcatraz",        "The Arcatraz",                  552,    -1.23f,     0.01f,   -0.20f, 0.016f, 70, "" },
-            { "mgt",             "Magisters' Terrace",            585,     7.09f,    -0.45f,   -2.80f, 0.050f, 70, "" },
+            { "ramparts",        "Hellfire Ramparts",             543, -1355.24f,  1641.12f,   68.25f, 0.669f, 62, "", 70 },
+            { "blood-furnace",   "The Blood Furnace",             542,    -4.00f,    14.64f,  -44.80f, 4.887f, 63, "", 70 },
+            { "slave-pens",      "The Slave Pens",                547,   120.10f,  -131.96f,   -0.80f, 1.476f, 64, "", 70 },
+            { "underbog",        "The Underbog",                  546,     9.71f,   -16.20f,   -2.75f, 5.571f, 64, "", 70 },
+            { "mana-tombs",      "Mana-Tombs",                    557,     0.02f,     0.95f,   -0.95f, 3.032f, 66, "", 70 },
+            { "auchenai",        "Auchenai Crypts",               558,   -21.90f,     0.16f,   -0.12f, 0.035f, 67, "", 70 },
+            { "sethekk",         "Sethekk Halls",                 556,    -4.68f,    -0.09f,    0.01f, 0.035f, 68, "", 70 },
+            { "old-hillsbrad",   "Old Hillsbrad Foothills",       560,  2741.87f,  1315.25f,   14.04f, 2.960f, 68, "", 70 },
+            { "shadow-labs",     "Shadow Labyrinth",              555,     0.49f,    -0.22f,   -1.13f, 3.159f, 70, "", 70 },
+            { "steamvault",      "The Steamvault",                545,   -13.84f,     6.75f,   -4.26f, 0.000f, 70, "", 70 },
+            { "shattered-halls", "The Shattered Halls",           540,   -40.87f,   -19.75f,  -13.81f, 1.111f, 70, "", 70 },
+            { "black-morass",    "The Black Morass",              269, -1496.24f,  7034.70f,   32.56f, 1.757f, 70, "", 70 },
+            { "botanica",        "The Botanica",                  553,    40.04f,   -28.61f,   -1.12f, 2.359f, 70, "", 70 },
+            { "mechanar",        "The Mechanar",                  554,   -28.91f,     0.68f,   -1.81f, 0.035f, 70, "", 70 },
+            { "arcatraz",        "The Arcatraz",                  552,    -1.23f,     0.01f,   -0.20f, 0.016f, 70, "", 70 },
+            { "mgt",             "Magisters' Terrace",            585,     7.09f,    -0.45f,   -2.80f, 0.050f, 70, "", 70 },
             // --- Wrath of the Lich King -----------------------------------
             { "uk",              "Utgarde Keep",                  574,   153.79f,   -86.55f,   12.55f, 0.304f, 70, "" },
             { "nexus",           "The Nexus",                     576,   145.87f,   -10.55f,  -16.64f, 1.528f, 71, "" },
@@ -139,6 +139,7 @@ namespace DcTestDungeonRegistry
               << ",\"name\":\"" << EscapeJson(row.name) << '"'
               << ",\"mapId\":" << row.mapId
               << ",\"level\":" << row.recommendedLevel
+              << ",\"heroicLevel\":" << row.heroicLevel
               << ",\"wing\":\"" << EscapeJson(row.wing) << "\"}";
         }
         s << "]}";

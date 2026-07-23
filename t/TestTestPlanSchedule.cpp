@@ -142,7 +142,26 @@ TEST(DcTestPlanParseTest, MinimalArgLineDefaultsRest)
     EXPECT_EQ(r.spec.total, 10u);
     EXPECT_EQ(r.spec.concurrent, 0u);
     EXPECT_EQ(r.spec.level, 0u);
+    EXPECT_FALSE(r.spec.heroic);
     EXPECT_EQ(r.spec.seedBase, 0u);
+}
+
+TEST(DcTestPlanParseTest, HeroicBareWord)
+{
+    // `heroic` is a bare-word flag, position-independent, and never mistaken
+    // for the dungeon token.
+    ParseResult const r = ParseStartArgs("ramparts heroic total=10");
+    ASSERT_TRUE(r.ok) << r.err;
+    EXPECT_EQ(r.spec.dungeonToken, "ramparts");
+    EXPECT_TRUE(r.spec.heroic);
+
+    ParseResult const r2 = ParseStartArgs("heroic ramparts total=10");
+    ASSERT_TRUE(r2.ok) << r2.err;
+    EXPECT_EQ(r2.spec.dungeonToken, "ramparts");
+    EXPECT_TRUE(r2.spec.heroic);
+
+    // Still exactly one dungeon token allowed alongside the flag.
+    EXPECT_FALSE(ParseStartArgs("deadmines heroic wailing total=10").ok);
 }
 
 TEST(DcTestPlanParseTest, MissingTotalFails)

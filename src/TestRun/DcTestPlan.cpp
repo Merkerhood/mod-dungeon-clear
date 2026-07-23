@@ -29,7 +29,7 @@ namespace DcTestPlan
         {
             out.ok = false;
             out.err = why +
-                " — usage: .dc test plan start <dungeon> total=N [concurrent=N] [level=N] [seed=N]";
+                " — usage: .dc test plan start <dungeon> [heroic] total=N [concurrent=N] [level=N] [seed=N]";
             return out;
         };
 
@@ -40,6 +40,11 @@ namespace DcTestPlan
             std::size_t const eq = word.find('=');
             if (eq == std::string::npos)
             {
+                if (word == "heroic")
+                {
+                    out.spec.heroic = true;
+                    continue;
+                }
                 if (!out.spec.dungeonToken.empty())
                     return usage("unexpected '" + word + "'");
                 out.spec.dungeonToken = word;

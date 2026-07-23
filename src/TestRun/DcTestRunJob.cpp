@@ -15,6 +15,7 @@
 #include "Chat.h"
 #include "Group.h"
 #include "GroupMgr.h"
+#include "InstanceSaveMgr.h"
 #include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
@@ -155,12 +156,13 @@ Player* DcTestRunJob::FindTank() const
 }
 
 std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegistry::Row const& row,
-                                                   uint32 levelOverride, uint32 seed,
+                                                   uint32 levelOverride, uint32 seed, bool heroic,
                                                    std::unordered_set<ObjectGuid> const& reservedGuids,
                                                    std::string const& planId, std::string* err)
 {
     // Caller (DcTestRunManager::Start) has already validated the registry row
-    // and that gm has a playerbot manager.
+    // (including that heroic is only requested where heroicLevel is set) and
+    // that gm has a playerbot manager.
     std::unique_ptr<DcTestRunJob> job(new DcTestRunJob());
 
     job->_dungeonToken = row.token;
@@ -169,7 +171,9 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_y = row.y;
     job->_z = row.z;
     job->_o = row.o;
-    job->_level = levelOverride ? std::min<uint32>(levelOverride, 80u) : row.recommendedLevel;
+    job->_heroic = heroic;
+    job->_level = levelOverride ? std::min<uint32>(levelOverride, 80u)
+                                : (heroic ? row.heroicLevel : row.recommendedLevel);
     job->_gmGuid = gm->GetGUID();
 
     // seed 0 = "roll one" — pick a nonzero seed so the comp varies per run yet
@@ -190,6 +194,7 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_record.wing = row.wing;
     job->_record.mapId = row.mapId;
     job->_record.level = job->_level;
+    job->_record.heroic = heroic;
     job->_record.compSeed = seed;
     job->_record.startedAtMs = NowUnixMs();
     job->_record.pauseGraceS = job->_limits.pauseGraceMs / 1000;
@@ -284,8 +289,9 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     }
 
     LOG_INFO("playerbots.dungeonclear",
-             "TESTRUN START {} dungeon={} map={} level={} seed={} gm={}",
-             job->_record.runId, job->_record.dungeon, job->_mapId, job->_level, seed, gm->GetName());
+             "TESTRUN START {} dungeon={} map={} level={} heroic={} seed={} gm={}",
+             job->_record.runId, job->_record.dungeon, job->_mapId, job->_level,
+             heroic ? 1 : 0, seed, gm->GetName());
 
     job->EnterStage(Stage::SpawningBots);
     return job;
@@ -306,8 +312,8 @@ void DcTestRunJob::AbortSetup(std::string const& reason)
 std::string DcTestRunJob::StatusLine() const
 {
     Stage const stage = _stage.load();
-    std::string out = _record.runId + " " + _record.dungeon + " [" + StageName(stage) +
-                      "] elapsed " + std::to_string(_totalMs / 1000) + "s";
+    std::string out = _record.runId + " " + _record.dungeon + (_heroic ? " (heroic)" : "") +
+                      " [" + StageName(stage) + "] elapsed " + std::to_string(_totalMs / 1000) + "s";
     if (stage == Stage::Monitoring)
     {
         out += ", bosses " + std::to_string(_record.bossesKilled) + "/" +
@@ -328,6 +334,7 @@ DcTestRunLive::RunSnapshot DcTestRunJob::Snapshot() const
     s.dungeonName = _record.dungeonName;
     s.stage = StageName(_stage.load());
     s.level = _level;
+    s.heroic = _heroic;
     s.elapsedS = _totalMs / 1000;
     s.bossesKilled = _record.bossesKilled;
     s.bossesTotal = _record.bossesTotal;
@@ -591,7 +598,8 @@ void DcTestRunJob::TickGrouping()
                 return;
             }
         }
-        group->SetDungeonDifficulty(DUNGEON_DIFFICULTY_NORMAL);
+        group->SetDungeonDifficulty(_heroic ? DUNGEON_DIFFICULTY_HEROIC
+                                            : DUNGEON_DIFFICULTY_NORMAL);
         _tankGuid = tank->GetGUID();
         _groupFormed = true;
     }
@@ -655,6 +663,18 @@ void DcTestRunJob::TickTeleporting()
                 return;  // transient — retry next tick
             }
         }
+        // Heroic 5-man kills create PERMANENT saves (daily reset). A recycled
+        // pool bot still bound to a cleared heroic instance of this map would
+        // teleport into it and trip the stale-instance guard in TickStarting —
+        // shed any leftover heroic bind first so a fresh instance is created.
+        // (Normal 5-man saves are non-permanent and reset when the map empties,
+        // so they need no such hygiene.)
+        if (_heroic)
+            for (Slot const& slot : _slots)
+                sInstanceSaveMgr->PlayerUnbindInstance(slot.guid, _mapId,
+                                                       DUNGEON_DIFFICULTY_HEROIC,
+                                                       /*deleteFromDB*/ true);
+
         for (Slot const& slot : _slots)
             if (Player* bot = ObjectAccessor::FindPlayer(slot.guid))
                 bot->TeleportTo(_mapId, _x, _y, _z, _o);
@@ -1133,6 +1153,16 @@ void DcTestRunJob::Teardown()
 
     Player* gm = FindGm();
     LogoutBots(gm);
+
+    // Shed the permanent heroic saves the run just created so the pool bots go
+    // back clean (and the instance can reset) — the mirror of the pre-teleport
+    // unbind. Guid-keyed, so it works after the logout.
+    if (_heroic)
+        for (Slot const& slot : _slots)
+            if (slot.guid)
+                sInstanceSaveMgr->PlayerUnbindInstance(slot.guid, _mapId,
+                                                       DUNGEON_DIFFICULTY_HEROIC,
+                                                       /*deleteFromDB*/ true);
 
     _record.endedAtMs = NowUnixMs();
     _record.durationS = static_cast<uint32>((_record.endedAtMs - _record.startedAtMs) / 1000);

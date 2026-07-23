@@ -41,9 +41,9 @@ DcTestRunManager& DcTestRunManager::Instance()
 }
 
 bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
-                             uint32 levelOverride, uint32 seed, std::string* msg,
-                             std::string const& planId, StartErr* errOut,
-                             std::string* runIdOut)
+                             uint32 levelOverride, uint32 seed, bool heroic,
+                             std::string* msg, std::string const& planId,
+                             StartErr* errOut, std::string* runIdOut)
 {
     if (errOut)
         *errOut = StartErr::None;
@@ -61,6 +61,13 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
     if (!row)
         return fail(StartErr::UnknownDungeon,
                     "unknown dungeon '" + dungeonToken + "' — see .dc test list");
+
+    // heroicLevel 0 = heroic not offered: classic dungeons have no heroic mode,
+    // and WotLK rows are deliberately 0 until their heroic content pass (the
+    // registry column is the TBC-only scope gate).
+    if (heroic && row->heroicLevel == 0)
+        return fail(StartErr::UnknownDungeon,
+                    "'" + std::string(row->token) + "' has no heroic mode (TBC heroics only for now)");
 
     if (!gm || !GET_PLAYERBOT_MGR(gm))
         return fail(StartErr::NoMgr, "no playerbot manager on this account");
@@ -88,7 +95,7 @@ bool DcTestRunManager::Start(Player* gm, std::string const& dungeonToken,
     // world thread — no TOCTOU with other runs).
     std::string err;
     std::unique_ptr<DcTestRunJob> job =
-        DcTestRunJob::Create(gm, *row, levelOverride, seed, _reservedGuids, planId, &err);
+        DcTestRunJob::Create(gm, *row, levelOverride, seed, heroic, _reservedGuids, planId, &err);
     if (!job)
         return fail(StartErr::PoolExhausted, err);
 
