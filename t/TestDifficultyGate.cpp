@@ -70,15 +70,79 @@ TEST(DcDifficultyGateTest, AnyGatedPatchAppliesOnBothDifficulties)
     }
 }
 
-TEST(DcDifficultyGateTest, RegisteredPatchesDefaultToAnyGate)
+TEST(DcDifficultyGateTest, GatedPatchesRideAnAnyBasePatch)
 {
-    // Phase-1 invariant: no content has authored a difficulty-gated patch yet,
-    // so everything must carry the Any default. When Phase 4 adds the first
-    // HeroicOnly patch (Shattered Halls / Sethekk), replace this with a lint
-    // that gated patches sit alongside an Any base patch for the same map.
-    for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())
-        EXPECT_EQ(patch.gate, DcDifficultyGate::Any)
-            << "map " << patch.mapId << " registered a gated patch — update this lint";
+    // A difficulty-gated patch is a CORRECTION layered on a map's Any base
+    // patch (Apply chains them in registration order), so a gated patch with
+    // no preceding Any patch for the same map is almost certainly an authoring
+    // slip — its reorder targets (the base patch's objectives) would not exist.
+    for (std::size_t i = 0; i < BossRosterRegistry::AllPatches().size(); ++i)
+    {
+        BossRosterPatch const& patch = BossRosterRegistry::AllPatches()[i];
+        if (patch.gate == DcDifficultyGate::Any)
+            continue;
+        bool hasBase = false;
+        for (std::size_t j = 0; j < i; ++j)
+        {
+            BossRosterPatch const& earlier = BossRosterRegistry::AllPatches()[j];
+            if (earlier.mapId == patch.mapId && earlier.gate == DcDifficultyGate::Any)
+                hasBase = true;
+        }
+        EXPECT_TRUE(hasBase) << "map " << patch.mapId
+                             << " has a gated patch with no preceding Any base patch";
+    }
+}
+
+TEST(DcDifficultyGateTest, ShatteredHallsHeroicReordersHallwaySweep)
+{
+    // Heroic 540 DBC inserts Porung at bit 1 (Nethekurse 0, Porung 1,
+    // O'mrogg 2, Kargath 3). The Any patch's objectives borrow NORMAL keys;
+    // the HeroicOnly patch must re-key the stealth-hallway sweep (OBJ(3),
+    // normal key 2) to 3 so it still precedes KARGATH, not O'mrogg.
+    std::vector<DungeonBossInfo> heroicBase = {
+        GateBoss(16807, 0, "Grand Warlock Nethekurse", 540),
+        GateBoss(20923, 1, "Blood Guard Porung", 540),
+        GateBoss(16809, 2, "Warbringer O'mrogg", 540),
+        GateBoss(16808, 3, "Warchief Kargath Bladefist", 540),
+    };
+    std::vector<DungeonBossInfo> const out =
+        BossRosterRegistry::Apply(540, DUNGEON_DIFFICULTY_HEROIC, heroicBase);
+
+    auto indexOf = [&](uint32 entry) -> std::size_t
+    {
+        for (std::size_t i = 0; i < out.size(); ++i)
+            if (out[i].entry == entry)
+                return i;
+        ADD_FAILURE() << "entry " << entry << " missing from heroic roster";
+        return 0;
+    };
+
+    uint32 const objHallway = BossRosterRegistry::ObjectiveEntry(3);
+    // Hallway sweep lands between O'mrogg and Kargath...
+    EXPECT_LT(indexOf(16809), indexOf(objHallway));
+    EXPECT_LT(indexOf(objHallway), indexOf(16808));
+    // ...and the gauntlet objective still precedes Porung.
+    EXPECT_LT(indexOf(BossRosterRegistry::ObjectiveEntry(2)), indexOf(20923));
+
+    // On NORMAL (no Porung row, hallway keeps key 2) the sweep still precedes
+    // Kargath — the heroic patch must not leak into normal ordering.
+    std::vector<DungeonBossInfo> normalBase = {
+        GateBoss(16807, 0, "Grand Warlock Nethekurse", 540),
+        GateBoss(16809, 1, "Warbringer O'mrogg", 540),
+        GateBoss(16808, 2, "Warchief Kargath Bladefist", 540),
+    };
+    std::vector<DungeonBossInfo> const normalOut =
+        BossRosterRegistry::Apply(540, DUNGEON_DIFFICULTY_NORMAL, normalBase);
+    auto normalIndexOf = [&](uint32 entry) -> std::size_t
+    {
+        for (std::size_t i = 0; i < normalOut.size(); ++i)
+            if (normalOut[i].entry == entry)
+                return i;
+        ADD_FAILURE() << "entry " << entry << " missing from normal roster";
+        return 0;
+    };
+    EXPECT_LT(normalIndexOf(16809), normalIndexOf(objHallway));
+    EXPECT_LT(normalIndexOf(objHallway), normalIndexOf(16808));
 }
 
 // --- Route registry falls back to normal ----------------------------------
