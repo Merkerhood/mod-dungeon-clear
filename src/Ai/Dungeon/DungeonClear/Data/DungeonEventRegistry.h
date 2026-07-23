@@ -13,6 +13,8 @@
 #include "Common.h"
 #include "SharedDefines.h"  // TeamId
 
+#include "Ai/Dungeon/DungeonClear/Data/DcDifficultyGate.h"
+
 class Player;
 class AiObjectContext;
 
@@ -251,6 +253,13 @@ struct DungeonEvent
     uint32 orderIndex{0};    // Anchored: the objective's encounter slot (doc only)
     EventCondition condition{};  // Conditional: the per-tick activation predicate
 
+    // Difficulty gate. A HeroicOnly event never fires (and never surfaces in the
+    // panel) on a normal run, and vice versa. For an ANCHORED event the primary
+    // gate is the roster anchor that references it (gate the BossRosterPatch);
+    // this field additionally hard-stops Drive as a belt-and-suspenders, and is
+    // what the conditional-event paths filter on directly.
+    DcDifficultyGate gate{DcDifficultyGate::Any};
+
     std::vector<EventStep> steps;
 
     // Required => a Blocked/timed-out step stalls the run for the human;
@@ -324,6 +333,9 @@ public:
     EventBuilder& Optional();
     EventBuilder& Repeatable();
     EventBuilder& Persistent();
+    // Difficulty gates (see DungeonEvent::gate). Default is both difficulties.
+    EventBuilder& HeroicOnly();
+    EventBuilder& NormalOnly();
     EventBuilder& PanelBeforeBoss(uint32 bossEntry);
     // Sort this standalone event just AFTER `bossEntry` in the panel, keeping it
     // as its own numbered row (unlike PanelBeforeBoss, which folds the event into
@@ -479,9 +491,15 @@ public:
     static bool HasEvents(uint32 mapId);
 
     // Every Conditional-activation event registered for `mapId`, in table order.
-    // Empty for maps with only Anchored events. Used by the conditional-event
-    // trigger/action to find a due off-path event each tick (milestone 2).
+    // Empty for maps with only Anchored events. UNFILTERED by difficulty — an
+    // authoring/test seam like AllEvents. Runtime callers use the difficulty
+    // overload below so a heroic-only event never surfaces on a normal run.
     static std::vector<DungeonEvent const*> Conditional(uint32 mapId);
+
+    // The Conditional events whose difficulty gate matches `difficulty`. This is
+    // the runtime lookup — every live consumer (executor, panel, targeting) has
+    // the bot's map in hand and must pass its difficulty.
+    static std::vector<DungeonEvent const*> Conditional(uint32 mapId, Difficulty difficulty);
 
     // --- Room-aggro pre-clear (milestone 3) ------------------------------
 

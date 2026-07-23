@@ -234,6 +234,35 @@ TEST(DungeonEventIntegrityTest, RosterObjectiveEventIdsResolveToAnchoredEvents)
     }
 }
 
+TEST(DungeonEventIntegrityTest, DifficultyGatesNeverContradictAcrossAnchorAndEvent)
+{
+    // An anchored event is gated primarily through the roster patch that wires
+    // its objective anchor (BossRosterPatch::gate); the event's own gate is a
+    // belt-and-suspenders Drive stop. The two must never CONTRADICT — a
+    // HeroicOnly event wired by a NormalOnly patch (or vice versa) can never
+    // run: the anchor surfaces on one difficulty, the event refuses to drive
+    // there, and the run stalls (Required) or silently skips (Optional).
+    auto const contradicts = [](DcDifficultyGate a, DcDifficultyGate b)
+    {
+        return (a == DcDifficultyGate::NormalOnly && b == DcDifficultyGate::HeroicOnly) ||
+               (a == DcDifficultyGate::HeroicOnly && b == DcDifficultyGate::NormalOnly);
+    };
+
+    for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())
+    {
+        for (DungeonBossInfo const& e : patch.add)
+        {
+            if (e.kind != DungeonAnchorKind::Objective || e.eventId == 0)
+                continue;
+            if (DungeonEvent const* ev = DungeonEventRegistry::Find(patch.mapId, e.eventId))
+                EXPECT_FALSE(contradicts(patch.gate, ev->gate))
+                    << "map " << patch.mapId << " objective " << e.name
+                    << " wires event id " << e.eventId
+                    << " with a contradicting difficulty gate";
+        }
+    }
+}
+
 TEST(DungeonEventIntegrityTest, RosterObjectiveHooksAreRegistered)
 {
     for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())

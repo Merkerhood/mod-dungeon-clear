@@ -58,6 +58,18 @@ EventBuilder& EventBuilder::Persistent()
     return *this;
 }
 
+EventBuilder& EventBuilder::HeroicOnly()
+{
+    _ev.gate = DcDifficultyGate::HeroicOnly;
+    return *this;
+}
+
+EventBuilder& EventBuilder::NormalOnly()
+{
+    _ev.gate = DcDifficultyGate::NormalOnly;
+    return *this;
+}
+
 EventBuilder& EventBuilder::PanelBeforeBoss(uint32 bossEntry)
 {
     _ev.panelGatesBossEntry = bossEntry;
@@ -384,6 +396,16 @@ std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId)
     std::vector<DungeonEvent const*> out;
     for (DungeonEvent const& e : EventTable())
         if (e.mapId == mapId && e.activation == EventActivation::Conditional)
+            out.push_back(&e);
+    return out;
+}
+
+std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId, Difficulty difficulty)
+{
+    std::vector<DungeonEvent const*> out;
+    for (DungeonEvent const& e : EventTable())
+        if (e.mapId == mapId && e.activation == EventActivation::Conditional &&
+            DcGateMatches(e.gate, difficulty))
             out.push_back(&e);
     return out;
 }
