@@ -102,10 +102,25 @@ TEST(DcTestRunLiveJsonTest, PlansArrayCarriesProgressAndKeepsFileActive)
     EXPECT_NE(json.find("\"active\":true"), std::string::npos);
     EXPECT_NE(json.find("\"plans\":[{\"planId\":\"tp-9\",\"dungeon\":\"old-hillsbrad\""
                         ",\"total\":20,\"launched\":9,\"succeeded\":6,\"failed\":1"
-                        ",\"active\":2,\"concurrent\":5,\"state\":\"running\""
-                        ",\"elapsedS\":900}]"),
+                        ",\"active\":2,\"concurrent\":5,\"heroic\":false"
+                        ",\"state\":\"running\",\"elapsedS\":900}]"),
               std::string::npos);
     EXPECT_NE(json.find("\"runs\":[]"), std::string::npos);
+}
+
+TEST(DcTestRunLiveJsonTest, HeroicFlagsSerializeTrue)
+{
+    RunSnapshot s = Sample("tr-1", "ramparts");
+    s.heroic = true;
+    PlanSnapshot p;
+    p.planId = "tp-9";
+    p.dungeon = "ramparts";
+    p.heroic = true;
+
+    std::string const json = Build(1700000000ull, {s}, {p});
+    // Both the plan and the run objects carry their own heroic:true.
+    EXPECT_NE(json.find("\"concurrent\":0,\"heroic\":true"), std::string::npos);
+    EXPECT_NE(json.find("\"heroic\":true,\"elapsedS\":"), std::string::npos);
 }
 
 // ---- recent entries are escaped --------------------------------------------------

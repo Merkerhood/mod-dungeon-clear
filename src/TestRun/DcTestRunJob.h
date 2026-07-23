@@ -47,7 +47,7 @@ public:
     // + err only when a whole role can't be filled from the pool. The seed is
     // stored in the record so the comp can be replayed.
     static std::unique_ptr<DcTestRunJob> Create(Player* gm, DcTestDungeonRegistry::Row const& row,
-                                                 uint32 levelOverride, uint32 seed,
+                                                 uint32 levelOverride, uint32 seed, bool heroic,
                                                  std::unordered_set<ObjectGuid> const& reservedGuids,
                                                  std::string const& planId, std::string* err);
 
@@ -150,6 +150,7 @@ private:
     uint32 _mapId = 0;
     float _x = 0.f, _y = 0.f, _z = 0.f, _o = 0.f;
     uint32 _level = 0;
+    bool _heroic = false;  // run at DUNGEON_DIFFICULTY_HEROIC
     ObjectGuid _gmGuid;
     ObjectGuid _tankGuid;
     std::vector<Slot> _slots;

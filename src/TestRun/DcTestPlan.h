@@ -25,7 +25,8 @@ namespace DcTestPlan
         std::string dungeonToken;  // DcTestDungeonRegistry token
         std::uint32_t total = 0;       // runs to complete (failures count)
         std::uint32_t concurrent = 0;  // plan-local in-flight cap
-        std::uint32_t level = 0;       // 0 = registry recommendedLevel
+        std::uint32_t level = 0;       // 0 = registry default for the difficulty
+        bool heroic = false;           // children run at DUNGEON_DIFFICULTY_HEROIC
         std::uint32_t seedBase = 0;    // 0 = random comp per run;
                                        // N = child i replays seed N+i
     };
@@ -83,10 +84,10 @@ namespace DcTestPlan
         return c.activeNow == 0 && (stopping || c.succeeded + c.failed >= s.total);
     }
 
-    // `.dc test plan start <token> total=N [concurrent=N] [level=N] [seed=N]`.
-    // Fills token/total/concurrent/level/seedBase; planId is left empty. ok is
-    // false with a usage-shaped err on a missing token/total, a duplicate bare
-    // word, or a malformed key=value.
+    // `.dc test plan start <token> [heroic] total=N [concurrent=N] [level=N]
+    // [seed=N]`. Fills token/heroic/total/concurrent/level/seedBase; planId is
+    // left empty. ok is false with a usage-shaped err on a missing token/total,
+    // a duplicate bare word, or a malformed key=value.
     struct ParseResult
     {
         bool ok = false;

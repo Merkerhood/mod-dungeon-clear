@@ -76,6 +76,7 @@ namespace DcTestRunRecord
         s << ",\"mapId\":" << rec.mapId
           << ",\"instanceId\":" << rec.instanceId
           << ",\"level\":" << rec.level
+          << ",\"heroic\":" << (rec.heroic ? "true" : "false")
           << ",\"compSeed\":" << rec.compSeed
           << ",\"comp\":[";
         for (std::size_t i = 0; i < rec.comp.size(); ++i)

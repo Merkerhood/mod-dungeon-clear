@@ -64,6 +64,12 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
         return fail("unknown dungeon '" + spec.dungeonToken + "' — see .dc test list");
     spec.dungeonToken = row->token;  // canonicalize a mapId argument to the token
 
+    // Same gate as DcTestRunManager::Start — reject up front so the plan
+    // doesn't burn its launch budget on runs that can never start.
+    if (spec.heroic && row->heroicLevel == 0)
+        return fail("'" + std::string(row->token) +
+                    "' has no heroic mode (TBC heroics only for now)");
+
     uint32 const maxPlans = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.MaxPlans");
     if (maxPlans != 0 && _plans.size() >= maxPlans)
         return fail("max active test plans reached (" + std::to_string(maxPlans) +
@@ -95,13 +101,15 @@ bool DcTestPlanManager::Start(DcTestPlan::Spec spec, Player* gm, std::string* ms
     _plans.push_back(std::move(plan));
 
     LOG_INFO("playerbots.dungeonclear",
-             "TESTPLAN START {} dungeon={} total={} concurrent={} level={} seedBase={} gm={}",
+             "TESTPLAN START {} dungeon={} total={} concurrent={} level={} heroic={} seedBase={} gm={}",
              spec.planId, spec.dungeonToken, spec.total, spec.concurrent, spec.level,
-             spec.seedBase, gm ? gm->GetName() : "<pending test driver>");
+             spec.heroic ? 1 : 0, spec.seedBase, gm ? gm->GetName() : "<pending test driver>");
 
     if (msg)
-        *msg = Acore::StringFormat("Test plan started: {} {} total={} concurrent={}{}{}",
-                                   spec.planId, spec.dungeonToken, spec.total, spec.concurrent,
+        *msg = Acore::StringFormat("Test plan started: {} {}{} total={} concurrent={}{}{}",
+                                   spec.planId, spec.dungeonToken,
+                                   spec.heroic ? std::string(" (heroic)") : std::string(),
+                                   spec.total, spec.concurrent,
                                    spec.seedBase ? Acore::StringFormat(" seedBase={}", spec.seedBase)
                                                  : std::string(),
                                    gm ? std::string()
@@ -197,8 +205,9 @@ void DcTestPlanManager::StopAll(std::string const& reason)
 std::string DcTestPlanManager::StatusLine(Plan const& plan)
 {
     DcTestPlan::Counters const& c = plan.counters;
-    return Acore::StringFormat("{} {} {}/{} done ({} ok, {} fail), {} active{}",
+    return Acore::StringFormat("{} {}{} {}/{} done ({} ok, {} fail), {} active{}",
                                plan.spec.planId, plan.spec.dungeonToken,
+                               plan.spec.heroic ? " (heroic)" : "",
                                c.succeeded + c.failed, plan.spec.total, c.succeeded, c.failed,
                                c.activeNow,
                                plan.stopping ? ", draining"
@@ -233,6 +242,7 @@ std::vector<DcTestRunLive::PlanSnapshot> DcTestPlanManager::Snapshots() const
         s.failed = plan.counters.failed;
         s.activeNow = plan.counters.activeNow;
         s.concurrent = plan.spec.concurrent;
+        s.heroic = plan.spec.heroic;
         s.state = plan.stopping      ? "draining"
                   : plan.driverWaitSinceMs ? "waiting for test driver"
                   : plan.backoffMs     ? "backoff"
@@ -325,8 +335,8 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
     std::string runId;
     DcTestRunManager::StartErr err = DcTestRunManager::StartErr::None;
     bool const ok = DcTestRunManager::Instance().Start(gm, plan.spec.dungeonToken,
-                                                       plan.spec.level, seed, &msg,
-                                                       plan.spec.planId, &err, &runId);
+                                                       plan.spec.level, seed, plan.spec.heroic,
+                                                       &msg, plan.spec.planId, &err, &runId);
     if (ok)
     {
         ++plan.counters.launched;
@@ -403,6 +413,7 @@ void DcTestPlanManager::Finalize(Plan& plan)
     h.total = plan.spec.total;
     h.concurrent = plan.spec.concurrent;
     h.level = plan.spec.level;
+    h.heroic = plan.spec.heroic;
     h.seedBase = plan.spec.seedBase;
     h.startedAtMs = plan.startedAtMs;
     h.endedAtMs = NowUnixMs();

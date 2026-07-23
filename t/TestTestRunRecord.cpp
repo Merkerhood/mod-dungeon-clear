@@ -79,8 +79,16 @@ TEST(DcTestRunRecordTest, SerializesKnownFields)
     EXPECT_NE(line.find("\"disableReason\":\"All bosses cleared!\""), std::string::npos);
     EXPECT_NE(line.find("\"name\":\"Rhahk'Zor\""), std::string::npos);
     EXPECT_NE(line.find("\"bossesKilled\":6"), std::string::npos);
+    EXPECT_NE(line.find("\"heroic\":false"), std::string::npos);
     // One line — the sink is JSONL.
     EXPECT_EQ(line.find('\n'), std::string::npos);
+}
+
+TEST(DcTestRunRecordTest, HeroicSerializesTrue)
+{
+    Record r = SampleRecord();
+    r.heroic = true;
+    EXPECT_NE(ToJsonl(r).find("\"heroic\":true"), std::string::npos);
 }
 
 TEST(DcTestRunRecordTest, FreeTextReasonsAreEscapedInPlace)

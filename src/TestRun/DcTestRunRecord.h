@@ -55,7 +55,8 @@ namespace DcTestRunRecord
     struct Record
     {
         // 3: added diag (full failure snapshot) + stallAtEnd/phaseAtEnd
-        std::uint32_t schema = 3;
+        // 4: added heroic (run executed at DUNGEON_DIFFICULTY_HEROIC)
+        std::uint32_t schema = 4;
         std::string runId;
         std::string planId;       // owning `.dc test plan`, "" for ad-hoc runs
         std::string dungeon;      // registry token
@@ -64,6 +65,7 @@ namespace DcTestRunRecord
         std::uint32_t mapId = 0;
         std::uint32_t instanceId = 0;
         std::uint32_t level = 0;  // requested level
+        bool heroic = false;      // run at DUNGEON_DIFFICULTY_HEROIC
         std::uint32_t compSeed = 0;  // seed BuildComp rolled this comp from (for replay)
         std::vector<CompEntry> comp;
         std::uint64_t startedAtMs = 0;  // unix ms
