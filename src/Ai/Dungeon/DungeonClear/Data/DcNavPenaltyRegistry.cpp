@@ -102,10 +102,23 @@ namespace
     // corridor entering the region — an over-sized footprint there could wall off
     // a legitimate lane and strand the party. costMult 40 matches the other 556
     // shortcut row (a spot a real player can't be, not a survivable hazard).
-    constexpr std::array<DcNavPenaltyPolygon, 1> kPolygons = {{
+    //
+    // Hellfire Ramparts (map 543) — a wall of a narrow corridor. The measured wall
+    // runs the diagonal (-1367.45, 1645.24, 68.46) -> (-1335.65, 1668.71, 68.47)
+    // (≈39.5yd long), so an axis-aligned box hugging it would be a ~32x23yd blob
+    // spilling across the whole corner and swallowing the walkable corridor floor.
+    // A polygon lets the footprint be a THIN strip laid along the wall instead: the
+    // quad is that line inflated ±2yd on its perpendicular (≈4yd thick), so a route
+    // that clips into / along the wall is fenced while the corridor centre stays
+    // clear. Z band 62..76 straddles the ~z68 floor. costMult 40 (a spot a real
+    // player can't be, same class as the shortcut rows above).
+    constexpr std::array<DcNavPenaltyPolygon, 2> kPolygons = {{
         { 556, 15.0f, 38.0f, 40.0f, 5,
           { -233.29f, -230.34f, -209.82f, -192.94f, -192.04f },
           {  275.04f,  309.39f,  326.92f,  305.38f,  271.93f } },
+        { 543, 62.0f, 76.0f, 40.0f, 4,
+          { -1368.64f, -1336.84f, -1334.46f, -1366.26f },
+          {  1646.85f,  1670.32f,  1667.10f,  1643.63f } },
     }};
 
     // Even-odd ray cast — true iff (x,y) is inside the polygon's XY footprint.
