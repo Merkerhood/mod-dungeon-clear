@@ -490,6 +490,17 @@ public:
     bool Execute(Event event) override;
 };
 
+// Stranded-member recovery failsafe. Paired with DungeonClearRecoverStrandedTrigger
+// (which fires only on the leader once the run has frozen for the configured window
+// with a bot member out of range): teleports every stuck bot member to the tank and
+// re-arms the no-progress clock. See DcStrandedRecovery.
+class DungeonClearRecoverStrandedAction : public Action
+{
+public:
+    DungeonClearRecoverStrandedAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear recover stranded") {}
+    bool Execute(Event event) override;
+};
+
 // Walks the tank up to the blocking door, then stalls with an explicit
 // "door is closed" message in party chat. The door is detected up to 80yd
 // ahead, so without the walk-in the tank would park wherever it was when the

@@ -257,6 +257,40 @@ DungeonClear.PostCombatRez = 1
 DungeonClear.PostCombatRezTimeoutSecs = 90
 
 #
+#    DungeonClear.StrandedRecovery
+#        Stranded-member recovery failsafe. The dominant way a run stalls now is
+#        a party member falling THROUGH the world geometry (or wedging where the
+#        navmesh can't recover): it drifts out of range, the between-pulls spread
+#        gate then holds the tank forever waiting for it to catch up, and the
+#        whole run freezes. When this is on, a run that has shown NO progress —
+#        no boss/objective completed and the tank not closing on the next anchor —
+#        for StrandedRecoveryNoProgressSecs while a BOT member is stuck beyond
+#        PartyMaxSpread of the tank teleports that member to the tank (bots only;
+#        a human is never relocated). Combat re-arms the clock (a fight is
+#        progress) so a long boss fight never trips it.
+#            0 = off (a stuck member stalls the run until you intervene)
+#            1 = on
+#
+#        Default: 1
+#
+
+DungeonClear.StrandedRecovery = 1
+
+#
+#    DungeonClear.StrandedRecoveryNoProgressSecs
+#        Stranded recovery only. Seconds the run must show NO progress before the
+#        failsafe teleports a stuck out-of-range member to the tank. Long by
+#        design: it must never fire during a legitimately slow pull, a between-
+#        pulls rest, or a drawn-out fight — only a true freeze. The clock re-arms
+#        on any sign of life (a boss/objective completed, the tank closing on the
+#        next anchor, or any combat), so only a genuinely wedged run runs it out.
+#
+#        Default: 300 (5 minutes)
+#
+
+DungeonClear.StrandedRecoveryNoProgressSecs = 300
+
+#
 #    DungeonClear.WaitAtBoss
 #        Auto-pause the run right before every boss pull and wait for you to
 #        resume (the addon's Pause/Resume button, or `dc pause`). The pause

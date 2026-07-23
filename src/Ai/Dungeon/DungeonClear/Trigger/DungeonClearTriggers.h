@@ -122,6 +122,19 @@ public:
     bool IsActive() override;
 };
 
+// Stranded-member recovery failsafe. Fires ONLY on the leader tank when the run
+// has shown no progress for DungeonClear.StrandedRecoveryNoProgressSecs while a
+// bot party member is stuck out of range (fell under the world / wedged in
+// geometry). DcStrandedRecovery::Evaluate owns the no-progress clock (this is its
+// sole update site) and returns true only when a teleport should fire this tick;
+// the paired DungeonClearRecoverStrandedAction relocates the strays to the tank.
+class DungeonClearRecoverStrandedTrigger : public Trigger
+{
+public:
+    DungeonClearRecoverStrandedTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear recover stranded", 1) {}
+    bool IsActive() override;
+};
+
 // --- Sunken Temple (map 109) Avatar of Hakkar encounter ------------------
 // Both fire ONLY in the Sanctum of the Fallen while the encounter is live (the
 // Shade 8440 / a Suppressor 8497 is up) — inert on every other map and run.

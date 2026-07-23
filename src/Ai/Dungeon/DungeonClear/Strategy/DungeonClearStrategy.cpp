@@ -21,6 +21,17 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear all cleared",
         { NextAction("dungeon clear disable on cleared", DcRel::AllCleared) }));
 
+    // Stranded-member recovery failsafe (leader-only, non-combat). When the run
+    // has frozen for the configured window with a bot member stuck out of range
+    // (fell under the world / wedged), teleport the strays to the tank. Relevance
+    // 42 sits above the whole leader driving ladder — which, by definition, has
+    // been failing to progress for minutes — so the rescue wins the tick its
+    // narrow trigger arms; it is inert otherwise. See DungeonClearRecoverStranded
+    // Trigger / DcStrandedRecovery.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear recover stranded",
+        { NextAction("dungeon clear recover stranded", DcRel::StrandedRecovery) }));
+
     // Post-combat rez driver. Registered for ALL bots (the elected rezzer may
     // be a follower or the leader itself — a prot paladin raising its healer);
     // the trigger fires only on the one deterministically-elected rezzer.

@@ -40,6 +40,14 @@ namespace DcRel
     inline constexpr float LootRollPending = 95.0f;  // resolve an open loot-roll window at once
     inline constexpr float DoorReopened    = 90.0f;  // auto-resume when a player opens the door
     inline constexpr float AllCleared      = 50.0f;  // congratulate + disable
+    // Stranded-member recovery failsafe (leader-only, non-combat). When the run
+    // has frozen for StrandedRecoveryNoProgressSecs with a bot member stuck out of
+    // range, teleport the strays to the tank. Sits ABOVE the whole leader driving
+    // ladder (which has, by definition, been failing to make progress for minutes)
+    // so the recovery wins the tick it arms; its narrow trigger keeps it inert
+    // otherwise. Below AllCleared (a finished run should congratulate + disable,
+    // not teleport). See Util/DcStrandedRecovery.
+    inline constexpr float StrandedRecovery = 42.0f; // leader: rescue a stuck member
     inline constexpr float HealReposition  = 41.0f;  // healer-only; both engines (see note below)
 
     // ===== non-combat leader driving ladder =====
