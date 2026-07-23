@@ -253,9 +253,10 @@ void RegisterShatteredHallsRoster(std::vector<BossRosterPatch>& t)
     //
     // Second, a travel OBJECTIVE at the flame-gauntlet ENTRY, ordered AFTER
     // Nethekurse and BEFORE O'mrogg. It borrows encounterIndex 1 — which the
-    // map-540 DBC assigns to O'MROGG (the bit order matches the script enum:
-    // Nethekurse 0, O'mrogg 1, Kargath 2, Porung 3; the heroic-only Porung holds
-    // the TOP bit, not a middle one). So the Objective-before-Boss tie-break sorts
+    // map-540 NORMAL DBC assigns to O'MROGG (normal bits: Nethekurse 0,
+    // O'mrogg 1, Kargath 2 — Porung has no normal row at all; on HEROIC the DBC
+    // inserts Porung AT bit 1, shifting O'mrogg to 2 and Kargath to 3 — see the
+    // HeroicOnly patch below). So the Objective-before-Boss tie-break sorts
     // this objective AHEAD of O'mrogg at the shared key — the flame gauntlet runs,
     // then O'mrogg. Its eventId 2 (the persistent "Run the flame gauntlet" event)
     // drives the whole corridor: run in, clear the midpoint, clear the archers'
@@ -281,10 +282,11 @@ void RegisterShatteredHallsRoster(std::vector<BossRosterPatch>& t)
             // encounterIndex 2 — Kargath's own kill-bit — so the Objective-before-
             // Boss tie-break sorts it AHEAD of Kargath at that shared key: the tank
             // walks into the L-hallway and sweeps the stealthed Shattered Hand
-            // Assassins (17695) BY ENTRY before engaging Kargath. (Map-540 DBC bit
-            // order is Nethekurse 0, O'mrogg 1, Kargath 2, Porung 3 — the heroic-only
-            // Porung holds the TOP bit, so Kargath is 2, NOT 3. An earlier cut used 3
-            // and the objective sorted PAST Kargath to the end of the clear.) Sharing
+            // Assassins (17695) BY ENTRY before engaging Kargath. (Map-540 NORMAL
+            // DBC bits are Nethekurse 0, O'mrogg 1, Kargath 2 — an earlier cut used
+            // 3 and the objective sorted PAST Kargath to the end of the clear. On
+            // HEROIC Kargath shifts to bit 3, so the HeroicOnly patch below re-keys
+            // this objective to 3 there.) Sharing
             // bit 2 is safe — an objective is filtered by the cleared-anchor latch,
             // never the completion mask (NextDungeonBossValue keys the mask to Boss
             // anchors only), so Kargath's eventual kill can't retro-complete it. Its
@@ -309,6 +311,27 @@ void RegisterShatteredHallsRoster(std::vector<BossRosterPatch>& t)
                           /*arriveRadius*/ 10.0f, /*gateEntry*/ 0,
                           /*hook*/ 0, /*eventId*/ 4),
         };
+        t.push_back(std::move(p));
+    }
+
+    // HEROIC index-shift correction. The heroic DBC INSERTS Blood Guard Porung
+    // at bit 1 (verified against DungeonEncounter.dbc difficulty-1 rows:
+    // Nethekurse 0, Porung 1, O'mrogg 2, Kargath 3 — NOT Porung-on-top as the
+    // script enum suggests), which shifts O'mrogg to 2 and Kargath to 3. The
+    // borrowed keys above then land differently on heroic:
+    //   * OBJ(1) key 0 — still before Nethekurse. Fine.
+    //   * OBJ(2)/OBJ(4) key 1 — now sort before PORUNG, whose ledge spot the
+    //     gauntlet's far ClearRadius already covers. Fine (gauntlet -> sentinel
+    //     -> Porung-if-somehow-alive -> O'mrogg reads correctly).
+    //   * OBJ(3) key 2 — now O'MROGG's bit, which would send the tank to the
+    //     stealth L-hallway BEFORE O'mrogg. Wrong: the hallway sits between
+    //     O'mrogg and Kargath. Re-key it to 3 (Kargath's heroic bit) so the
+    //     Objective-before-Boss tie-break keeps sweep-then-Kargath.
+    {
+        BossRosterPatch p;
+        p.mapId = 540;
+        p.gate = DcDifficultyGate::HeroicOnly;
+        p.reorder = {{OBJ(3), 3}};
         t.push_back(std::move(p));
     }
 }
