@@ -22,7 +22,8 @@ TEST(DungeonClearRelevanceTest, NonCombatLadderStrictlyDescends)
     EXPECT_GT(DcRel::Chat,            DcRel::LootRollPending);
     EXPECT_GT(DcRel::LootRollPending, DcRel::DoorReopened);
     EXPECT_GT(DcRel::DoorReopened,    DcRel::AllCleared);
-    EXPECT_GT(DcRel::AllCleared,      DcRel::HealReposition);
+    EXPECT_GT(DcRel::AllCleared,      DcRel::StrandedRecovery);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::HealReposition);
     EXPECT_GT(DcRel::HealReposition,  DcRel::HakkarSuppressor);
     EXPECT_GT(DcRel::HakkarSuppressor, DcRel::HakkarFlame);
     EXPECT_GT(DcRel::HakkarFlame,     DcRel::Pull);        // tie-broken (was ==)
@@ -62,6 +63,22 @@ TEST(DungeonClearRelevanceTest, LeaderAssistFillsGapBelowOwnEngageScans)
     EXPECT_LT(DcRel::LeaderAssist, DcRel::BlockingTrash);
     EXPECT_LT(DcRel::LeaderAssist, DcRel::RoomTrash);
     EXPECT_LT(DcRel::LeaderAssist, DcRel::AtBoss);
+}
+
+TEST(DungeonClearRelevanceTest, StrandedRecoveryOutranksTheFrozenDrivingLadder)
+{
+    // The failsafe fires only after the leader driving ladder has, by definition,
+    // been failing to make progress for minutes, so it must outrank every rung it
+    // could otherwise be starved beneath — the boss/event drivers, the rez rung,
+    // and the advance/stall fallbacks. Below AllCleared: a finished run should
+    // congratulate + disable, not teleport.
+    EXPECT_LT(DcRel::StrandedRecovery, DcRel::AllCleared);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::RezParty);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::EventDue);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::AtBoss);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::Pull);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::Stalled);
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::Advance);
 }
 
 TEST(DungeonClearRelevanceTest, RezPartyOutranksEveryLadderItCanLandOn)

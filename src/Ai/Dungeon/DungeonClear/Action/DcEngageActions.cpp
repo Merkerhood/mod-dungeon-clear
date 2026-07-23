@@ -58,6 +58,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBreadcrumb.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -1933,6 +1934,16 @@ bool DungeonClearBreakStuckCombatAction::Execute(Event /*event*/)
              bot->GetName());
     bot->CombatStop();
     bot->GetThreatMgr().RemoveMeFromThreatLists();
+    return true;
+}
+
+bool DungeonClearRecoverStrandedAction::Execute(Event /*event*/)
+{
+    // The trigger has confirmed (on the leader) that the run has been frozen past
+    // the no-progress window with a bot member stuck out of range. Teleport the
+    // strays to the tank and re-arm the clock; the whole decision + relocation
+    // lives in the glue.
+    DcStrandedRecovery::Recover(bot);
     return true;
 }
 

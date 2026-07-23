@@ -30,6 +30,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
@@ -553,6 +554,20 @@ bool DungeonClearAllClearedTrigger::IsActive()
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     return !next.has_value();
+}
+
+bool DungeonClearRecoverStrandedTrigger::IsActive()
+{
+    if (!bot || bot->isDead())
+        return false;
+    Map* map = bot->GetMap();
+    if (!map || !map->IsDungeon())
+        return false;
+
+    // Evaluate is the failsafe's clock owner: it ticks the leader's no-progress
+    // clock as a side effect (leader-only inside; a no-op on followers and on
+    // off/paused runs) and returns true only when a rescue teleport is due.
+    return DcStrandedRecovery::Evaluate(bot);
 }
 
 bool DungeonClearStalledTrigger::IsActive()

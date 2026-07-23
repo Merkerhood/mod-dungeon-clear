@@ -239,4 +239,14 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    IsPending hold-gate read used by the between-pulls + event-rest gates.
 #    Paired with the relaxed party-died trigger and the all-bots
 #    DungeonClearRezParty{Trigger,Action} rung at DcRel::RezParty = 31.5.)
+# Util/DcStrandedDecision.h + Util/DcStrandedRecovery.{h,cpp}
+#   (stranded-member recovery failsafe: when the run has shown no progress for
+#    DungeonClear.StrandedRecoveryNoProgressSecs while a bot member is stuck out
+#    of range — fell under the world / wedged — the leader teleports the strays to
+#    itself. Pure header-only Decide(Inputs, members) -> Result kernel, edge-pinned
+#    by t/TestStrandedRecovery; DcStrandedRecovery is the engine glue — leader-only
+#    clock ownership, the DcRunState progress* fields, a harness-mirroring progress
+#    detector (encounter mask / cleared anchors / closing distance) and the group
+#    teleport. Paired with the leader-only DungeonClearRecoverStranded{Trigger,
+#    Action} rung at DcRel::StrandedRecovery = 42.)
 # (this comment bumps mtime to force CMake re-glob on next build)

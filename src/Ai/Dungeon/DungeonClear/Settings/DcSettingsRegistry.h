@@ -100,6 +100,22 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "PostCombatRez",            DcType::Bool,   1,  0,   1,  true  },
     { "PostCombatRezTimeoutSecs", DcType::UInt,  90, 10, 600,  true  },
 
+    // Stranded-member recovery failsafe. The dominant way a run stalls now is a
+    // party member falling THROUGH the world geometry (or wedging where the
+    // navmesh can't recover): it drifts out of range, the between-pulls spread
+    // gate then holds the tank forever waiting for it to catch up, and the whole
+    // run freezes. With StrandedRecovery on, when the run has shown NO progress —
+    // no boss/objective completed and the tank not closing on the next anchor —
+    // for StrandedRecoveryNoProgressSecs while a BOT member is stuck beyond
+    // PartyMaxSpread of the tank, that member is teleported to the tank (bots
+    // only; a human is never relocated). The long clock is deliberate: it must
+    // never fire during a legitimately slow pull/rest, only a true freeze, and
+    // combat re-arms it (a fight is progress) so a long boss fight never trips it.
+    // OFF disables the failsafe entirely. See Util/DcStrandedDecision.h +
+    // DcStrandedRecovery.
+    { "StrandedRecovery",              DcType::Bool,   1,   0,    1,  true  },
+    { "StrandedRecoveryNoProgressSecs", DcType::UInt, 300,  60, 3600,  true  },
+
     // Wait at Boss: auto-pause the run at the moment the tank would commit a
     // boss pull and hold for the human's resume (the addon Pause/Resume button
     // or `dc pause`), so the party can prepare instead of the tank rushing in

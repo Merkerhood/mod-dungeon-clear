@@ -121,6 +121,21 @@ struct DcRunState
                                    // marks the episode so the "party restored" resume
                                    // line fires exactly once when deaths clear)
 
+    // === stranded-member recovery failsafe (leader-owned) =========================
+    // The no-progress clock + last-seen progress snapshot, ticked live on the
+    // leader by DcStrandedRecovery::Evaluate (the single clock-owner site).
+    // progressMs re-stamps whenever the run shows a sign of life — a boss/objective
+    // completed, or the tank closing on the next anchor — and combat re-arms it too
+    // (a fight is progress), so a legitimately slow pull/rest never trips it. When
+    // it goes stale past StrandedRecoveryNoProgressSecs while a bot member is stuck
+    // out of range (fell under the world / wedged), the leader teleports the strays
+    // to itself. See Util/DcStrandedDecision.h + DcStrandedRecovery.
+    uint32 progressMs        = 0;       // getMSTime() of the last sign of progress (0 = unarmed)
+    uint32 progressMask      = 0;       // completed-encounter mask last seen
+    uint32 progressAnchors   = 0;       // cleared-anchor count last seen
+    float  progressBestDist  = -1.0f;   // closest tank approach to the current anchor (<0 = unset)
+    uint32 progressAnchorEntry = 0;     // anchor entry progressBestDist is keyed to (re-arm on change)
+
     // Full run teardown: every session + signal field. Used on dc on / dc off /
     // death / all-cleared. (The pull preference/bool are NOT here — see the header
     // note; they are reset explicitly by ApplyPullSetting / DisableDungeonClear.)
