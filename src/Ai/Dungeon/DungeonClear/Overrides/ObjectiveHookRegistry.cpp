@@ -300,8 +300,10 @@ namespace
     // Anzu is normally summoned by a DRUID using item 32449 (which sends event
     // 14797 to the instance). instance_sethekk_halls::ProcessEvent has NO
     // IsHeroic()/difficulty gate — "heroic-only" is enforced purely by the
-    // item/quest being heroic-gated — so we replicate the send-event directly to
-    // force the summon on ANY difficulty (no druid / item / quest / heroic key).
+    // item/quest being heroic-gated — so we replicate the send-event directly (no
+    // druid / item / quest / heroic key). The blizzlike HEROIC-only restriction is
+    // reinstated one level up: the Anzu event carries .HeroicOnly(), so this hook
+    // is only ever driven on a heroic run. On normal the event never fires.
     // The instance guard self-de-dupes (no Voice && Anzu != DONE), but we also
     // gate our own poke on "no Anzu yet" so we never spawn a SECOND Voice/Anzu
     // once he is on the field. ~40s of theatrics then a ~16s intro precede a

@@ -371,6 +371,10 @@ TEST(DungeonEventIntegrityTest, SethekkAnzuEventIsWiredForForcedSummon)
     EXPECT_TRUE(ev->persistent) << "Anzu event must be Persistent (summon + fight span combat gaps)";
     EXPECT_EQ(ev->activation, EventActivation::Anchored);
 
+    // Anzu is a HEROIC-ONLY bonus boss: the event must never fire on a normal run.
+    EXPECT_EQ(ev->gate, DcDifficultyGate::HeroicOnly)
+        << "Anzu event must be HeroicOnly (blizzlike heroic-only bonus boss)";
+
     // Step order matters: clear the room BEFORE poking the summon (Anzu's
     // SetInCombatWithZone would otherwise drag surviving trash into the fight).
     int clearStep = -1;

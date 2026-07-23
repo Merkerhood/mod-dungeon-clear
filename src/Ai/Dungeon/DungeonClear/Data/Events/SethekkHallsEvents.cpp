@@ -19,12 +19,16 @@
 //         if (eventId == 14797)
 //             if (!GetCreature(DATA_VOICE_OF_THE_RAVEN_GOD) && GetBossState(DATA_ANZU) != DONE)
 //                 instance->SummonCreature(NPC_VOICE_OF_THE_RAVEN_GOD, (-88.02,288.18,75.2));
-//     "Heroic-only" is enforced purely by item/quest availability, NOT by the
-//     encounter. So we force the summon on ANY difficulty by calling
-//     ProcessEvent(14797) directly (the DriveAnzuSummon hook, id 7) — no druid,
-//     no item, no quest, no heroic key needed. The Voice's SmartAI (rows
-//     24769-24770, event_flags 513/512 — NO DIFFICULTY_0..3 bits set) also runs
-//     on all difficulties.
+//     At the CORE level "heroic-only" is enforced purely by item/quest
+//     availability, NOT by the encounter, so a direct ProcessEvent(14797) would
+//     summon Anzu on any difficulty. WE restore the blizzlike gate ourselves:
+//     the event carries .HeroicOnly() (and its roster anchor gate HeroicOnly), so
+//     the DriveAnzuSummon hook (id 7) only ever pokes send-event 14797 on a
+//     HEROIC run — no druid, no item, no quest, no heroic key needed there. On a
+//     normal run the event never fires and Anzu never surfaces. The Voice's
+//     SmartAI (rows 24769-24770, event_flags 513/512 — NO DIFFICULTY_0..3 bits
+//     set) would run on all difficulties, but we simply never trigger it on
+//     normal.
 //   * Voice (21851, TempSummon) runs action list 2185100: ~40s of theatrics
 //     (the bulk is a 24s camera-shake at id6), then id9 summons Anzu (23035) at
 //     (-87.61,287.84,26.5), then despawns the portals and itself.
@@ -106,6 +110,9 @@ void RegisterSethekkHallsEvents(std::vector<DungeonEvent>& out)
 {
     out.push_back(EventBuilder(SH_MAP, /*eventId*/ 1, "Anzu (forced Raven God summon)")
                       .Anchored(/*orderIndex (doc)*/ SH_ANZU_ENCOUNTER)
+                      .HeroicOnly()  // Anzu is a HEROIC-ONLY bonus boss (real WoW gates
+                                     // him via the heroic quest/moonstone). Never poke
+                                     // send-event 14797 on a normal run.
                       .Optional()    // bonus boss — never stall the clear to Ikiss on it
                       .Persistent()  // survives the combat/non-combat Drive gaps
                       // 1. Settle on the chamber floor before the ~40s theatrics.
@@ -134,6 +141,9 @@ void RegisterSethekkHallsRoster(std::vector<BossRosterPatch>& t)
 
     BossRosterPatch p;
     p.mapId = SH_MAP;
+    // Anzu is heroic-only (see the event's .HeroicOnly() gate); keep his ordering
+    // anchor off the normal-mode roster too so nothing surfaces on a normal run.
+    p.gate = DcDifficultyGate::HeroicOnly;
     p.add = {
         // Objective anchor only — Anzu is NOT added as a boss row (TempSummon,
         // invisible to BossSpawnIndex). encounterIndex = DATA_ANZU (1) sorts the
