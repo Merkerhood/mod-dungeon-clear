@@ -65,10 +65,21 @@ namespace
     // If test runs show bots still walking the pulse, NARROW THE BOXES rather
     // than raising the multiplier — a wider tax on a mandatory corridor buys
     // nothing and starts competing with the shortcut rows above.
-    constexpr std::array<DcNavPenaltyVolume, 8> kVolumes = {{
+    //
+    // Underbog (map 546) — a navmesh shortcut up normally unwalkable geometry:
+    // the mmap stitches a walkable face the party can't follow, so Detour's A*
+    // climbs it instead of taking the intended route. The shortcut runs between
+    // (35.17, -364.37, 27.57) and (66.6, -357.99, 33.77). This sits in a very
+    // wide-open area, so the box is drawn generously around the whole run (with
+    // margin) rather than hugging a narrow band — an over-sized box here only
+    // makes the router prefer the open floor around it, never strands anyone.
+    // costMult 40 (a spot a real player can't be, same class as the LBRS/Sethekk
+    // shortcut rows above).
+    constexpr std::array<DcNavPenaltyVolume, 9> kVolumes = {{
         { 229, -134.0f, -406.0f, 33.0f, -118.0f, -374.0f, 56.0f, 40.0f },
         { 229,  -65.5f, -384.0f, 49.4f,  -60.5f, -377.0f, 54.2f, 40.0f },
         { 556,   25.0f,  150.0f, -5.0f,   68.0f,  248.0f, 30.0f, 40.0f },
+        { 546,   25.0f, -375.0f, 22.0f,  77.0f, -347.0f, 40.0f, 40.0f },
         { 552,  233.5f,  136.9f, 10.4f,  277.5f,  180.9f, 34.4f,  8.0f },
         { 552,  231.9f,  109.9f, 10.4f,  275.9f,  153.9f, 34.4f,  8.0f },
         { 552,  242.3f,  -83.3f, 10.5f,  286.3f,  -39.3f, 34.5f,  8.0f },
