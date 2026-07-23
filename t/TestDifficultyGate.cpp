@@ -72,15 +72,23 @@ TEST(DcDifficultyGateTest, AnyGatedPatchAppliesOnBothDifficulties)
 
 TEST(DcDifficultyGateTest, GatedPatchesRideAnAnyBasePatch)
 {
-    // A difficulty-gated patch is a CORRECTION layered on a map's Any base
-    // patch (Apply chains them in registration order), so a gated patch with
-    // no preceding Any patch for the same map is almost certainly an authoring
-    // slip — its reorder targets (the base patch's objectives) would not exist.
+    // A difficulty-gated patch that REMOVES or REORDERS entries is a CORRECTION
+    // layered on a map's Any base patch (Apply chains them in registration
+    // order), so such a patch with no preceding Any patch for the same map is
+    // almost certainly an authoring slip — its reorder targets (the base patch's
+    // objectives) would not exist.
+    //
+    // A pure ADD-only gated patch is exempt: it stands alone (e.g. Sethekk
+    // Halls' heroic-only Anzu anchor, whose ordering key sorts against the
+    // auto-derived DBC roster, not against a base patch). Map 556 needs no
+    // normal-mode correction, so it carries only the HeroicOnly add.
     for (std::size_t i = 0; i < BossRosterRegistry::AllPatches().size(); ++i)
     {
         BossRosterPatch const& patch = BossRosterRegistry::AllPatches()[i];
         if (patch.gate == DcDifficultyGate::Any)
             continue;
+        if (patch.remove.empty() && patch.reorder.empty())
+            continue;  // add-only gated patch — no base-patch dependency
         bool hasBase = false;
         for (std::size_t j = 0; j < i; ++j)
         {
