@@ -22,6 +22,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -813,6 +814,20 @@ bool DungeonClearPullTrigger::IsActive()
     Unit* trash = DcTargeting::GetPullTarget(botAI);
     if (!trash)
         return false;
+
+    // Fight-in-place room: some bosses gate their OWN aggro on the party being inside
+    // their room (Selin Fireheart's CanAIAttack requires X > 216). Advanced-pulling
+    // his room-guards back to an antechamber camp drags the fight outside that gate,
+    // so the boss aggros but can never attack — a permanent one-sided combat flag.
+    // Never pull a mob that lives in such a room; defer to the walk-in engage, which
+    // fights it in place and lands the party inside the boss's aggro gate.
+    if (FightInPlaceRegistry::IsNoPullZone(bot->GetMapId(), trash->GetPositionX(),
+                                           trash->GetPositionY()))
+    {
+        DC_PULL_DEBUG("[DC:{}] pull trigger: target {} is in a fight-in-place room -> "
+                      "defer to walk-in engage", bot->GetName(), trash->GetGUID().ToString());
+        return false;
+    }
 
     // Don't loop on a pack a previous pull gave up on — let engage-trash walk in.
     if (AI_VALUE(DcPullContext&, DcKey::PullContext).abortTarget == trash->GetGUID())
