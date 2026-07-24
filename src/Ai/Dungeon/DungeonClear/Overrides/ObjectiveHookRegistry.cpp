@@ -10,6 +10,7 @@
 
 #include "Creature.h"
 #include "GameObject.h"
+#include "Group.h"
 #include "InstanceScript.h"
 #include "Item.h"
 #include "Log.h"
@@ -20,6 +21,8 @@
 #include "Timer.h"
 #include "WorldPacket.h"
 #include "WorldSession.h"
+#include "PlayerbotAI.h"
+#include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -398,9 +401,45 @@ namespace
     // gap in rather than spam-casting from range.
     constexpr float  MECH_CACHE_CAST_REACH = 4.0f;
 
+    // True if a real human is in the leader's party (or is the lone actor). A member
+    // counts as human when it has no PlayerbotAI, or a PlayerbotAI that reports
+    // IsRealPlayer (a self-bot) — both are someone who will walk up and loot the
+    // cache. A pure bot (PlayerbotAI, not a real player) does not.
+    bool PartyHasRealPlayer(Player* bot)
+    {
+        auto const isHuman = [](Player* p) -> bool
+        {
+            if (!p)
+                return false;
+            PlayerbotAI* ai = GET_PLAYERBOT_AI(p);
+            return !ai || ai->IsRealPlayer();
+        };
+
+        Group* group = bot->GetGroup();
+        if (!group)
+            return isHuman(bot);
+
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            if (isHuman(ref->GetSource()))
+                return true;
+        return false;
+    }
+
     ObjectiveArriveResult GrantCacheKeyAndLoot(Player* bot, AiObjectContext* /*context*/,
                                                DungeonBossInfo const& /*info*/)
     {
+        // Full-bot run: skip the open entirely. The cache (184465/184849) is a
+        // CONSUMABLE chest that only despawns once its loot is actually LOOTED, and in
+        // a bot party nobody takes it — the stock loot pipeline ignores chests
+        // (DungeonClear.IgnoreChests). So opening it just leaves the chest cycling its
+        // loot-state (a visible flicker) until the step times out ~2 min later, and
+        // the loot is worthless to a bot party anyway. Complete the objective and let
+        // the tank move straight on to the elevator. Only when a real player is in the
+        // group — who will loot it — do we run the Blizzlike open below, so normal
+        // runs are unchanged. (This is why the hang never appeared in human-led runs.)
+        if (!PartyHasRealPlayer(bot))
+            return ObjectiveArriveResult::Done;
+
         GameObject* cache = bot->FindNearestGameObject(MECH_GO_CACHE_NORMAL, MECH_CACHE_SEARCH);
         if (!cache)
             cache = bot->FindNearestGameObject(MECH_GO_CACHE_HEROIC, MECH_CACHE_SEARCH);
