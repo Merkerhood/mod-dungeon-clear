@@ -51,7 +51,7 @@ namespace DcStrandedDecision
         bool          enabled = true;             // DungeonClear.StrandedRecovery
         std::uint32_t nowMs = 0;
         std::uint32_t lastProgressMs = 0;         // clock; 0 = unarmed (no verdict yet)
-        std::uint32_t noProgressTimeoutMs = 300000;  // StrandedRecoveryNoProgressSecs * 1000
+        std::uint32_t noProgressTimeoutMs = 60000;   // StrandedRecoveryNoProgressSecs * 1000
         bool          partyInCombat = false;      // recovery never fires mid-fight
         float         maxSpread = 25.0f;          // PartyMaxSpread: the out-of-range threshold
     };

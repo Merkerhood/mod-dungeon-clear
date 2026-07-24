@@ -114,7 +114,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     // OFF disables the failsafe entirely. See Util/DcStrandedDecision.h +
     // DcStrandedRecovery.
     { "StrandedRecovery",              DcType::Bool,   1,   0,    1,  true  },
-    { "StrandedRecoveryNoProgressSecs", DcType::UInt, 300,  60, 3600,  true  },
+    { "StrandedRecoveryNoProgressSecs", DcType::UInt,  60,  60, 3600,  true  },
 
     // Wait at Boss: auto-pause the run at the moment the tank would commit a
     // boss pull and hold for the human's resume (the addon Pause/Resume button
