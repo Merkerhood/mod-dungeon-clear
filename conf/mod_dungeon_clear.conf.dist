@@ -285,10 +285,10 @@ DungeonClear.StrandedRecovery = 1
 #        on any sign of life (a boss/objective completed, the tank closing on the
 #        next anchor, or any combat), so only a genuinely wedged run runs it out.
 #
-#        Default: 300 (5 minutes)
+#        Default: 60 (1 minute)
 #
 
-DungeonClear.StrandedRecoveryNoProgressSecs = 300
+DungeonClear.StrandedRecoveryNoProgressSecs = 60
 
 #
 #    DungeonClear.WaitAtBoss
