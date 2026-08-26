@@ -26,9 +26,21 @@
 // still fights back normally. All this removes is the clear's decision to go
 // LOOKING for them.
 //
+// Two kinds of mob qualify, and both are about the same question:
+//
+//   1. IT CANNOT BE KILLED in the window the clear is walking through, so the
+//      pull can never end in a kill and the scan re-picks it every tick (the
+//      Nexus' Crystalline Frayer — the row this table was written for).
+//   2. KILLING IT IS NEGATIVE PROGRESS: it is ENCOUNTER STAGING, placed by a
+//      script around a fight the party is already in, and travelling to it drags
+//      the party off the encounter (Ahn'kahet's Twilight Worshippers and
+//      Volunteers, which the clear chased 52yd off Jedoga's ritual floor while
+//      she was untargetable, resetting the encounter behind it).
+//
 // Keep it small and keep the justification in the table. A mob that merely
-// resists, heals, or respawns does not belong here — only one that cannot be
-// killed at all in the window the clear is walking through.
+// resists, heals, or respawns does not belong here, and neither does ordinary
+// trash that is simply inconvenient — class 2 is for mobs a SCRIPT spawns as
+// part of an encounter the party must stay inside.
 //
 // Mirrors FightInPlaceRegistry / RoomAggroRegistry: adding a fix is a single
 // table edit inside DungeonClear/, never a core change.

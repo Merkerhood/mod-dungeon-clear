@@ -56,6 +56,22 @@ namespace DcEventDoorRegistry
             //     as the reason it exists — this is the entry that fixes it.
             case 18971:  // Shadowfang Keep — Arugal's Lair (opens on Nandos' death)
             case 18972:  // Shadowfang Keep — Sorcerer's Gate (voidwalker event)
+            // Ahn'kahet: The Old Kingdom — Taldaram Door (192236, guid 67337, at
+            // (550.1,-865.1,11.6)). instance_ahnkahet registers it as a
+            // DOOR_TYPE_PASSAGE on DATA_PRINCE_TALDARAM, so the script opens it
+            // on his death and nothing else ever does — the Arugal's Lair shape.
+            // It is lock 0 / startOpen 0 like the rest of this map's doors, so
+            // BotCanOpenDoorLikePlayer reads it as freely clickable, and a bot
+            // that force-opened it would unlock the whole lower half of the
+            // dungeon (Jedoga, Amanitar, Volazj) with Taldaram still hovering
+            // immune in his prison behind it.
+            //
+            // The roster's order keys already send the party to Taldaram before
+            // anything past this door, so in the normal case the door opens
+            // itself and is never the thing to solve. This entry is what keeps
+            // that true when the order is perturbed — a `dc skip`, a wing
+            // filter, a future reorder.
+            case 192236:  // Ahn'kahet — Taldaram Door (opens on Taldaram's death)
                 return true;
             default:
                 return false;
@@ -202,6 +218,41 @@ namespace DcEventDoorRegistry
             case 186691:  // Doodad_VR_ForgeFire_Third  (opens on forge master 3)
             case 186692:  // Doodad_VR_ForgeFire_First  (opens on forge master 1)
             case 186693:  // Doodad_VR_ForgeFire_Second (opens on forge master 2)
+                return true;
+            // Ahn'kahet: The Old Kingdom (map 619) — Prince Taldaram's prison
+            // apparatus. Three GAMEOBJECT_TYPE_DOOR entries, all lock 0,
+            // startOpen 0, autoCloseTime 0, no ScriptName, spawned
+            // GO_STATE_READY, and none of them a door in any useful sense:
+            //
+            //   193564 Doodad_Azjol_Platform_FX_01 (guid 67330), the prison
+            //     effect itself at (528.0,-846.3,11.2). It is not beside the
+            //     route, it is ON Taldaram's objective — the party's anchor is
+            //     (528.7,-846.0,11.4), under a yard away — so leaving it
+            //     unlisted parks the run on its own objective and auto-pauses
+            //     there. This is the Steamvault access-panel failure exactly,
+            //     one step worse for sitting on the destination rather than
+            //     13.8yd from it. instance_ahnkahet owns its state end to end
+            //     (HandleGameObject on the sphere count, and again from
+            //     OnGameObjectCreate); nothing a player clicks touches it.
+            //
+            //   193093 / 193094 Ancient Nerubian Device (guids 67331/67332),
+            //     at (655.7,-719.0,18.0) and (692.5,-783.9,18.0). These DO have
+            //     to be clicked — they are the prison's off-switch — but the
+            //     click belongs to the two map-619 device events, which visit
+            //     them in a measured order and then VERIFY the instance data
+            //     actually moved. The door-blocked watchdog would fire them
+            //     opportunistically, out of order, off a corridor heuristic,
+            //     with no verification and no objective row to show for it.
+            //     Both are lock-free, so BotCanOpenDoorLikePlayer would happily
+            //     let it.
+            //
+            // As everywhere else on this list, invisibility to navigation is not
+            // blindness: DcEngageGeometry::ClosedDoorBetween rays the real
+            // collision mesh and never consults this table, so nothing on the
+            // far side of a still-closed prison is dragged into a pull.
+            case 193093:  // Ancient Nerubian Device (west) — the event clicks it
+            case 193094:  // Ancient Nerubian Device (east) — the event clicks it
+            case 193564:  // Doodad_Azjol_Platform_FX_01 — Taldaram's prison FX
                 return true;
             default:
                 return false;

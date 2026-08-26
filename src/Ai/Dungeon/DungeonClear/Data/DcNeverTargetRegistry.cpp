@@ -44,9 +44,84 @@ namespace
     // wedge on the AWAKE frayer, whose only observable difference from ordinary
     // trash is that its health bar refills every 90 seconds. Hence a flat row
     // rather than an aura test.
+    // ---------------------------------------------------------------------
+    //
+    // Ahn'kahet (619) — Jedoga Shadowseeker's ritual STAGING. Two entries, one
+    // failure: the party walks off the ritual floor mid-encounter and the
+    // encounter resets behind it.
+    //
+    // WHAT BREAKS. At 55% HP boss_jedoga_shadowseeker enters PHASE_RITUAL:
+    //
+    //     me->SetCombatMovement(false);
+    //     me->InterruptNonMeleeSpells(false);
+    //     me->AttackStop();
+    //     me->SetReactState(REACT_PASSIVE);
+    //     me->SetUnitFlag(UNIT_FLAG_NOT_SELECTABLE | UNIT_FLAG_NON_ATTACKABLE);
+    //
+    // and `damage = 0` for the rest of the phase. She takes off, hovers 13.7yd
+    // above the floor and sacrifices a volunteer. For those seconds the party has
+    // no boss to hit and no boss hitting it, so the CLEAR'S NON-COMBAT LADDER
+    // TAKES OVER — and the corridor scan finds the ring of staging mobs the
+    // encounter has just placed around the arena. Live (tr-20260825-224456-8,
+    // tank Wieron, 23:02:48-23:03:33):
+    //
+    //     pull target vetoed — Jedoga Shadowseeker (untargetable)
+    //     blocking-trash: 3 candidate(s) in band -> Entry: 30111 at 52.6yd   x25
+    //
+    // The tank walked 52yd off the ritual floor. Jedoga is REACT_PASSIVE with
+    // combat movement off, so `CreatureAI::UpdateVictim` takes the passive
+    // branch, her threat list empties behind the departing party, and she
+    // EnterEvadeMode(NO_HOSTILES)s — `BossAI::_EnterEvadeMode` then
+    // `summons.DespawnAll()`s the whole staging set and `Reset()` re-summons the
+    // fifteen Twilight Initiates at full strength. The clear cannot recover from
+    // that: the initiate objective (map 619 event 3) latched Done minutes ago and
+    // is not Repeatable, so nothing clears them a second time and the party is
+    // left standing at a boss that will never come down.
+    //
+    // 30111 TWILIGHT WORSHIPPER. Ten of them are summoned by
+    // `JustEngagedWith` -> SummonCreatureGroup(SUMMON_GROUP_IC_WORSHIPPERS), set
+    // kneeling, at z -17.95 and up to 65yd from the ritual floor. They are
+    // scenery — kneeling congregation watching the sacrifice — but nothing marks
+    // them as such: they are plain hostile SmartAI casters, so the corridor scan
+    // reads them as a pack standing on the route out.
+    //
+    // The row also covers the SIX DB spawns in the lower chamber (z -31.6) the
+    // party crosses on the way in, and that is accepted rather than worked
+    // around: they aggro on their own (every 30111 first-contact in the live logs
+    // is one of them opening the fight from 0.0yd off its spawn), and this table
+    // only removes the clear's decision to go LOOKING — a worshipper that pulls
+    // the party is still fought normally. There is no position in a
+    // (mapId, entry) row to separate the two sets, and letting the clear seek the
+    // approach six is not worth an unrecoverable reset at the boss.
+    //
+    // 30385 TWILIGHT VOLUNTEER. Twenty-five are summoned when the last initiate
+    // dies, at z -31.6, and walk to a ring around the arena up to 36yd out.
+    // Twenty-four of them are NOT_SELECTABLE | NON_ATTACKABLE, `SetImmuneToAll`
+    // and `UNIT_STATE_STUNNED` for the whole encounter — they fit this table's
+    // original criterion exactly, in that they cannot be killed at all. Only the
+    // one Jedoga picks as `sacrificeTargetGUID` has those flags removed
+    // (`npc_twilight_volunteer::DoAction(ACTION_RITUAL_BEGIN)`), and it then
+    // walks to (373.5, -706.0, -16.2) — INTO the party — so nobody ever needs to
+    // travel to reach it.
+    //
+    // Chasing it is what the clear was doing instead: `DcTargeting::
+    // LeaderFightAnchor` resolves the regroup anchor off the leader's victim, so
+    // the moment the tank picked the volunteer at its ring position the whole
+    // party's standoff anchor moved with it — "regroup: moving to standoff
+    // (36.3yd, anchor=Entry: 30385)", three members at once, in the same window.
+    //
+    // KILLING IT IS STILL THE RIGHT PLAY and this row does not stop it. Denying
+    // Jedoga `SPELL_GIFT_OF_THE_HERALD` (56219) means killing the volunteer
+    // before she does, and mod-playerbots' own `wotlk-ok` strategy does exactly
+    // that (JedogaVolunteerTrigger / AttackJedogaVolunteerAction, which scan
+    // `possible targets no los` by entry). That is the COMBAT engine, which this
+    // table leaves untouched. All that is removed is the CLEAR's decision to walk
+    // the tank out to the arena's edge for it.
     DcNeverTargetRow const kRows[] =
     {
         { 576, 26793 },  // The Nexus — Crystalline Frayer (seed pod; unkillable until Ormorok dies)
+        { 619, 30111 },  // Ahn'kahet — Twilight Worshipper (Jedoga's kneeling congregation, 65yd out)
+        { 619, 30385 },  // Ahn'kahet — Twilight Volunteer (24/25 permanently unattackable; the 25th walks in)
     };
 }
 

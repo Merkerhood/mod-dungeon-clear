@@ -59,6 +59,7 @@ namespace
             RegisterUtgardeKeepRoster(t);
             RegisterNexusRoster(t);
             RegisterAzjolNerubRoster(t);
+            RegisterAhnkahetRoster(t);
             return t;
         }();
         return kPatches;

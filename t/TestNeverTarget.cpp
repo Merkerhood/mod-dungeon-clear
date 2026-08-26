@@ -36,3 +36,49 @@ TEST(DcNeverTargetRegistryTest, HeroicTwinIsNotListedBecauseGetEntryStaysNormal)
 {
     EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(576, 30528));
 }
+
+// --- Ahn'kahet (619) — Jedoga Shadowseeker's ritual staging ----------------
+//
+// At 55% HP she goes REACT_PASSIVE + NOT_SELECTABLE | NON_ATTACKABLE with
+// `damage = 0` and takes off to sacrifice a volunteer. With no boss to hit the
+// clear's non-combat ladder takes over, and the corridor scan finds the ring of
+// staging mobs the encounter has just placed around the arena. Live
+// (tr-20260825-224456-8, tank Wieron): "pull target vetoed — Jedoga
+// Shadowseeker" followed by 25 consecutive
+// "blocking-trash: 3 candidate(s) in band -> Entry: 30111 at 52.6yd".
+//
+// Jedoga has combat movement off and is passive, so her threat list empties
+// behind the departing party and she EnterEvadeMode(NO_HOSTILES)s —
+// DespawnAll + Reset, which re-summons the fifteen Twilight Initiates. The
+// clear cannot recover: map-619 event 3 latched Done and is not Repeatable, so
+// nothing clears them again and the boss never comes down.
+TEST(DcNeverTargetRegistryTest, AhnkahetRitualStagingIsNeverAClearTarget)
+{
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(619, 30111))
+        << "Twilight Worshipper — the kneeling congregation summoned around the "
+           "arena on engage, up to 65yd out";
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(619, 30385))
+        << "Twilight Volunteer — 24 of 25 are permanently NOT_SELECTABLE and "
+           "immune; the 25th walks INTO the party on its own";
+}
+
+// The rows must not blunt the encounter the party actually has to fight, and
+// must not leak onto the neighbouring map.
+TEST(DcNeverTargetRegistryTest, AhnkahetRowsAreScopedToTheStagingMobs)
+{
+    // The FIFTEEN Twilight Initiates are the gate on Jedoga descending — map-619
+    // event 3 sweeps them by entry. Listing 30114 here would make that sweep
+    // permanently blind and wedge the run at an immune boss, which is the exact
+    // failure the 30111/30385 rows exist to prevent.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(619, 30114))
+        << "the initiates ARE the objective — they must stay targetable";
+
+    // The bosses themselves, and the approach trash that shares the chamber.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(619, 29310));  // Jedoga
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(619, 30179));  // Twilight Apostle
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(619, 30319));  // Twilight Darkcaster
+
+    // Azjol-Nerub is the other half of this instance pair and shares nothing.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(601, 30111));
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(601, 30385));
+}

@@ -7,11 +7,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
@@ -1317,4 +1319,233 @@ TEST(DungeonEventIntegrityTest, AzjolNerubAnchorsTheRouteToAnubarak)
     // first: it sits 25yd past the southern shore.
     EXPECT_LT((*route)[0].y, 470.0f)
         << "anchor 1 is back in the drop chamber's half of the lower kingdom";
+}
+
+// --- Ahn'kahet: The Old Kingdom (map 619) ---------------------------------
+//
+// Both of this map's gates fail the same silent way: the boss stays immune and
+// the run stalls at an anchor with nothing to fight, several minutes and several
+// hundred yards after the step that actually went wrong. These pin the shape of
+// each event so a later edit cannot quietly re-open that hole.
+
+TEST(DungeonEventIntegrityTest, AhnkahetTaldaramDevicesAreTwoVerifiedClicks)
+{
+    // {eventId, GO entry, persistent-data index the GO's SmartAI row sets}.
+    // 193093 carries SET_INST_DATA 0 (DATA_TELDRAM_SPHERE1), 193094 SET_INST_DATA 1.
+    struct DeviceCase { uint32 eventId; uint32 goEntry; int32 dataIndex; };
+    constexpr DeviceCase kDevices[] = {
+        { 1, 193094, 1 },  // east, visited first
+        { 2, 193093, 0 },  // west, visited second
+    };
+
+    for (DeviceCase const& d : kDevices)
+    {
+        DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 619, d.eventId);
+        ASSERT_NE(ev, nullptr) << "Ahn'kahet (619) event " << d.eventId
+                               << " (Ancient Nerubian Device) is missing";
+
+        EXPECT_EQ(ev->activation, EventActivation::Anchored)
+            << "the devices are 74.5yd apart — boss-nav must deliver the tank, not a HopTo";
+        EXPECT_TRUE(ev->persistent)
+            << "the verification hold is a data-gated MoveTo; a combat gap on this "
+               "deck would rewind the click";
+        EXPECT_TRUE(ev->required)
+            << "an unclicked device leaves Prince Taldaram permanently immune — that "
+               "must stall for the human, not be skipped";
+        // Both spheres exist on both difficulties.
+        EXPECT_EQ(ev->gate, DcDifficultyGate::Any);
+
+        // Click, THEN prove the click landed. UseGameObject reports Done the
+        // moment it calls Use() without checking that anything happened, so a
+        // swallowed click would latch the objective complete and send the party
+        // on to a boss that is still in his prison.
+        ASSERT_EQ(ev->steps.size(), 2u)
+            << "expected exactly UseGameObject + persistent-data verification";
+        EXPECT_EQ(ev->steps[0].kind, EventStepKind::UseGameObject);
+        EXPECT_EQ(ev->steps[0].goEntry, d.goEntry);
+        EXPECT_EQ(ev->steps[1].kind, EventStepKind::MoveTo);
+        EXPECT_EQ(ev->steps[1].persistentDataId, d.dataIndex)
+            << "the hold must watch the index THIS device sets";
+        EXPECT_EQ(ev->steps[1].persistentDataMin, 3u)
+            << "EncounterState::DONE is 3";
+
+        // The step scans for the GO from the BOT, so the objective has to put the
+        // tank inside that scan or the step holds forever on a device it cannot see.
+        float arrive = -1.0f;
+        for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())
+        {
+            if (patch.mapId != 619)
+                continue;
+            for (DungeonBossInfo const& e : patch.add)
+                if (e.kind == DungeonAnchorKind::Objective && e.eventId == d.eventId)
+                    arrive = e.arriveRadius;
+        }
+        ASSERT_GT(arrive, 0.0f) << "event " << d.eventId << " has no objective anchor";
+        EXPECT_LT(arrive, ev->steps[0].radius)
+            << "arrive radius " << arrive << " is outside the " << ev->steps[0].radius
+            << "yd GO search — the tank can be 'arrived' and still not see the device";
+    }
+}
+
+TEST(DungeonEventIntegrityTest, AhnkahetInitiateSweepCoversEveryInitiateSpawn)
+{
+    constexpr uint32 kInitiate = 30114;
+
+    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 619, /*eventId*/ 3);
+    ASSERT_NE(ev, nullptr) << "Ahn'kahet (619) event 3 (Twilight Initiates) is missing";
+
+    EXPECT_EQ(ev->activation, EventActivation::Anchored);
+    EXPECT_TRUE(ev->persistent) << "a ClearRadius is a fight and spans combat gaps";
+    EXPECT_TRUE(ev->required)
+        << "Jedoga never descends while one initiate lives — a half-cleared chamber "
+           "must stall, not be skipped";
+    EXPECT_EQ(ev->gate, DcDifficultyGate::Any);
+
+    int clearStep = -1;
+    int backstopStep = -1;
+    for (size_t i = 0; i < ev->steps.size(); ++i)
+    {
+        EventStep const& s = ev->steps[i];
+        if (s.kind == EventStepKind::ClearRadius)
+            clearStep = static_cast<int>(i);
+        if (s.kind == EventStepKind::KillCreature && s.engage && s.creatureEntry == kInitiate)
+            backstopStep = static_cast<int>(i);
+    }
+    ASSERT_GE(clearStep, 0) << "must sweep the chamber (a ClearRadius step)";
+    ASSERT_GE(backstopStep, 0)
+        << "must carry a by-entry KillCreatureEngage backstop — a position sweep can "
+           "only fight what IsPossibleTarget / IsEngageReachable let it see";
+    EXPECT_GT(backstopStep, clearStep) << "the backstop follows the sweep";
+
+    // NO leading MoveTo, deliberately: fifteen hostiles is not a room to walk into
+    // the middle of. The objective anchor delivers the tank to the volume's edge
+    // and the step's driving half EngageDirects the nearest initiate, re-picking
+    // after each kill, so the pack is taken one at a time.
+    for (EventStep const& s : ev->steps)
+        EXPECT_NE(s.kind, EventStepKind::MoveTo)
+            << "a MoveTo here marches the tank to the centroid and face-pulls all fifteen";
+
+    EventStep const& sweep = ev->steps[clearStep];
+
+    // Exactly the fifteen. Three other things stand inside this volume and none
+    // may be swept: Jedoga hovering 13.5yd overhead, the two Jedoga Controllers
+    // (30181) on the ledges 45yd up, and the ten Twilight Worshippers (30111)
+    // that group 2 summons the moment she is engaged.
+    ASSERT_EQ(sweep.entryFilter.size(), 1u);
+    EXPECT_EQ(sweep.entryFilter[0], kInitiate);
+
+    // creature_summon_groups, summonerId 29310 group 0 — the fifteen Twilight
+    // Initiates Jedoga's Reset() places around the ritual floor. Every one has to
+    // sit inside the sweep, or the gate certifies "clear" with a live initiate in
+    // the room and she never comes down.
+    struct Spawn { float x, y, z; };
+    constexpr Spawn kInitiates[] = {
+        { 379.204f, -716.697f, -16.0964f }, { 378.424f, -708.388f, -16.0964f },
+        { 379.049f, -712.899f, -16.0964f }, { 382.583f, -711.713f, -16.0964f },
+        { 375.400f, -711.434f, -16.0964f }, { 385.693f, -694.376f, -16.0964f },
+        { 383.812f, -700.410f, -16.0964f }, { 387.224f, -698.006f, -16.0964f },
+        { 392.276f, -695.895f, -16.0964f }, { 368.151f, -719.763f, -16.0964f },
+        { 362.020f, -719.828f, -16.0964f }, { 364.937f, -716.110f, -16.0964f },
+        { 368.781f, -713.932f, -16.0964f }, { 362.458f, -714.166f, -16.0964f },
+        { 389.626f, -702.300f, -16.0964f },
+    };
+    ASSERT_EQ(std::size(kInitiates), 15u);
+    for (Spawn const& p : kInitiates)
+    {
+        float const dx = p.x - sweep.x;
+        float const dy = p.y - sweep.y;
+        EXPECT_LT(std::sqrt(dx * dx + dy * dy), sweep.radius)
+            << "initiate spawn outside the sweep radius";
+        EXPECT_LT(std::fabs(p.z - sweep.z), sweep.zBand)
+            << "initiate spawn outside the sweep z-band";
+    }
+
+    // The z-band must still exclude what is stacked in this column: Jedoga's
+    // hover pose at -2.46 and the Amanitar cave floor the mmaps put at -97.37,
+    // 81yd under the ritual chamber.
+    EXPECT_LT(sweep.zBand, std::fabs(-2.46f - sweep.z))
+        << "the band reaches Jedoga's hover position";
+
+    // Dire Maul crystal lesson: while the sweep runs the tank must stay inside
+    // arriveRadius, or the at-objective action stops owning the tick and
+    // engage-trash/Advance start competing for it.
+    float arrive = -1.0f;
+    for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())
+    {
+        if (patch.mapId != 619)
+            continue;
+        for (DungeonBossInfo const& e : patch.add)
+            if (e.kind == DungeonAnchorKind::Objective && e.eventId == 3)
+                arrive = e.arriveRadius;
+    }
+    ASSERT_GT(arrive, 0.0f) << "event 3 has no objective anchor";
+    EXPECT_GT(arrive, sweep.radius)
+        << "arrive radius " << arrive << " is inside the " << sweep.radius
+        << "yd sweep — the tank falls out of 'arrived' mid-clear";
+
+    // Set far past any real fight: a timeout that fires while the party is still
+    // winning turns a slow clear into a Failed step, and this step is required.
+    EXPECT_GE(sweep.timeoutMs, 300000u);
+}
+
+TEST(DungeonEventIntegrityTest, AhnkahetGatedBossesAreReanchoredOffTheirMidAirSpawns)
+{
+    // BossSpawnIndex takes its coordinates from the `creature` row, and for these
+    // two that row is the PRE-FIGHT pose. DungeonBossesValue::SnapAll cannot
+    // rescue either: BOSS_SNAP_RADIUS is 40, but NavmeshSnap's query box uses a
+    // fixed 10yd VERTICAL half-extent, and findNearestPoly only sees polys that
+    // overlap it. Both floors are further down than that, so both snaps fail and
+    // the raw mid-air coords survive into the at-boss trigger.
+    struct Reanchor { uint32 entry; float spawnZ; float floorZ; char const* what; };
+    constexpr Reanchor kBosses[] = {
+        { 29308, 42.0351f,  11.43f,  "Prince Taldaram (hovering in his prison)" },
+        { 29310, -0.624178f, -15.98f, "Jedoga Shadowseeker (hovering over the ritual floor)" },
+    };
+
+    for (Reanchor const& b : kBosses)
+    {
+        bool removed = false;
+        DungeonBossInfo const* readded = nullptr;
+        for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())
+        {
+            if (patch.mapId != 619)
+                continue;
+            for (uint32 e : patch.remove)
+                if (e == b.entry)
+                    removed = true;
+            for (DungeonBossInfo const& e : patch.add)
+                if (e.kind == DungeonAnchorKind::Boss && e.entry == b.entry)
+                    readded = &e;
+        }
+        EXPECT_TRUE(removed) << b.what << ": derived row not removed";
+        ASSERT_NE(readded, nullptr) << b.what << ": no re-added anchor";
+        EXPECT_NEAR(readded->z, b.floorZ, 0.5f) << b.what << ": anchor is not on the floor";
+        EXPECT_GT(std::fabs(b.spawnZ - b.floorZ), 10.0f)
+            << b.what << ": the drop is now inside NavmeshSnap's vertical extent, so "
+                         "the hand-authored anchor is no longer the only thing fixing it";
+        // The re-add must keep the boss's own kill-bit rather than inventing one.
+        EXPECT_EQ(readded->inheritCompletionFrom, b.entry)
+            << b.what << ": completionFrom must be the boss's own entry";
+    }
+}
+
+TEST(DungeonEventIntegrityTest, AhnkahetPrisonApparatusIsNavigationInvisible)
+{
+    // All four are lock-free GAMEOBJECT_TYPE_DOOR spawned GO_STATE_READY, which
+    // the closed-door predicate reads as shut gates on the corridor.
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(193564))
+        << "Taldaram's prison FX sits ON his objective — leaving it flagged parks "
+           "the run on its own destination and auto-pauses";
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(193093))
+        << "the device belongs to event 2, not to the door-blocked watchdog";
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(193094))
+        << "the device belongs to event 1, not to the door-blocked watchdog";
+
+    // The one real door on the map. DOOR_TYPE_PASSAGE on DATA_PRINCE_TALDARAM, so
+    // only his death opens it — but it is lock 0, so a bot would happily click it
+    // open and unlock Jedoga / Amanitar / Volazj with him still immune behind it.
+    EXPECT_TRUE(DcEventDoorRegistry::IsScriptOnly(192236))
+        << "the Taldaram Door opens on his death and must never be force-opened";
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(192236))
+        << "it IS a real corridor door — the party must still see it as blocking";
 }

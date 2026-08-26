@@ -117,6 +117,7 @@ std::vector<uint32> const& BlackMorassKeeperEntries();
 void RegisterUtgardeKeepEvents(std::vector<DungeonEvent>& out);
 void RegisterNexusEvents(std::vector<DungeonEvent>& out);
 void RegisterAzjolNerubEvents(std::vector<DungeonEvent>& out);
+void RegisterAhnkahetEvents(std::vector<DungeonEvent>& out);
 
 // --- roster patches (one appender per dungeon that corrects the boss list) -
 // Each relocates that dungeon's BossRosterPatch out of BossRosterRegistry.cpp
@@ -149,6 +150,7 @@ void RegisterMaraudonRoster(std::vector<BossRosterPatch>& t);
 void RegisterUtgardeKeepRoster(std::vector<BossRosterPatch>& t);
 void RegisterNexusRoster(std::vector<BossRosterPatch>& t);
 void RegisterAzjolNerubRoster(std::vector<BossRosterPatch>& t);
+void RegisterAhnkahetRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;

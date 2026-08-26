@@ -452,3 +452,71 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    (FarTargets AcceptUnit, PickBlockingTrash, the en-route sweep spheres,
 #    NearestHostileNearPoint, room-trash); the stock combat engine is untouched,
 #    so bots still fight back when a frayer attacks them.)
+# Data/Events/AhnkahetEvents.cpp
+#   (Ahn'kahet: The Old Kingdom, map 619. Three anchored objectives + a roster
+#    patch, covering the map's two GATED encounters. NEW file; the map was
+#    previously unauthored apart from its `ok` test-run key.
+#    (1) PRINCE TALDARAM is imprisoned — SetImmuneToAll + hover + beam visual,
+#    hanging at z 42 over his platform — until BOTH Ancient Nerubian Devices are
+#    clicked. There is no C++ gameobject script: 193093/193094 carry
+#    smart_scripts source_type 1 SMART_EVENT_GOSSIP_HELLO -> SET_INST_DATA 0/1,
+#    which GameObject::Use reaches through SmartGameObjectAI::GossipHello (it
+#    returns FALSE, so Use also falls through to UseDoorOrButton and the device
+#    leaves GO_STATE_READY — which is what makes the step idempotent).
+#    instance_ahnkahet then StorePersistentData(index, DONE) and, on the second,
+#    DoAction(ACTION_REMOVE_PRISON). Authored as two objectives, one per device
+#    (Nexus Containment Sphere idiom — they are 74.5yd apart and an event step's
+#    own movement is a short HopTo). Visit order east-then-west from a Dijkstra
+#    over the live 619 navmesh (692 vs 720yd). Each click is followed by a
+#    persistent-data hold on the index it is supposed to set, because
+#    UseGameObject reports Done without checking that anything happened and a
+#    swallowed click would otherwise surface as an unexplained stall at Taldaram.
+#    (2) JEDOGA SHADOWSEEKER hovers NOT_SELECTABLE|NON_ATTACKABLE and immune
+#    until all FIFTEEN Twilight Initiates (30114, creature_summon_groups group 0)
+#    are dead — SummonedCreatureDies emptying `oocSummons` is the only thing that
+#    MovePoints her down. An entry-filtered ClearRadius (26yd, z-band 12) plus a
+#    by-entry KillCreatureEngage backstop. Deliberately NO leading MoveTo: the
+#    step is a pure gate, so the ordinary engage pipeline works the pack from the
+#    volume's edge instead of the tank marching into the middle of fifteen mobs.
+#    (3) ROSTER. Both bosses' `creature` rows are their PRE-FIGHT poses — 42.04
+#    and -0.62, against probed floors of 11.43 and -15.98 — and
+#    DungeonBossesValue::SnapAll cannot fix either: BOSS_SNAP_RADIUS is 40 but
+#    NavmeshSnap's query box has a fixed 10yd VERTICAL half-extent, so
+#    findNearestPoly never sees a floor 15 or 30yd down. Both are remove+re-add
+#    with hand-probed coordinates; the other three bosses are only reordered onto
+#    the same 1..8 scale so the objectives have slots.
+#    NOT covered here: Elder Nadox's guardian aura, Amanitar's mushrooms, Herald
+#    Volazj's Insanity phasing, and the NAVMESH BREAK that leaves Volazj's whole
+#    chamber on a component the party cannot reach. See
+#    deployment-files/docs/mod-dungeon-clear_ahnkahet_plan.md.)
+# Data/DcNeverTargetRegistry.{h,cpp}
+#   (Two map-619 rows for Jedoga Shadowseeker's ritual STAGING — Twilight
+#    Worshipper 30111 and Twilight Volunteer 30385. At 55% HP she goes
+#    REACT_PASSIVE + NOT_SELECTABLE | NON_ATTACKABLE with damage=0 and takes off
+#    to sacrifice a volunteer; with no boss to hit the clear's NON-COMBAT ladder
+#    takes over and the corridor scan finds the ring of staging mobs the
+#    encounter has just placed around the arena. Live (tr-20260825-224456-8, tank
+#    Wieron): "pull target vetoed — Jedoga Shadowseeker" then 25 consecutive
+#    "blocking-trash: 3 candidate(s) in band -> Entry: 30111 at 52.6yd", plus
+#    three members' "regroup: moving to standoff (36.3yd, anchor=Entry: 30385)"
+#    (LeaderFightAnchor resolves off the leader's victim, so the tank's pick
+#    moves the whole party). She has combat movement off and is passive, so her
+#    threat list empties behind the departing party and she
+#    EnterEvadeMode(NO_HOSTILES)s -> DespawnAll + Reset, re-summoning the fifteen
+#    Twilight Initiates — which the clear can never re-clear, because event 3
+#    latched Done and is not Repeatable. The header's criterion is widened to name
+#    this second class (encounter staging the clear must not travel to) alongside
+#    the original (mobs that cannot be killed at all). The combat engine is
+#    untouched, so mod-playerbots' own wotlk-ok volunteer kill — which denies
+#    Jedoga Gift of the Herald — still works; only the CLEAR's decision to walk
+#    out to the arena edge is removed.)
+# Data/DcEventDoorRegistry.h
+#   (Four map-619 rows. IsNavigationIgnored: 193564 Doodad_Azjol_Platform_FX_01,
+#    Taldaram's prison effect, which sits ON his objective anchor (under a yard
+#    away) and would park the run on its own destination and auto-pause — the
+#    Steamvault access-panel failure, one step worse; and 193093/193094, the two
+#    devices, which DO have to be clicked but by their events, in a measured
+#    order and with verification, not opportunistically by the door-blocked
+#    watchdog. IsScriptOnly: 192236 Taldaram Door, a DOOR_TYPE_PASSAGE that only
+#    his death opens but which is lock-free, so a force-open would unlock Jedoga
+#    / Amanitar / Volazj with him still immune behind it.)

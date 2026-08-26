@@ -412,6 +412,7 @@ namespace
             RegisterUtgardeKeepEvents(t);
             RegisterNexusEvents(t);
             RegisterAzjolNerubEvents(t);
+            RegisterAhnkahetEvents(t);
             return t;
         }();
         return kEvents;
