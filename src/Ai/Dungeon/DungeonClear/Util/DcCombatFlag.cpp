@@ -46,7 +46,7 @@ namespace DcCombatFlag
         Map const* const map = p->GetMap();
         constexpr float radiusSq = DC_ENGAGEMENT_RADIUS * DC_ENGAGEMENT_RADIUS;
 
-        auto const inFight = [p, map, radiusSq](Unit const* other)
+        auto const inFight = [p, map](Unit const* other)
         {
             return other && other->IsInWorld() && other->GetMap() == map &&
                    p->GetExactDistSq(other) <= radiusSq;
