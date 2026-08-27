@@ -72,6 +72,19 @@ namespace DcStrategyGate
         bool const hasNon = botAI->HasStrategy(kNonCombat, BOT_STATE_NON_COMBAT);
         bool const hasCmb = botAI->HasStrategy(kCombat, BOT_STATE_COMBAT);
 
+        // RAID consumables (raid-support Plan C): playerbots' opt-in `worldbuff`
+        // strategy is the v1 consumable stand-in — a level-banded simulated
+        // flask/food aura matrix (conf-shipped, AddAura-applied). Bots never
+        // stock real flasks, so on raid maps the strategy is installed for
+        // every bot and stripped again on any non-raid instance map, keeping
+        // the simulated buffs a raid-run behavior rather than a global one. A
+        // bot in the open world is left alone either way.
+        bool const hasWorldbuff = botAI->HasStrategy("worldbuff", BOT_STATE_NON_COMBAT);
+        if (inDungeon && map->IsRaid() && !hasWorldbuff)
+            botAI->ChangeStrategy("+worldbuff", BOT_STATE_NON_COMBAT);
+        else if (inDungeon && !map->IsRaid() && hasWorldbuff)
+            botAI->ChangeStrategy("-worldbuff", BOT_STATE_NON_COMBAT);
+
         // Each strategy in the engine it does NOT belong to. Never correct; see
         // the Plan comment in the header for how a bot gets into that state and
         // why it is otherwise permanent.

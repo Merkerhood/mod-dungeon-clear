@@ -158,6 +158,20 @@ struct DcRunState
     uint32 standDownSignalMs = 0;      // getMSTime() an encounter signal last read true
     uint32 standDownEvalMs   = 0;      // memo stamp of the last leader evaluation
 
+    // === raid pre-boss muster (leader-owned) ======================================
+    // Phase machine state for DcRaidMusterDecision (Plan C): the full-stop that
+    // stages, tops off and rebuffs the raid before every boss pull. Keyed to the
+    // boss entry so a kill / skip / boss change re-arms a fresh muster; cleared
+    // wholesale by Reset(). musterRestOverride remembers that the muster itself
+    // pushed the RestHealthPct/RestManaPct per-run overrides to full (so bots
+    // actually eat/drink to the bars) and must retract them on release without
+    // clobbering an override the player set by hand.
+    uint8  musterPhase = 0;           // DcRaidMusterDecision::Phase
+    uint32 musterPhaseSinceMs = 0;    // getMSTime() the phase was entered
+    uint32 musterBossEntry = 0;       // boss this muster belongs to (0 = none)
+    uint32 musterRebuffIssuedMs = 0;  // getMSTime() the rebuff round was issued
+    bool   musterRestOverride = false;
+
     // === stranded-member recovery failsafe (leader-owned) =========================
     // The no-progress clock + last-seen progress snapshot, ticked live on the
     // leader by DcStrandedRecovery::Evaluate (the single clock-owner site).

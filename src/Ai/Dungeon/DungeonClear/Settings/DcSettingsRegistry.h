@@ -196,6 +196,14 @@ inline constexpr DcSettingDef kDcSettings[] =
     // stranded-recovery ladder instead of pinning 24 others. 100 restores the
     // strict every-member gate.
     { "RaidReadyQuorumPct",    DcType::UInt,  90,  50, 100,  true  },
+    // Pre-boss muster budgets (Plan C). Resting is parallel — 25 bots eat at
+    // once — so the bound covers the slowest drinker plus the stragglers still
+    // walking in; Rebuffing covers a full ForceRebuff round of group buffs.
+    // Both are never-deadlock bounds, not targets: on expiry the muster
+    // advances with what it has and says so.
+    { "RaidMusterRestTimeoutSecs",   DcType::UInt, 120,  10, 900,  true  },
+    { "RaidMusterRebuffTimeoutSecs", DcType::UInt,  45,   5, 300,  true  },
+
     // Raid form of the wipe verdict: the fraction of the raid that must be dead
     // (with nobody left engaged) before the run treats the fight as a WIPE. A
     // literal everyone-dead test never fires at 25-40 — one pet-classed

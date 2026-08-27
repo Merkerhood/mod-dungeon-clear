@@ -1469,6 +1469,12 @@ DungeonClear.SpectateSpeed = 2.5
 #    Fraction of the raid that must be dead (nobody still fighting) for the
 #    fight to count as a WIPE (-> revive at the entrance and continue).
 # DungeonClear.RaidWipeFractionPct = 90
+#
+#    Pre-boss muster budgets: how long the raid may spend topping off at the
+#    staging point, and how long a ForceRebuff round may run, before the muster
+#    advances with what it has (it announces the shortfall; it never deadlocks).
+# DungeonClear.RaidMusterRestTimeoutSecs = 120
+# DungeonClear.RaidMusterRebuffTimeoutSecs = 45
 
 #    Many more corpses to walk between and drink for after a bad fight — the
 #    5-man budget ends winnable raid recoveries early.

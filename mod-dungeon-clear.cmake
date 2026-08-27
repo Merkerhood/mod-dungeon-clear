@@ -75,6 +75,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestDifficultyGate.cpp"
             "${MOD_PATH}/t/TestRaidCore.cpp"
             "${MOD_PATH}/t/TestRaidScale.cpp"
+            "${MOD_PATH}/t/TestRaidMuster.cpp"
             "${MOD_PATH}/t/TestEventRegistry.cpp"
             "${MOD_PATH}/t/TestVioletHold.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
