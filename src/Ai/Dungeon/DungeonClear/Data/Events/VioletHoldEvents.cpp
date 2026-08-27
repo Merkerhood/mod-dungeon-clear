@@ -30,8 +30,8 @@
 //     TempSummon and is invisible to the spawn store, so she never appears at
 //     all. Hence the roster patch below REMOVES both cell anchors.
 //  2. THE CREDIT ROWS LIE ABOUT WHICH BOSS. The first/second prisoner are rolled
-//     per instance (StorePersistentData(PERSISTENT_DATA_FIRST_BOSS,
-//     urand(BOSS_MORAGG, BOSS_ZURAMAT))), so killing Zuramat as the first
+//     per instance (StorePersistentData(PERSISTENT_DATA_FIRST_BOSS, <a random
+//     pick over the BOSS_MORAGG .. BOSS_ZURAMAT range>)), so killing Zuramat as the first
 //     prisoner sets NO DungeonEncounter bit that names Zuramat. Completion
 //     therefore rides GetBossState(DATA_1ST_BOSS / DATA_2ND_BOSS /
 //     DATA_CYANIGOSA) inside the objective hooks and NEVER the completed-encounter

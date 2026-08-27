@@ -910,7 +910,8 @@ namespace
     // one of the eighteen waves.
     //
     // COMPLETION IS THE BOSS-STATE SLOT, never the completed-encounter mask. The
-    // released pair is rolled per instance (urand(BOSS_MORAGG, BOSS_ZURAMAT)) and
+    // released pair is rolled per instance (a random pick over the BOSS_MORAGG
+    // .. BOSS_ZURAMAT range) and
     // instance_encounters only names Erekem and Moragg, so a run that draws
     // Zuramat and Xevozz sets NO DungeonEncounter bit for either — the instance's
     // own DATA_1ST_BOSS / DATA_2ND_BOSS / DATA_CYANIGOSA slots are the only
