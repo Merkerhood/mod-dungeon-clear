@@ -89,3 +89,77 @@ TEST(FightInPlaceTest, AzjolNerubKeepsItsOtherEncountersPullable)
     EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(601, 413.3f, 796.0f));
 }
 
+
+// Trollgore's arena (Drak'Tharon Keep, map 600). A third reason for the same
+// rule: this boss polices his own room COORDINATES. boss_trollgore's
+// CheckInRoom() is `Y >= -700 && Y <= -628`, and UpdateAI calls
+// EnterEvadeMode(EVADE_REASON_BOUNDARY) every tick it fails — so a pull-to-camp
+// that drags him or his pack a few yards south toward the Novos corridor
+// (which leaves the band at y ~ -705) evades the boss outright.
+
+TEST(FightInPlaceTest, TrollgoreArenaIsNoPull)
+{
+    // The boss's own spawn.
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -266.2f, -660.1f));
+    // The three Drakkari Invader landing spots 12-16yd east of him — the whole
+    // point is that this fight happens where it stands.
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -250.0f, -672.92f));
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -254.0f, -665.92f));
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -250.0f, -658.92f));
+    // The band mirrors his own CheckInRoom exactly, inclusive at both edges.
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -266.0f, -700.0f));
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -266.0f, -628.0f));
+}
+
+TEST(FightInPlaceTest, TrollgoreBoxStopsShortOfTheGhoulPit)
+{
+    // Column probes along y = -660 (his latitude): the arena floor is z 24-26.6
+    // over x -277..-245, the ramp drops through z 20.4 / 15.3 at x -278 / -280,
+    // and the ghoul pit proper is z 11.3 at x -300 — 13yd below the arena. A
+    // FightInPlaceZone is XY-only, so the box has to stop before the pit or the
+    // clear would be forbidden from pulling on the way UP to Trollgore.
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -276.0f, -660.0f));   // arena floor
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -282.0f, -660.0f));   // ramp lip (edge)
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -290.0f, -660.0f));  // ramp, pullable
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -300.0f, -660.0f));  // ghoul pit
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -336.3f, -633.4f));  // pit, on route
+}
+
+TEST(FightInPlaceTest, DrakTharonKeepsItsOtherEncountersPullable)
+{
+    // The Darkweb corridor to Novos leaves the Y band at y ~ -705.
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -259.8f, -705.4f));
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -290.0f, -717.5f));
+    // Novos' chamber, King Dred's pen and Tharon'ja's platform.
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -379.3f, -737.7f));
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -544.9f, -697.0f));
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -236.8f, -675.4f));
+    // The zone-in and the lower hall the route crosses on the way in.
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -517.3f, -488.0f));
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -441.9f, -603.7f));
+}
+
+TEST(FightInPlaceTest, TrollgoreBoxOverlapsTharonJaPlatformAndThatIsHarmless)
+{
+    // A FightInPlaceZone is XY-only and Tharon'ja's platform sits 107yd directly
+    // ABOVE Trollgore's arena, so its western half is inside the box. The box
+    // cannot be narrowed out of it: the three Drakkari Invader landing spots are
+    // at x -250 / -254, so maxX cannot go west of -250, and the platform starts
+    // at x -261.8. Pinned here so the overlap is a recorded decision rather than
+    // something a later reader "fixes" by shrinking the box off the invaders.
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -250.0f, -672.92f))
+        << "the invader landing spot is the constraint on maxX";
+    EXPECT_TRUE(FightInPlaceRegistry::IsNoPullZone(600, -250.0f, -670.0f))
+        << "so the platform's western half is inside the box too";
+
+    // Harmless because nothing up there is pullable: Tharon'ja himself, and four
+    // Drakuru Event Invisman triggers (28492) that are faction 35 and
+    // NOT_SELECTABLE. His own spawn is east of the box in any case.
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -236.83f, -675.41f))
+        << "Tharon'ja's own anchor is outside the box (x > -240)";
+    // And the approach to him leaves the box at every waypoint, in x or in y.
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -288.0f, -693.3f));  // DK ledge
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -274.6f, -734.7f));  // final climb
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -251.9f, -733.1f));
+    EXPECT_FALSE(FightInPlaceRegistry::IsNoPullZone(600, -238.1f, -697.8f));
+}

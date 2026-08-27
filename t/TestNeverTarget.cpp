@@ -82,3 +82,42 @@ TEST(DcNeverTargetRegistryTest, AhnkahetRowsAreScopedToTheStagingMobs)
     EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(601, 30111));
     EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(601, 30385));
 }
+
+// --- Drak'Tharon Keep (600) — the Novos gate's softlock -------------------
+//
+// Novos Summon Target (27583) is a "trigger" by convention only: unit_flags 0,
+// flags_extra 128, faction 14, rank 1 elite, level 74 — fully selectable and
+// fully attackable, and nothing in mod-playerbots or mod-dungeon-clear tests
+// IsTrigger(). Two are summoned into the chamber's opposite corners at the pull.
+//
+// The four Crystal Handlers are spawned by `target->CastSpell(target,
+// SPELL_SUMMON_CRYSTAL_HANDLER, ...)` on these two, alternating, at 16s / 32s /
+// 48s / 64s. A dead unit cannot cast, and a Crystal Handler's death is the ONLY
+// thing that removes a Beam Channel (52106) from Novos — whose 70s gate task
+// tests `me->HasAura(SPELL_BEAM_CHANNEL)` and repeats every 2s FOREVER while it
+// holds. So killing one of these permanently prevents Novos ever becoming
+// attackable: the encounter is unwinnable until the instance resets.
+TEST(DcNeverTargetRegistryTest, DrakTharonNovosSummonTargetIsNeverAClearTarget)
+{
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(600, 27583))
+        << "killing a Novos Summon Target stops a Crystal Handler spawning, which "
+           "leaves a Beam Channel that is never silenced, which softlocks the gate";
+}
+
+TEST(DcNeverTargetRegistryTest, DrakTharonRowDoesNotBanTheRestOfTheMap)
+{
+    // The things the clear MUST still fight on map 600.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(600, 26627))
+        << "Crystal Handler — killing all four IS the gate";
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(600, 27598))
+        << "Fetid Troll Corpse — the phase-1 add stream that walks into the camp";
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(600, 26631))  // Novos
+        << "the boss";
+    // Deliberately unlisted: Darkweb Victim (27909). Killing one hands the party a
+    // free level-76 elite (49960 rolls 49958/49959 at the corpse), but five of the
+    // six are 20yd+ off the Trollgore -> Novos route. Add the row only if run data
+    // shows the clear detouring to them; see the note in the registry.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(600, 27909));
+    // Scoping, same as the Nexus row above.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(601, 27583));
+}

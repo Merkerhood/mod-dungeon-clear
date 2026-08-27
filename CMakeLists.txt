@@ -520,3 +520,33 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    watchdog. IsScriptOnly: 192236 Taldaram Door, a DOOR_TYPE_PASSAGE that only
 #    his death opens but which is lock-free, so a force-open would unlock Jedoga
 #    / Amanitar / Volazj with him still immune behind it.)
+# Data/Events/DrakTharonKeepEvents.cpp
+#   (map 600 — Drak'Tharon Keep. THE fix is the roster patch: The Prophet
+#    Tharon'ja's instance_encounters rows are creditType 1 (cast-spell, spell
+#    61863) and BossSpawnIndex::Build skips every encounter that is not
+#    ENCOUNTER_CREDIT_KILL_CREATURE — correctly, since a spell credit carries no
+#    creature entry to derive coordinates from — so he never enters the derived
+#    roster, the candidate list empties after King Dred and every run declares
+#    itself finished at 3/4. Fixed with the new DcRoster::MakeBossWithBit, which
+#    adds a boss with an EXPLICIT DungeonEncounter bit (3) and hand-authored
+#    coords; completion then rides the same GetCompletedEncounterMask the other
+#    three use. The same defect hides a boss on CoT Stratholme (595), Halls of
+#    Stone (599) and Trial of the Champion (650) — each is one patch of its own
+#    and is deliberately not bundled here.
+#    Also: conditional event 1, the Novos camp-and-hold. Phase 1 is a 70s+ gate
+#    that only four Crystal Handler deaths open, run under a 3-second add stream
+#    with an 11yd / 1665-per-second pool on the boss, so the party never leaves
+#    combat — DrivesInCombat + StepsOwnMovement + Repeatable, driven by
+#    ObjectiveHookRegistry hook 14 (HoldNovosCamp), which is the Black Morass
+#    wave-driver shape scoped to one fixed camp. And heroic-only anchored event
+#    2, an entry-filtered sweep of King Dred's raptor pen so Raptor Call (59416,
+#    heroic only) has nothing left to summon.
+#    Paired rows elsewhere: DcNeverTargetRegistry {600,27583} (Novos Summon
+#    Target — killing one permanently stops a Crystal Handler spawning and
+#    softlocks the gate for the life of the instance), FightInPlaceRegistry
+#    (Trollgore's arena — his own CheckInRoom is a 72yd Y band and failing it
+#    EnterEvadeMode(BOUNDARY)s him every tick), DcEventDoorRegistry::
+#    IsNavigationIgnored 189299-189302 (the four Ritual Crystals, inverted-state
+#    DOOR_TYPE_ROOMs on a key-item lock lying across the route into the Novos
+#    chamber — the Utgarde Keep forge-fire shape), and three DcGroundHazard rows
+#    (47346 Arcane Field 14/11, 49034 Blizzard and 49548 Poison Cloud both 10/8).

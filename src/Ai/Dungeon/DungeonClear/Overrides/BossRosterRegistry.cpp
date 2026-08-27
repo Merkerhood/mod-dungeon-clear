@@ -60,6 +60,7 @@ namespace
             RegisterNexusRoster(t);
             RegisterAzjolNerubRoster(t);
             RegisterAhnkahetRoster(t);
+            RegisterDrakTharonKeepRoster(t);
             return t;
         }();
         return kPatches;

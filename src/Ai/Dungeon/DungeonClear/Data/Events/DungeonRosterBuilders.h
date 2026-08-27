@@ -62,6 +62,50 @@ namespace DcRoster
         return b;
     }
 
+    // Build a boss anchor with an EXPLICIT DungeonEncounter kill-bit.
+    //
+    // For a boss that HAS a real DungeonEncounter row but is absent from the
+    // auto-derived list, so `completionFrom` has nothing to resolve against.
+    // BossSpawnIndex::Build only emits a row for an encounter whose
+    // instance_encounters credit is ENCOUNTER_CREDIT_KILL_CREATURE, because a
+    // cast-spell credit carries a SPELL id where the creature entry would be and
+    // there is no spawn to look coordinates up by. That filter is correct and
+    // stays; this is the escape hatch for the bosses it hides.
+    //
+    // Completion still rides GetCompletedEncounterMask exactly like every other
+    // boss on the map: ObjectMgr stamps SPELL_ATTR0_CU_ENCOUNTER_REWARD on the
+    // credit spell, Spell::finish calls Map::UpdateEncounterState, and the mask's
+    // `1 << encounterIndex` bit is set — the same bit this parameter names. So
+    // this is NOT the doneBossStateIndex case (a boss with no DBC row at all,
+    // whose completion has to be read off the instance script's own slot); use
+    // this whenever a real DungeonEncounter bit exists and only the DERIVATION
+    // failed.
+    //
+    // Drak'Tharon Keep's The Prophet Tharon'ja (26632, bit 3, credit spell 61863)
+    // is the first user. CoT Stratholme's Mal'ganis (595), Halls of Stone's
+    // Tribunal of Ages (599) and Trial of the Champion's four (650) are the same
+    // shape and are the reason this is a named builder rather than an inline
+    // struct fill.
+    inline DungeonBossInfo MakeBossWithBit(uint32 entry, uint32 mapId, char const* name,
+                                           float x, float y, float z, uint32 encounterIndex,
+                                           int32 orderOverride = -1)
+    {
+        DungeonBossInfo b;
+        b.entry = entry;
+        b.name = name;
+        b.mapId = mapId;
+        b.x = x;
+        b.y = y;
+        b.z = z;
+        b.kind = DungeonAnchorKind::Boss;
+        b.encounterIndex = encounterIndex;
+        // Explicitly NOT set: inheritCompletionFrom (nothing to inherit from —
+        // the boss is missing from the base list, which is why we are here) and
+        // doneBossStateIndex (the DBC bit above is the completion source).
+        b.orderOverride = orderOverride;
+        return b;
+    }
+
     // Build a travel-objective anchor. `encounterIndex` slots it into the
     // encounter ordering; `gateEntry` (optional) is a creature whose live
     // presence also satisfies the objective; `hook` (optional) is an

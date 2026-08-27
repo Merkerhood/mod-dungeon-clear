@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include <cmath>
 #include <vector>
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcNavPenaltyRegistry.h"
@@ -238,7 +239,10 @@ TEST(DcHazardRegistry, GroundPoolRetreatPointClearsItsOwnKeepOut)
     for (DcGroundHazard const* pool : { DcHazardRegistry::FindGround(289, 17742),
                                         DcHazardRegistry::FindGround(349, 21070),
                                         DcHazardRegistry::FindGround(601, 53400),
-                                        DcHazardRegistry::FindGround(601, 59419) })
+                                        DcHazardRegistry::FindGround(601, 59419),
+                                        DcHazardRegistry::FindGround(600, 47346),
+                                        DcHazardRegistry::FindGround(600, 49034),
+                                        DcHazardRegistry::FindGround(600, 49548) })
     {
         ASSERT_NE(pool, nullptr);
 
@@ -511,7 +515,10 @@ TEST(DcHazardMaraudonTest, EveryVacateRowOvershootsItsHoldBand)
     for (DcGroundHazard const* g : { DcHazardRegistry::FindGround(289, 17742),
                                      DcHazardRegistry::FindGround(349, 21070),
                                      DcHazardRegistry::FindGround(601, 53400),
-                                     DcHazardRegistry::FindGround(601, 59419) })
+                                     DcHazardRegistry::FindGround(601, 59419),
+                                     DcHazardRegistry::FindGround(600, 47346),
+                                     DcHazardRegistry::FindGround(600, 49034),
+                                     DcHazardRegistry::FindGround(600, 49548) })
     {
         ASSERT_NE(g, nullptr);
         ASSERT_GT(g->vacateRadius, 0.0f);
@@ -741,3 +748,96 @@ TEST(DcHazardRegistry, AzjolNerubRegistersAcidCloudOnBothDifficulties)
     }
 }
 
+
+// --- Drak'Tharon Keep: three pools, one of them 11 yards wide -------------
+//
+// 47346 Arcane Field is the widest ground hazard on the clear and the first one
+// bigger than a party's idea of melee range. Spell.dbc: Effect[0] = 27
+// SPELL_EFFECT_PERSISTENT_AREA_AURA, aura 3 PERIODIC_DAMAGE, EffectRadiusIndex
+// 42 = 11.0yd, EffectAmplitude 1000ms, BasePoints+DieSides = 1665 arcane PER
+// SECOND, at TARGET_DEST_CASTER — i.e. on Novos' own rooted feet, where the tank
+// has just landed the pull. Effect[1] is a -50% movement-speed leg on the same
+// footprint, so leaving is slower than arriving.
+
+TEST(DcHazardRegistry, DrakTharonRegistersAllThreePools)
+{
+    EXPECT_TRUE(DcHazardRegistry::HasAnyHazard(600));
+    EXPECT_TRUE(DcHazardRegistry::HasGroundHazards(600));
+    // Nothing on this map is a creature emitter or a trap: the Corpse Explode
+    // (49555 -> 49618) that looks like one has a CORPSE for an emitter and cannot
+    // be keyed by any of the three tables. So the gate here must be HasAnyHazard.
+    EXPECT_FALSE(DcHazardRegistry::HasEmitters(600));
+    EXPECT_FALSE(DcHazardRegistry::HasTrapHazards(600));
+
+    ASSERT_NE(DcHazardRegistry::FindGround(600, 47346), nullptr) << "Arcane Field";
+    ASSERT_NE(DcHazardRegistry::FindGround(600, 49034), nullptr) << "Blizzard";
+    ASSERT_NE(DcHazardRegistry::FindGround(600, 49548), nullptr) << "Poison Cloud";
+
+    // ONE row per spell, not two. No spell on map 600 has a SpellDifficulty.dbc
+    // row, so the heroic variants that exist are selected by SmartAI event phase
+    // and the DynamicObject reports the same id on both difficulties — the
+    // opposite of Hadronox's Acid Cloud, which genuinely needs its 59419 twin.
+    // 59004 is heroic Flash of Darkness (the Crystal Handlers'), 59013/59009 the
+    // heroic Blizzard/Frostbolt-family ids: none of them is a pool id we resolve.
+    EXPECT_EQ(DcHazardRegistry::FindGround(600, 59004), nullptr);
+    EXPECT_EQ(DcHazardRegistry::FindGround(600, 59013), nullptr);
+}
+
+TEST(DcHazardRegistry, DrakTharonArcaneFieldKeepOutAgreesWithTheNovosCamp)
+{
+    DcGroundHazard const* field = DcHazardRegistry::FindGround(600, 47346);
+    ASSERT_NE(field, nullptr);
+
+    // vacateRadius is the RAW 11yd aura, same rule every pool row follows: the
+    // retreat aims vacate + retreatSlack, and that aim point has to read clean
+    // against this row's own placement cylinder.
+    EXPECT_FLOAT_EQ(field->vacateRadius, 11.0f)
+        << "the raw aura radius, not the padded keep-out";
+    float const aim = field->vacateRadius + field->retreatSlack;
+    EXPECT_GT(aim, field->radius)
+        << "a keep-out at or past the retreat's aim point rejects every candidate "
+           "the vacate generates (the Destroyed Sentinel trap)";
+
+    // The keep-out is the aura plus a drift margin, and it must stay below the
+    // aim point — 14 leaves the same 3yd budget for NavmeshSnap pulling a
+    // candidate back toward the pool that the 8/5/11 rows leave.
+    EXPECT_FLOAT_EQ(field->radius, 14.0f);
+    EXPECT_NEAR(aim - field->radius, 3.0f, 0.01f);
+
+    // AND IT MUST AGREE WITH THE CAMP. DrakTharonKeepEvents' Novos camp is
+    // (-379.0, -757.0) and Novos spawns at (-379.27, -737.73): 19.3yd apart. A
+    // camp inside this cylinder would be rejected by PointIsHot on every tick the
+    // pool is up, and the hold hook would be walking the tank into a spot the
+    // placement solver refuses.
+    float const dx = -379.0f - (-379.27f), dy = -757.0f - (-737.73f);
+    float const campToNovos = std::sqrt(dx * dx + dy * dy);
+    EXPECT_GT(campToNovos, field->radius)
+        << "the camp is inside the Arcane Field keep-out (" << campToNovos << "yd)";
+    EXPECT_GT(campToNovos, aim)
+        << "the camp is inside the retreat's own aim ring, so a vacate would push "
+           "the tank straight back off it";
+    // The hook's own field keep-out (ObjectiveHookRegistry, hook 14) is this same
+    // number by construction; if one moves the other must move with it.
+    EXPECT_FALSE(DcHazardRegistry::PointInside(*field, -379.27f, -737.73f, 27.31f,
+                                               -379.0f, -757.0f, 28.4f))
+        << "the camp must read clean against the pool centred on Novos";
+}
+
+TEST(DcHazardRegistry, DrakTharonTimedPoolsKeepTheStandardShape)
+{
+    // Blizzard (Novos, phase 2) and Poison Cloud (Tharon'ja, flesh phase) are
+    // ordinary timed DynamicObjects dropped at a random party member: effect 27,
+    // EffectRadiusIndex 14 = 8.0yd on both, AttributesEx 0x88 (no channel bit).
+    for (DcGroundHazard const* g : { DcHazardRegistry::FindGround(600, 49034),
+                                     DcHazardRegistry::FindGround(600, 49548) })
+    {
+        ASSERT_NE(g, nullptr);
+        EXPECT_EQ(g->mapId, 600u);
+        EXPECT_FLOAT_EQ(g->vacateRadius, 8.0f) << "the raw 8yd aura";
+        EXPECT_FLOAT_EQ(g->radius, 10.0f) << "aura + 2yd of drift margin";
+        EXPECT_GT(g->vacateRadius + g->retreatSlack, g->radius);
+        // Single-floor chambers on both ends of the map; nothing within 6yd
+        // vertically of either.
+        EXPECT_FLOAT_EQ(g->zBand, 6.0f);
+    }
+}

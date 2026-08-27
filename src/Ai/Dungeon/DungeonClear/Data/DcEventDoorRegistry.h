@@ -254,6 +254,41 @@ namespace DcEventDoorRegistry
             case 193094:  // Ancient Nerubian Device (east) — the event clicks it
             case 193564:  // Doodad_Azjol_Platform_FX_01 — Taldaram's prison FX
                 return true;
+            // Drak'Tharon Keep (map 600) — the four Ritual Crystals around
+            // Novos the Summoner, at (-392.4,-724.9), (-365.3,-751.1),
+            // (-365.4,-724.9) and (-392.3,-751.1), all z 29.4: a 27x26yd square
+            // centred on the boss that the party walks THROUGH to reach him.
+            //
+            // Every one is a GAMEOBJECT_TYPE_DOOR with Data0 = 1 (startOpen, so
+            // its state is INVERTED — the Blackrock Depths apparatus shape) and
+            // Data1 = lock 1669, LOCK_KEY_ITEM requiring item 38555 "Ritual
+            // Crystal Key". instance_drak_tharon_keep registers all four as
+            // DOOR_TYPE_ROOM on the pseudo-encounter DATA_NOVOS_CRYSTALS, so the
+            // instance script owns their state end to end; the visual of a
+            // crystal going dark is driven by spell_novos_crystal_handler_death_
+            // aura setting the nearest DOOR within 5yd to GO_STATE_READY when a
+            // Crystal Handler dies.
+            //
+            // A bot must never click one — it has no key and the crystals are
+            // not a gate the party solves — so they are correctly NOT
+            // IsKeyExempt. But nothing else stops the blocking-door value reading
+            // one of the four as a shut gate straddling the route into the
+            // chamber and auto-pausing the run at it. That is the Utgarde Keep
+            // forge-fire failure exactly: an inverted-state DOOR_TYPE_ROOM lying
+            // across the corridor, opened by a kill rather than by a click, with
+            // a hold that would starve the very fight that opens it.
+            //
+            // They obstruct nothing: mmaps carry no gameobjects and movement
+            // splines are not collision-checked, and the chamber floor runs flat
+            // at z ~28.4 straight under all four. As everywhere on this list,
+            // DcEngageGeometry::ClosedDoorBetween still rays the real collision
+            // mesh and never consults this table, so nothing on the far side of
+            // a genuinely solid obstacle is dragged into a pull.
+            case 189299:  // Ritual Crystal (north-west)
+            case 189300:  // Ritual Crystal (south-east)
+            case 189301:  // Ritual Crystal (north-east)
+            case 189302:  // Ritual Crystal (south-west)
+                return true;
             default:
                 return false;
         }

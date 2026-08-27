@@ -118,6 +118,43 @@ void RegisterUtgardeKeepEvents(std::vector<DungeonEvent>& out);
 void RegisterNexusEvents(std::vector<DungeonEvent>& out);
 void RegisterAzjolNerubEvents(std::vector<DungeonEvent>& out);
 void RegisterAhnkahetEvents(std::vector<DungeonEvent>& out);
+// Drak'Tharon Keep (map 600) — Novos' camp, shared with the hold driver
+// (ObjectiveHookRegistry hook 14, HoldNovosCamp) so the camp and the keep-out it
+// is placed against have exactly ONE definition. Every number is measured; the
+// reasoning is in DrakTharonKeepEvents.cpp.
+namespace DcDrakTharonKeep
+{
+    constexpr uint32 NOVOS = 26631;
+
+    // Column-probed against the live 600 mmtiles: one walkable surface at
+    // z 28.39. 19.3yd from Novos (-379.27, -737.73), 14.9yd from the Fetid Troll
+    // Corpses' arrival point, 56yd from the staircase spawn trigger.
+    constexpr float CAMP_X = -379.0f;
+    constexpr float CAMP_Y = -757.0f;
+    constexpr float CAMP_Z = 28.4f;
+
+    // Grid-scan radius for Novos, from the activation predicate and the driver
+    // alike. The chamber is ~96 x 88yd; this must cover it and the approach
+    // without reaching Trollgore's arena 206yd away.
+    constexpr float NOVOS_SCAN = 120.0f;
+
+    // Keep-out around Novos while the Arcane Field (47346) is up. THIS MUST TRACK
+    // the map-600 47346 row's placement `radius` in DcHazardRegistry — the driver
+    // and the placement solver have to agree on one cylinder, and
+    // t/TestDcHazard's DrakTharonArcaneFieldKeepOutAgreesWithTheNovosCamp pins
+    // the camp against it.
+    constexpr float FIELD_KEEPOUT = 14.0f;
+
+    // Re-centring leash (the tank comes home past this UNLESS it is in melee
+    // contact) and the hard leash (it comes home regardless). The hard leash is
+    // sized to catch the three places phase 1 can strand a party — the staircase
+    // at 56yd, ROOM_LEFT at 40yd and ROOM_RIGHT at 50yd — while leaving the
+    // corpse arrival point at 14.9yd comfortably inside.
+    constexpr float CAMP_LEASH = 6.0f;
+    constexpr float CAMP_HARD_LEASH = 25.0f;
+}
+
+void RegisterDrakTharonKeepEvents(std::vector<DungeonEvent>& out);
 
 // --- roster patches (one appender per dungeon that corrects the boss list) -
 // Each relocates that dungeon's BossRosterPatch out of BossRosterRegistry.cpp
@@ -151,6 +188,7 @@ void RegisterUtgardeKeepRoster(std::vector<BossRosterPatch>& t);
 void RegisterNexusRoster(std::vector<BossRosterPatch>& t);
 void RegisterAzjolNerubRoster(std::vector<BossRosterPatch>& t);
 void RegisterAhnkahetRoster(std::vector<BossRosterPatch>& t);
+void RegisterDrakTharonKeepRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;

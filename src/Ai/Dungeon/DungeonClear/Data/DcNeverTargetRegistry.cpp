@@ -117,11 +117,48 @@ namespace
     // `possible targets no los` by entry). That is the COMBAT engine, which this
     // table leaves untouched. All that is removed is the CLEAR's decision to walk
     // the tank out to the arena's edge for it.
+    // Drak'Tharon Keep (600) — Novos Summon Target (27583). THE softlock on the
+    // map, and the one row here whose failure mode is unrecoverable.
+    //
+    // WHAT IT IS. boss_novos' JustEngagedWith summons two of them into the Novos
+    // chamber's opposite corners, at (-341.31, -724.40, 28.57) and
+    // (-408.87, -730.21, 28.58). Its template reads `unit_flags 0`,
+    // `flags_extra 128` (TRIGGER), faction 14, rank 1 (elite), level 74 — i.e.
+    // it is a "trigger" only by convention. It carries NONE of the flags that
+    // hide a trigger from the clear: not NOT_SELECTABLE, not NON_ATTACKABLE, not
+    // IMMUNE_TO_PC. AttackersValue::IsPossibleTarget accepts it, and there is no
+    // IsTrigger() test anywhere in mod-playerbots or mod-dungeon-clear. So to the
+    // corridor scan it is simply a fresh elite standing 30-40yd away, in the room
+    // the party is already fighting in.
+    //
+    // WHY KILLING IT ENDS THE RUN. The four Crystal Handlers are spawned by
+    // `target->CastSpell(target, SPELL_SUMMON_CRYSTAL_HANDLER, ...)` on me->
+    // m_Events at 16s / 32s / 48s / 64s, alternating between these two targets.
+    // A dead unit cannot cast. Killing one therefore permanently prevents one or
+    // both of its two handlers from ever spawning — and a handler's death is the
+    // ONLY thing that removes a Beam Channel (52106) from Novos. The 70s gate
+    // task tests `me->HasAura(SPELL_BEAM_CHANNEL)` and repeats every 2s FOREVER
+    // while it holds, with no timeout escape, so Novos never becomes attackable.
+    // The encounter is unwinnable until the instance resets: not a wipe, not a
+    // stall the human can unstick at the keyboard, a dead run.
+    //
+    // This is class 2 of the two above (killing it is NEGATIVE progress) in its
+    // purest form: it is encounter staging, placed by the script, and the party
+    // has no reason to travel to it and every reason not to.
+    //
+    // NOT LISTED, on purpose: Darkweb Victim (27909), the six cocooned civilians
+    // in the corridor between Trollgore and Novos. Killing one rolls 49958/49959
+    // and hands the party a free level-76 elite at the corpse, so it is genuine
+    // negative progress — but only one of the six ((-287.1, -701.2)) is within
+    // ~10yd of the route and the rest are 20yd+ east of it, off-path. This table
+    // is meant to stay small and justified; add the row if run data shows the
+    // clear actually detouring to them.
     DcNeverTargetRow const kRows[] =
     {
         { 576, 26793 },  // The Nexus — Crystalline Frayer (seed pod; unkillable until Ormorok dies)
         { 619, 30111 },  // Ahn'kahet — Twilight Worshipper (Jedoga's kneeling congregation, 65yd out)
         { 619, 30385 },  // Ahn'kahet — Twilight Volunteer (24/25 permanently unattackable; the 25th walks in)
+        { 600, 27583 },  // Drak'Tharon Keep — Novos Summon Target (killing one softlocks the Novos gate)
     };
 }
 

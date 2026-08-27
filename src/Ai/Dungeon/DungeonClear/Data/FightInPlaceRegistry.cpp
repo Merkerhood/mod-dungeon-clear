@@ -42,10 +42,57 @@ namespace
     // 248), his Prime Guards (y 341) and the exit are all at y < 480 and stay
     // normally pullable, and the drop landing (544.18, 481.26, 288.98) sits 1yd
     // inside the southern edge — the party is out of the box within a step.
+    //
+    // Drak'Tharon Keep (600) — Trollgore's arena. The THIRD reason for the same
+    // rule, and the bluntest: this boss policices his own room coordinates.
+    // boss_trollgore's CheckInRoom() override is
+    //
+    //     return (me->GetPositionY() >= -700.0f && me->GetPositionY() <= -628.0f);
+    //
+    // and UpdateAI calls EnterEvadeMode(EVADE_REASON_BOUNDARY) EVERY TICK it
+    // fails. His arena is 72 yards of Y, and the corridor to Novos leaves it at
+    // y ~ -705 — so a pull-to-camp that drags him or his pack even a few yards
+    // south of -700 does not merely reposition the fight, it evades the boss and
+    // resets the encounter.
+    //
+    // The Y band mirrors his own gate exactly. The X band is the part that needs
+    // care, because a FightInPlaceZone is XY-only and the ghoul pit runs directly
+    // WEST of the arena at 9-13yd lower. Column-probing the live 600 mmtiles
+    // along y = -660 (his latitude):
+    //
+    //     x -244   131.55                      <- only Tharon'ja's platform above
+    //     x -246   131.55 / 26.59              <- arena floor starts
+    //     x -276    24.05                      <- arena floor
+    //     x -278    20.39                      <- the ramp down begins
+    //     x -280    15.32                      <- ramp
+    //     x -300    86.69 / 11.28              <- the ghoul pit, 13yd below the arena
+    //
+    // So the arena floor at his latitude is x -277 .. -245, and [-282, -240] is
+    // that floor plus ~5yd of the ramp at either end. The pit proper (x <= -299)
+    // is outside the box and stays normally pullable, which matters: the party
+    // fights its way UP through the pit to reach him and nothing there gates on
+    // position. The five yards of ramp inside the box are deliberate — a pack
+    // held at the arena lip is one the tank should engage where it stands rather
+    // than drag back down the ramp toward the boss's own boundary.
+    //
+    // KNOWN AND ACCEPTED OVERLAP, the Azjol-Nerub caveat again: a zone is XY-only
+    // and THE PROPHET THARON'JA'S PLATFORM SITS DIRECTLY ABOVE THIS ARENA, 107yd
+    // up (x -261.8 .. -210.6, y -706.1 .. -651.1, z 128.3 .. 131.7). Its western
+    // half therefore falls inside this footprint. That is unavoidable rather than
+    // sloppy: the three Drakkari Invader landing spots are at x -250 and -254, so
+    // the box cannot end west of -250, and the platform starts at -261.8. It is
+    // also harmless — the only things standing up there are Tharon'ja himself and
+    // four Drakuru Event Invisman triggers (28492, faction 35, NOT_SELECTABLE,
+    // SmartAI with zero rows), so there is nothing on the platform for an
+    // advanced pull to have dragged anywhere. The whole approach to him — the
+    // z~102 death-knight ledge at (-288,-693) and the final climb from
+    // (-274.6,-734.7) to (-245.3,-672.0) — lies outside the box in x or y at
+    // every waypoint.
     FightInPlaceZone const kZones[] =
     {
         { 585, 216.0f, 260.0f, -45.0f, 45.0f },  // Magisters' Terrace — Selin Fireheart's room
         { 601, 470.0f, 640.0f, 480.0f, 625.0f }, // Azjol-Nerub — Hadronox's shaft
+        { 600, -282.0f, -240.0f, -700.0f, -628.0f }, // Drak'Tharon Keep — Trollgore's arena
     };
 }
 

@@ -49,6 +49,7 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(547));   // Slave Pens — drop objective
     EXPECT_TRUE(BossRosterRegistry::HasPatch(546));   // Underbog — drop objective
     EXPECT_TRUE(BossRosterRegistry::HasPatch(576));   // The Nexus — sphere objectives
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(600));   // Drak'Tharon Keep — the cast-spell-credit boss
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }
@@ -1497,3 +1498,132 @@ TEST(BossRosterRegistryTest, AzjolNerubBracketsHadronoxWithTheWebHoldAndTheDrop)
     EXPECT_EQ(Find(out, 29120)->encounterIndex, 2u);
 }
 
+
+// --- Drak'Tharon Keep (map 600) -------------------------------------------
+
+// THE headline fix. instance_encounters rows 375/376 give The Prophet Tharon'ja
+// creditType 1 (ENCOUNTER_CREDIT_CAST_SPELL, spell 61863), and
+// BossSpawnIndex::Build skips every encounter that is not
+// ENCOUNTER_CREDIT_KILL_CREATURE — so he is absent from the derived list, the
+// candidate picker empties after King Dred, AllClearedTrigger fires, and every
+// run on this map ends 3/4. The base list below is exactly what the derived
+// roster produces today.
+TEST(BossRosterRegistryTest, DrakTharonAddsTheCastSpellCreditBoss)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(26630, 0, "Trollgore", 600),
+        Boss(26631, 1, "Novos the Summoner", 600),
+        Boss(27483, 2, "King Dred", 600),
+        // 26632 The Prophet Tharon'ja is MISSING here on purpose — that is the bug.
+    };
+    std::vector<DungeonBossInfo> out =
+        BossRosterRegistry::Apply(600, DUNGEON_DIFFICULTY_NORMAL, base);
+
+    ASSERT_EQ(out.size(), 4u) << "the fourth boss must be added on normal difficulty";
+
+    // Clear order is the travel order, which is also the DBC order — 422 + 206 +
+    // 354 + 643 = 1625yd by Dijkstra over the map-600 mmtiles.
+    EXPECT_EQ(out[0].entry, 26630u) << "Trollgore";
+    EXPECT_EQ(out[1].entry, 26631u) << "Novos the Summoner";
+    EXPECT_EQ(out[2].entry, 27483u) << "King Dred";
+    EXPECT_EQ(out[3].entry, 26632u) << "The Prophet Tharon'ja";
+
+    DungeonBossInfo const* tharon = Find(out, 26632);
+    ASSERT_NE(tharon, nullptr);
+    EXPECT_EQ(tharon->kind, DungeonAnchorKind::Boss);
+
+    // Completion rides the DBC mask, exactly like the other three: JustDied casts
+    // 61863, ObjectMgr stamps SPELL_ATTR0_CU_ENCOUNTER_REWARD on it, Spell::finish
+    // calls Map::UpdateEncounterState and bit 3 is set.
+    EXPECT_EQ(tharon->encounterIndex, 3u)
+        << "his real DungeonEncounter bit — the same mask the other three use";
+    EXPECT_EQ(tharon->doneBossStateIndex, -1)
+        << "NOT the instance boss-state path: that index space is SHIFTED on this "
+           "map (DATA_NOVOS_CRYSTALS is a door pseudo-encounter at slot 2, so Dred's "
+           "DBC bit 2 is his SetBossState slot 3) and mixing sources hides a "
+           "divergence";
+    EXPECT_EQ(tharon->inheritCompletionFrom, 0u)
+        << "nothing to inherit from — he is missing from the base list, which is "
+           "the whole reason this patch exists";
+
+    // Hand-authored coordinates: his DB spawn, which is what BossSpawnIndex would
+    // have produced had the credit type let it. Column-probed at (-236.8, -675.4):
+    // one walkable surface at z 131.72, a 0.23yd delta NavmeshSnap absorbs.
+    EXPECT_NEAR(tharon->x, -236.83f, 0.5f);
+    EXPECT_NEAR(tharon->y, -675.41f, 0.5f);
+    EXPECT_NEAR(tharon->z, 131.95f, 0.5f);
+
+    // The other three are untouched on normal — no reorder is needed, because the
+    // DBC order already matches the path.
+    EXPECT_EQ(Find(out, 26630)->encounterIndex, 0u);
+    EXPECT_EQ(Find(out, 26631)->encounterIndex, 1u);
+    EXPECT_EQ(Find(out, 27483)->encounterIndex, 2u);
+    for (uint32 entry : { 26630u, 26631u, 27483u })
+        EXPECT_EQ(Find(out, entry)->orderOverride, -1)
+            << entry << " should not have been reordered on normal difficulty";
+}
+
+// Heroic adds one objective and nothing else: the raptor pen, swept before Dred
+// so Raptor Call (59416, heroic only) has nothing left to summon.
+TEST(BossRosterRegistryTest, DrakTharonHeroicSweepsTheRaptorPenBeforeDred)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(26630, 0, "Trollgore", 600),
+        Boss(26631, 1, "Novos the Summoner", 600),
+        Boss(27483, 2, "King Dred", 600),
+    };
+    std::vector<DungeonBossInfo> out =
+        BossRosterRegistry::Apply(600, DUNGEON_DIFFICULTY_HEROIC, base);
+
+    ASSERT_EQ(out.size(), 5u) << "4 bosses + the raptor pen objective";
+
+    int trollgore = -1, novos = -1, pen = -1, dred = -1, tharon = -1;
+    for (int i = 0; i < (int)out.size(); ++i)
+    {
+        if (out[i].entry == 26630) trollgore = i;
+        if (out[i].entry == 26631) novos = i;
+        if (out[i].entry == 27483) dred = i;
+        if (out[i].entry == 26632) tharon = i;
+        if (out[i].kind == DungeonAnchorKind::Objective && out[i].eventId == 2) pen = i;
+    }
+    ASSERT_GE(pen, 0) << "the raptor-pen objective (eventId 2) is missing on heroic";
+
+    EXPECT_LT(trollgore, novos);
+    EXPECT_LT(novos, pen);
+    EXPECT_LT(pen, dred)
+        << "the pool has to be emptied BEFORE the pull, or Raptor Call feeds the "
+           "fight one extra level-74 elite every ~30s";
+    EXPECT_LT(dred, tharon);
+
+    // The anchor sits inside the pen but off Dred's spawn (-544.87, -696.97).
+    // Column-probed at (-533, -692): ONE surface, z 30.63, nothing else in the
+    // column — the pen is a single floor.
+    EXPECT_NEAR(out[pen].x, -533.0f, 1.0f);
+    EXPECT_NEAR(out[pen].y, -692.0f, 1.0f);
+    EXPECT_NEAR(out[pen].z, 30.63f, 1.0f);
+
+    // Kill-bits survive the reorder untouched — orderOverride moves the clear
+    // sequence and nothing else.
+    EXPECT_EQ(Find(out, 26630)->encounterIndex, 0u);
+    EXPECT_EQ(Find(out, 26631)->encounterIndex, 1u);
+    EXPECT_EQ(Find(out, 27483)->encounterIndex, 2u);
+    EXPECT_EQ(Find(out, 26632)->encounterIndex, 3u);
+}
+
+// The pen sweep is heroic-only, and the normal roster must not carry a stray
+// objective anchor for it (boss-nav would walk the party into an empty pen).
+TEST(BossRosterRegistryTest, DrakTharonNormalHasNoRaptorPenObjective)
+{
+    std::vector<DungeonBossInfo> base = {
+        Boss(26630, 0, "Trollgore", 600),
+        Boss(26631, 1, "Novos the Summoner", 600),
+        Boss(27483, 2, "King Dred", 600),
+    };
+    std::vector<DungeonBossInfo> out =
+        BossRosterRegistry::Apply(600, DUNGEON_DIFFICULTY_NORMAL, base);
+
+    for (DungeonBossInfo const& b : out)
+        EXPECT_NE(b.kind, DungeonAnchorKind::Objective)
+            << "map 600 has no normal-difficulty objectives — Raptor Call is "
+               "scheduled inside if (IsHeroic())";
+}

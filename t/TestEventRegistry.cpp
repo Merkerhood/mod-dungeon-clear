@@ -146,6 +146,15 @@ namespace
             // intro DoAction, which is meaningless from afar anyway (the Zum'rah
             // pattern verbatim).
             {540, 5},
+            // Drak'Tharon Keep "Novos: hold the camp": DtkNovosPhaseOne is a
+            // 120yd FindNearestCreature FROM THE BOT for a live Novos carrying
+            // UNIT_FLAG_NOT_SELECTABLE, so it cannot read true until the leader
+            // is in or beside his chamber (the room is ~96 x 88yd). Its lone
+            // step (hook 14, HoldNovosCamp) OWNS the travel — it walks the tank
+            // back to the camp — so there is nothing an arrival step would add,
+            // and Done is its "nothing to steer this tick" yield rather than a
+            // completion. Repeatable besides: a momentary Done latches nothing.
+            {600, 1},
             // Underbog "Send Ghaz'an up to his platform": deliberately map-wide,
             // and the one case where near-gating would be WRONG. Its hook fires
             // the same DoAction areatrigger 4302 fires, and path 1383921 opens by
@@ -565,6 +574,13 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // at which point nothing ever walked the tank to a portal and no rift ever
         // closed. See DungeonEvent::drivesInCombat.
         {269, 4},
+        // Drak'Tharon Keep "Novos: hold the camp". boss_novos summons a Fetid
+        // Troll Corpse every 3 SECONDS for the whole of phase 1 and each one
+        // DoZoneInCombat()s itself, so the party is in combat continuously from
+        // the pull until the 70s+ Crystal Handler gate opens. The non-combat
+        // rung would never run once, and the tank would fight wherever the pull
+        // left it — which is inside an 11yd / 1665-per-second Arcane Field.
+        {600, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -890,6 +906,11 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // place this glide was cancelled the tick after it was issued — 151 camp
         // attempts in one batch, none arriving, all logging a healthy spline.
         {269, 4},
+        // Drak'Tharon Keep "Novos: hold the camp": hook 14 issues the garrison
+        // MovePoint itself, so the per-tick hold would cancel it before the hook
+        // ran. It is also what makes the driver YIELD on Done — this rung sits
+        // above the stock combat movers and the tank must keep its rotation.
+        {600, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1548,4 +1569,148 @@ TEST(DungeonEventIntegrityTest, AhnkahetPrisonApparatusIsNavigationInvisible)
         << "the Taldaram Door opens on his death and must never be force-opened";
     EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(192236))
         << "it IS a real corridor door — the party must still see it as blocking";
+}
+
+// --- Drak'Tharon Keep (map 600) -------------------------------------------
+
+// Novos' phase 1 is a >=70s gate the party can only open by killing four Crystal
+// Handlers, fought under a Fetid Troll Corpse every three seconds and an 11yd /
+// 1665-per-second Arcane Field on the boss. Every property below encodes "hold
+// the camp under fire and keep your rotation" — the two halves that a driver
+// event gets wrong in opposite directions.
+TEST(DungeonEventIntegrityTest, DrakTharonNovosIsACampHeldUnderFire)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 600, /*eventId*/ 1);
+    ASSERT_NE(ev, nullptr) << "Drak'Tharon Keep (600) event 1 (Novos camp) is missing";
+
+    // Conditional, not anchored: the party is in combat from the pull, and an
+    // anchored event drives on the non-combat engine only.
+    EXPECT_EQ(ev->activation, EventActivation::Conditional);
+    ASSERT_TRUE(ev->condition) << "the phase-1 predicate is not bound";
+
+    // The three flags that make a driver work, and the one that makes it stop.
+    EXPECT_TRUE(ev->drivesInCombat)
+        << "without this the driver never runs — there is no out-of-combat tick "
+           "between the pull and the gate opening";
+    EXPECT_TRUE(ev->stepsOwnMovement)
+        << "the hook issues its own garrison, and this is also what makes the "
+           "driver yield the tick so the tank keeps a rotation";
+    EXPECT_TRUE(ev->repeatable)
+        << "the hook reports Done on every in-position tick (that IS the yield), so "
+           "a one-shot latch would end the hold ~1s into a 70s phase";
+    EXPECT_FALSE(ev->required)
+        << "a timed-out driver must skip and re-fire, not stall the run";
+
+    // ONE Custom step. A second step would impose a sequence on an encounter
+    // whose problem is a standing position preference.
+    ASSERT_EQ(ev->steps.size(), 1u) << "the driver is one hook, not a step list";
+    EXPECT_EQ(ev->steps[0].kind, EventStepKind::Custom);
+    EXPECT_EQ(ev->steps[0].hookId, 14u);
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(14));
+
+    // No sweep anywhere on this event, in any form. The Risen Shadowcasters and
+    // Hulking Corpses of phase 1 are left standing, passive but hostile, at the
+    // spawn trigger 45yd UP the staircase (56yd from the camp) — a ClearRadius or
+    // a seeking KillCreature would march the party into them and off Novos' 80yd
+    // leash. This is the Mechanar bridge lesson on different scenery.
+    for (EventStep const& s : ev->steps)
+    {
+        EXPECT_NE(s.kind, EventStepKind::ClearRadius)
+            << "a sweep here walks the party up the staircase into the decoy pile";
+        EXPECT_FALSE(s.kind == EventStepKind::KillCreature && s.engage)
+            << "nothing has to be sought — the handlers SetInCombatWithZone and the "
+               "corpses walk into the camp";
+    }
+
+    // Folded into Novos' panel row: it is his encounter, not a standalone gate.
+    EXPECT_EQ(ev->panelGatesBossEntry, 26631u);
+
+    // Both difficulties: phase 1 and its gate are identical on normal and heroic
+    // (the heroic-only extra is 59910, which fires in phase TWO).
+    EXPECT_EQ(ev->gate, DcDifficultyGate::Any);
+}
+
+// King Dred's Raptor Call (59416) is scheduled inside `if (IsHeroic())` and picks
+// a random Drakkari Scytheclaw / Gutripper within 100yd that is alive and NOT in
+// combat. The pen sweep exists to empty that pool deterministically; every
+// property below is about not doing collateral damage while it does.
+TEST(DungeonEventIntegrityTest, DrakTharonRaptorPenIsAHeroicEntryFilteredSweep)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(/*map*/ 600, /*eventId*/ 2);
+    ASSERT_NE(ev, nullptr) << "Drak'Tharon Keep (600) event 2 (raptor pen) is missing";
+
+    EXPECT_EQ(ev->activation, EventActivation::Anchored);
+    EXPECT_EQ(ev->gate, DcDifficultyGate::HeroicOnly)
+        << "Raptor Call is never cast on normal — the sweep would be a pure detour";
+    EXPECT_TRUE(ev->persistent) << "seven elites is several combat gaps";
+    EXPECT_FALSE(ev->required)
+        << "this is a tuning pre-clear, not a gate: Dred is reachable either way";
+
+    ASSERT_EQ(ev->steps.size(), 1u);
+    EventStep const& sweep = ev->steps[0];
+    EXPECT_EQ(sweep.kind, EventStepKind::ClearRadius);
+
+    // Entry-filtered, and this is load-bearing twice over: Dred himself spawns
+    // 12.5yd from the anchor and Elder Kilias (30534, faction 35) stands 26yd
+    // away in the same pen. An unfiltered volume would pull the boss early and go
+    // looking at a friendly quest NPC.
+    ASSERT_EQ(sweep.entryFilter.size(), 2u);
+    EXPECT_NE(std::find(sweep.entryFilter.begin(), sweep.entryFilter.end(), 26628u),
+              sweep.entryFilter.end()) << "Drakkari Scytheclaw";
+    EXPECT_NE(std::find(sweep.entryFilter.begin(), sweep.entryFilter.end(), 26641u),
+              sweep.entryFilter.end()) << "Drakkari Gutripper";
+
+    // Reach. Measured from (-533, -692), the seven pen raptors sit at 5.7 .. 33.7
+    // yards and the two HALL raptors at 62.0 / 65.9 — the latter stand on the
+    // Novos -> Dred route through the handler hall and are met by the corridor
+    // sweep long before the party turns into the pen.
+    EXPECT_GE(sweep.radius, 34.0f) << "must reach the farthest raptor inside the pen";
+    EXPECT_LT(sweep.radius, 62.0f)
+        << "a radius this wide marches the party back east to re-clear the handler "
+           "hall it already walked through";
+
+    // Flat pen floor (z 30.1 .. 32.1); the zBand keeps the sweep on it.
+    EXPECT_LE(sweep.zBand, 10.0f);
+    EXPECT_GE(sweep.timeoutMs, 120000u) << "seven elites, one at a time";
+
+    // The Dire Maul crystal lesson, restated by Ahn'kahet's initiate sweep: the
+    // whole kill zone must be inside the objective's arriveRadius, or the tank
+    // falls out of "arrived" mid-clear and engage-trash / Advance start competing
+    // for the tick. .Persistent() does NOT cover this — the sticky latch in
+    // IsPersistentAnchoredEventActive only arms at stepIndex >= 1, and the sweep
+    // is step 0.
+    float arrive = -1.0f;
+    for (BossRosterPatch const& patch : BossRosterRegistry::AllPatches())
+    {
+        if (patch.mapId != 600)
+            continue;
+        for (DungeonBossInfo const& e : patch.add)
+            if (e.kind == DungeonAnchorKind::Objective && e.eventId == 2)
+                arrive = e.arriveRadius;
+    }
+    ASSERT_GT(arrive, 0.0f) << "the raptor-pen objective has no arrive radius";
+    EXPECT_GT(arrive, sweep.radius)
+        << "arrive radius " << arrive << " is inside the " << sweep.radius
+        << "yd sweep — the tank falls out of 'arrived' mid-clear";
+}
+
+// The four Ritual Crystals are the Utgarde Keep forge-fire shape on a different
+// map: inverted-state DOOR_TYPE_ROOMs lying across the route, opened by a kill
+// rather than a click, and unopenable by a bot in any case (lock 1669 needs item
+// 38555). Left flagged they end the run at the door to the encounter.
+TEST(DungeonEventIntegrityTest, DrakTharonRitualCrystalsAreNavigationInvisible)
+{
+    // Four DOOR_TYPE_ROOM gameobjects in a 27x26yd square centred on Novos, all
+    // startOpen (so their state is INVERTED) and all on lock 1669, a key item no
+    // bot carries. The party walks THROUGH the square to reach him.
+    for (uint32 crystal : { 189299u, 189300u, 189301u, 189302u })
+    {
+        EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(crystal))
+            << "Ritual Crystal " << crystal << " left flagged reads as a shut gate on "
+               "the route into the Novos chamber and auto-pauses the run there";
+        // NOT key-exempt: the crystals are not a gate the party solves, and a bot
+        // clicking one would fight the instance script for the GO state.
+        EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(crystal))
+            << "Ritual Crystal " << crystal << " must never be clicked by a bot";
+    }
 }

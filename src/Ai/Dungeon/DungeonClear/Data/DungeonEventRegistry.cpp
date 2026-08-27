@@ -413,6 +413,7 @@ namespace
             RegisterNexusEvents(t);
             RegisterAzjolNerubEvents(t);
             RegisterAhnkahetEvents(t);
+            RegisterDrakTharonKeepEvents(t);
             return t;
         }();
         return kEvents;

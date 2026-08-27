@@ -263,7 +263,70 @@ namespace
     // spawn ledge is z ~675, the pit floor is z ~648 and the lower kingdom is
     // z ~289. A pool dropped on one of those decks must not fence off the deck
     // below it, and 6yd is comfortably inside the smallest of those gaps (27yd).
-    constexpr std::array<DcGroundHazard, 4> kGroundHazards = {{
+    // Drak'Tharon Keep (map 600) — THREE pools, and the first row on the clear
+    // whose aura is bigger than a party's idea of melee range.
+    //
+    // 47346 ARCANE FIELD, Novos the Summoner, PHASE 1 ONLY. From Spell.dbc:
+    // Effect[0] = 27 SPELL_EFFECT_PERSISTENT_AREA_AURA applying aura 3
+    // SPELL_AURA_PERIODIC_DAMAGE, EffectRadiusIndex 42 = 11.0yd,
+    // EffectAmplitude 1000ms, BasePoints+DieSides = 1665 arcane PER SECOND, at
+    // TARGET_DEST_CASTER — so the pool sits on the boss's own feet, which is
+    // where the tank has just landed the pull. Effect[1] is a −50% movement-speed
+    // leg on the same footprint, which is why walking out of it is slower than
+    // walking into it. Novos is rooted (UNIT_FLAG_DISABLE_MOVE from Reset()) and
+    // stays rooted, so unlike a boss-carried aura this pool never chases.
+    //
+    // IT DOES NOT PERSIST INTO PHASE 2, and that matters for the vacate band.
+    // 47346's AttributesEx is 0x4 = SPELL_ATTR1_IS_CHANNELED, so the cast
+    // occupies CURRENT_CHANNELED_SPELL; the phase-2 flip's
+    // `me->InterruptNonMeleeSpells(false)` cancels it and Spell::cancel() ends
+    // with `m_caster->RemoveDynObject(m_spellInfo->Id)`. Creature::_EnterEvadeMode
+    // and Unit::setDeathState interrupt the same way, so a wipe does not leave
+    // the room poisoned either. (Its DurationIndex is 225 = 604800000ms — seven
+    // days. That is irrelevant for a channeled spell and is NOT evidence of
+    // persistence; it is recorded here so the wrong conclusion is not re-derived
+    // from it.) The pool is therefore gone before melee ever need to close, and
+    // a vacateRadius this wide cannot strand them at the boss.
+    //
+    // SIZING IS THE ONE PLACE THIS ROW DEPARTS FROM THE FIVE-YARD POOLS ABOVE.
+    // vacateRadius is the RAW 11yd aura, same rule as every other row. The
+    // retreat then aims at 11 + retreatSlack 6 = 17yd, so `radius` — the
+    // placement keep-out — has to stay below that or the retreat could never find
+    // a spot PointIsHot accepts: 14 leaves the same 3yd budget for NavmeshSnap
+    // pulling the candidate back toward the pool that the 8/5/11 rows leave. Do
+    // not raise `radius` toward 17 without raising retreatSlack with it.
+    //
+    // The Novos camp (-379.0, -757.0) is 19.3yd from him, i.e. 5.3yd outside this
+    // keep-out and 2.3yd past the retreat's aim point — the two agree by
+    // construction. See DrakTharonKeepEvents.cpp for why that camp is where it
+    // is, and ObjectiveHookRegistry hook 14, which pushes the LEADER out of the
+    // same 14yd cylinder on the tick the event driver owns.
+    //
+    // 49034 BLIZZARD, Novos, PHASE 2, and 49548 POISON CLOUD, The Prophet
+    // Tharon'ja's flesh phase. Both are ordinary timed pools and take the
+    // standard 10 / 8 shape: effect 27, EffectRadiusIndex 14 = 8.0yd, dropped at
+    // a random party member (Blizzard 1665 per 2s for 6s; Poison Cloud 602/s for
+    // 10s, every 10s at a player within 35yd). Neither is channeled
+    // (AttributesEx 0x88 on both, no channel bit), so they behave like every
+    // other DynamicObject pool. radius 10 leaves a 4yd gap to the 14yd retreat
+    // aim point.
+    //
+    // ONE ROW PER SPELL, not two: no spell on map 600 has a SpellDifficulty.dbc
+    // row (checked for all three, plus the Crystal Handlers' Flash of Darkness),
+    // so the heroic variants that exist are selected by SmartAI event phase and
+    // the DynamicObject reports the same id on both difficulties. Contrast
+    // Hadronox's Acid Cloud above, which genuinely needs its 59419 twin.
+    //
+    // zBand 6 for all three: the Novos chamber and Tharon'ja's platform are each
+    // a single floor, and the nearest deck to either is more than 6yd away.
+    //
+    // DELIBERATELY ABSENT — Trollgore's Corpse Explode (49555 -> 49618). It is
+    // 3770 damage in a 5yd radius every 15-19s and it is not representable here,
+    // because the EMITTER IS A CORPSE: 49555 applies a 3s periodic dummy to a
+    // DEAD Drakkari Invader within 10yd of him and tick 2 detonates it. No
+    // DynamicObject, no GameObject, no live creature — nothing any of the three
+    // tables can key on. It is a healing and spread fact, not a registry row.
+    constexpr std::array<DcGroundHazard, 7> kGroundHazards = {{
         //                   radius  zBand  vacate  hold  slack
         // Cloud of Disease — the pool a dying Diseased Ghoul (10495) leaves.
         { 289, 17742, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
@@ -272,6 +335,12 @@ namespace
         // Acid Cloud — Hadronox, normal (707/s) and heroic (1414/s), 90s each.
         { 601, 53400, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
         { 601, 59419, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
+        // Arcane Field — Novos' 11yd / 1665-per-second phase-1 keep-out.
+        { 600, 47346, 14.0f, 6.0f, 11.0f, 2.0f, 6.0f },
+        // Blizzard — Novos, phase 2, on a random party member.
+        { 600, 49034, 10.0f, 6.0f, 8.0f, 2.0f, 6.0f },
+        // Poison Cloud — Tharon'ja, flesh phase, on a random party member.
+        { 600, 49548, 10.0f, 6.0f, 8.0f, 2.0f, 6.0f },
     }};
 
     // ---- the trap table --------------------------------------------------
