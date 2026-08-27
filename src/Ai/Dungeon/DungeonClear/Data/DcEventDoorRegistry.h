@@ -392,6 +392,48 @@ namespace DcEventDoorRegistry
             case 189301:  // Ritual Crystal (north-east)
             case 189302:  // Ritual Crystal (south-west)
                 return true;
+            // Molten Core (map 409) — the three fire DOODADS. Every
+            // GAMEOBJECT_TYPE_DOOR on this map is one of these; there is not a
+            // single real door in the raid. All three are lock 0 (Data1),
+            // startOpen 0 (Data0), no ScriptName, spawned GO_STATE_READY, so
+            // the closed-door predicate reads each one as a shut gate and the
+            // walk-in then finds nothing to click:
+            //
+            //   177000 Hot Coal (guid 56287, display 2470) at
+            //     (736.7,-1176.6,-119.8) — 23yd short of MajordomoSummonPos
+            //     (759.5,-1173.4,-119.0), squarely on the approach into his
+            //     chamber and well inside the value's 80yd DOOR_LOOK_AHEAD.
+            //     Nothing in instance_molten_core or boss_majordomo_executus
+            //     so much as names entry 177000: it is a decorative coal pile
+            //     that is permanently READY and opened by nothing, ever.
+            //     This ended tr-20260827-145857-1 (the Plan E1 pilot's first
+            //     run) at 8/11 bosses: "blocking-door: flagged ... 'Hot Coal'
+            //     (entry 177000) 66.2yd from bot as corridor-blocking" ->
+            //     walk-in -> "can't open ... -> auto-pausing".
+            //
+            //   178107 Lava Steam / 178108 Lava Splash (guids 2135424/2135423)
+            //     at (839.0,-830.4,-230.2) and (839.3,-831.1,-230.2). These are
+            //     the Ahn'kahet 193564 shape, one step worse: they sit ON the
+            //     Ragnaros fight anchor (838.3,-831.5,-232.2) — 1.3yd and 1.4yd
+            //     away — and ~20yd from the Summon-Ragnaros gossip anchor, so a
+            //     flag here parks the raid on the objective it has arrived at.
+            //     They are pure RP visuals: spawned despawned (spawntimesecs
+            //     -604800) and made to appear by EVENT_RAGNAROS_SUMMON_1's
+            //     SetRespawnTime(900) + Refresh(), which is a RESPAWN, not a
+            //     GOState change. Their state is never toggled by anything, so
+            //     they are shut for the whole Ragnaros encounter.
+            //
+            // Deliberately NOT also IsScriptOnly, for the reason the Utgarde
+            // Keep forge walls spell out: IsScriptOnly only refuses the click —
+            // the prop would still be flagged, still parked at, still
+            // auto-paused on. Navigation-invisible is the only answer for a
+            // thing that is not a door at all. And as everywhere on this list
+            // that costs no awareness: DcEngageGeometry::ClosedDoorBetween rays
+            // the real collision mesh and never consults this table.
+            case 177000:  // Hot Coal (Majordomo's chamber approach)
+            case 178107:  // Lava Steam (on Ragnaros' anchor)
+            case 178108:  // Lava Splash (on Ragnaros' anchor)
+                return true;
             default:
                 return false;
         }

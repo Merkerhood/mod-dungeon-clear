@@ -934,6 +934,14 @@ Unit* DcTargeting::LeaderFightAnchor(Player* bot, Player* leader, Position& anch
     anchorPos = target ? target->GetPosition() : leader->GetPosition();
     return target;
 }
+// Radius of the grid fallback below. Every caller of the two scans asks about a
+// boss the party is approaching or standing on, and the widest of those gates is
+// Advance's DC_BOSS_GRID_LOADED_RANGE (150yd) — the range inside which "not in
+// the store" is allowed to mean "not spawned". A little headroom past it keeps
+// the fallback authoritative wherever the store scan is trusted, without turning
+// either helper into a whole-map query.
+constexpr float DC_SUMMON_SCAN_RANGE = 200.0f;
+
 Creature* DcTargeting::FindLiveCreatureOnMap(Player* bot, uint32 entry)
 {
     if (!bot)
@@ -948,7 +956,25 @@ Creature* DcTargeting::FindLiveCreatureOnMap(Player* bot, uint32 entry)
         if (c && c->GetEntry() == entry && c->IsAlive())
             return c;
     }
-    return nullptr;
+    // TempSummons are invisible to the store walked above: Creature::AddToWorld
+    // only inserts into _creatureBySpawnIdStore when m_spawnId is set, and a
+    // script summon has m_spawnId == 0. So a boss the instance script conjures
+    // rather than spawns from the `creature` table reads as "not on this map"
+    // forever, no matter how close the party stands to it.
+    //
+    // Molten Core's finale is entirely this shape and neither half has a
+    // `creature` row: instance_molten_core's SummonMajordomoExecutus() conjures
+    // Majordomo (12018) the moment bosses 0-7 are DONE, and Majordomo's own
+    // gossip conjures Ragnaros (11502). Blackrock Depths' Nefarian (11583) is
+    // the same. Run tr-20260827-145857-1 died on it: the party stood 76yd from a
+    // Majordomo that had been summoned 3 minutes earlier while Advance repeated
+    // "not in creature store at 76yd (<=150, grid loaded) -> stalling: genuinely
+    // not spawned".
+    //
+    // A grid search DOES see a summon, so fall back to one. It runs only when
+    // the store scan missed — which for a spawned boss means the run was about
+    // to stall anyway — so the steady state pays nothing.
+    return bot->FindNearestCreature(entry, DC_SUMMON_SCAN_RANGE, /*alive*/ true);
 }
 Creature* DcTargeting::GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 entry)
 {
@@ -986,7 +1012,17 @@ bool DcTargeting::IsCreaturePresentOnMap(Player* bot, uint32 entry)
         if (c && c->GetEntry() == entry)
             return true;
     }
-    return false;
+    // Same TempSummon blind spot as FindLiveCreatureOnMap — see the note there.
+    // This is the scan Advance's not-spawned stall consults, so without the
+    // fallback a script-summoned boss hard-stalls the run standing next to it.
+    //
+    // Two queries, because this helper's job is to tell "missing" from "killed"
+    // and NearestCreatureEntryWithLiveStateInObjectRangeCheck matches the alive
+    // flag EXACTLY (`u->IsAlive() == i_alive`) rather than treating it as a
+    // floor — so a single alive=false call would find corpses and miss the live
+    // boss. Live first: that is the case every caller is really asking about.
+    return bot->FindNearestCreature(entry, DC_SUMMON_SCAN_RANGE, /*alive*/ true) != nullptr ||
+           bot->FindNearestCreature(entry, DC_SUMMON_SCAN_RANGE, /*alive*/ false) != nullptr;
 }
 bool DcTargeting::HasPendingSummonEvent(Player* bot, AiObjectContext* ctx, uint32 bossEntry)
 {

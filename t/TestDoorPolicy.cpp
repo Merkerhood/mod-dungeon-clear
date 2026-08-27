@@ -339,6 +339,35 @@ TEST(DcDoorPolicyTest, UtgardeKeepForgeFlameWallsAreNavigationIgnored)
     }
 }
 
+// Molten Core has no doors at all — every GAMEOBJECT_TYPE_DOOR on map 409 is a
+// fire doodad, permanently in GO_STATE_READY and opened by nothing. Two of them
+// sit on the raid's critical path:
+//   177000 Hot Coal, 23yd short of Majordomo's summon position. This ended
+//     tr-20260827-145857-1 (the Plan E1 pilot's first run) at 8/11 bosses —
+//     flagged "as corridor-blocking" 66.2yd out, walk-in, "can't open ->
+//     auto-pausing".
+//   178107/178108 Lava Steam and Lava Splash, both within 1.5yd of Ragnaros'
+//     fight anchor. These are the Ahn'kahet prison-FX shape: a flag here parks
+//     the raid on the objective it has already arrived at.
+TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(177000));  // Hot Coal
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(178107));  // Lava Steam
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(178108));  // Lava Splash
+
+    // No other list claims them: they are lock-free, keyless, never clicked and
+    // never reopened on a timer, so navigation-invisible is the whole ruling.
+    // In particular NOT IsScriptOnly — that only refuses the click, and the
+    // doodad would still be flagged, parked at and auto-paused on.
+    for (uint32 entry : { 177000u, 178107u, 178108u })
+    {
+        EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(entry));
+        EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(entry));
+        EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(entry));
+        EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(entry));
+    }
+}
+
 // --- Self-clearing script barriers ------------------------------------------
 //
 // Stratholme's two gate traps. instance_stratholme watches (3612.3,-3335.4)

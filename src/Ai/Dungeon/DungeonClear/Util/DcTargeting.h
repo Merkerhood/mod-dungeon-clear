@@ -150,8 +150,12 @@ public:
     // uses (kept as a shared, testable helper).
     static Unit* LeaderFightAnchor(Player* bot, Player* leader, Position& anchorPos);
 
-    // Returns a live spawned creature with the given entry on the bot's map, or
-    // nullptr if none exists or all are dead.
+    // Returns a live creature with the given entry on the bot's map, or nullptr
+    // if none exists or all are dead. Walks the creature-by-spawn-id store, then
+    // falls back to a bounded grid search — the store holds only DB-spawned
+    // creatures (m_spawnId != 0), so a boss the instance script SUMMONS (Molten
+    // Core's Majordomo and Ragnaros, Blackrock Depths' Nefarian) is invisible to
+    // it and the fallback is the only thing that finds one.
     static Creature* FindLiveCreatureOnMap(Player* bot, uint32 entry);
 
     // Live boss creature for `entry`, resolved through the cached
@@ -163,8 +167,10 @@ public:
     // Returns nullptr when the boss isn't loaded/alive on the map.
     static Creature* GetLiveBoss(Player* bot, AiObjectContext* ctx, uint32 entry);
 
-    // Returns true if at least one spawned creature with the given entry exists
-    // on the bot's map (alive or dead). Distinguishes "missing" from "killed".
+    // Returns true if at least one creature with the given entry exists on the
+    // bot's map (alive or dead). Distinguishes "missing" from "killed". Carries
+    // the same script-summon grid fallback as FindLiveCreatureOnMap; without it
+    // Advance's not-spawned stall fires on a summoned boss standing in the room.
     static bool IsCreaturePresentOnMap(Player* bot, uint32 entry);
 
     // --- Event-summoned bosses (e.g. RFD's gong -> Tuten'kash) ------------
