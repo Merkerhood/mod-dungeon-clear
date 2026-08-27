@@ -344,7 +344,7 @@ void DcTestPlanManager::TickPlan(Plan& plan, uint32 diff)
     bool const ok = DcTestRunManager::Instance().Start(gm, plan.spec.dungeonToken,
                                                        plan.spec.level, seed, plan.spec.heroic,
                                                        plan.spec.gear, &msg, plan.spec.planId,
-                                                       &err, &runId);
+                                                       &err, &runId, plan.spec.size);
     if (ok)
     {
         ++plan.counters.launched;
@@ -429,6 +429,7 @@ void DcTestPlanManager::Finalize(Plan& plan)
     h.level = plan.spec.level;
     h.heroic = plan.spec.heroic;
     h.seedBase = plan.spec.seedBase;
+    h.size = plan.spec.size;
     h.gearIlvl = plan.spec.gear.ilvl;
     h.gearQuality = plan.spec.gear.quality;
     h.startedAtMs = plan.startedAtMs;

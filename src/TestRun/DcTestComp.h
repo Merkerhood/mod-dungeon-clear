@@ -82,11 +82,33 @@ namespace DcTestComp
         { 11, "cat pve",      "cat",      "dps" },  // druid
     };
 
+    // Size bounds for a run (raid-support Plan D): a 5-man is the default, a
+    // raid run asks for any size up to 40 (`size=N`, presets 10/25).
+    inline constexpr std::size_t kMinPartySize = 2;
+    inline constexpr std::size_t kMaxPartySize = 40;
+
+    // Role quotas derived from the party size. 5-mans keep the classic
+    // 1/1/3; raids scale tanks stepwise and healers at ~N/4.
+    struct Quota
+    {
+        std::size_t tanks;
+        std::size_t healers;
+        std::size_t dps;
+    };
+    Quota RoleQuota(std::size_t size);
+
     // Deterministically pick a party for the given seed: one tank, one healer,
     // three DPS, all five on DISTINCT classes (maximises class diversity and
     // keeps the addclass-pool draw from needing several chars of one class).
     // Pure — no globals, no I/O — so the same seed always yields the same comp.
     std::array<Slot, kPartySize> BuildComp(std::uint32_t seed);
+
+    // Sized form: RoleQuota(size) slots, seed-deterministic. Distinct classes
+    // while the pools allow, then duplicates spread as evenly as possible (9
+    // classes < 25 slots; 6 healers over 4 heal classes force duplicates) —
+    // the least-used class of the role pool is always preferred. size is
+    // clamped to [kMinPartySize, kMaxPartySize].
+    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size);
 
     // The pool backing a role token ("tank" | "heal" | "dps"), for callers that
     // must substitute an alternative class when the drawn one has no available

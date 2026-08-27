@@ -91,6 +91,13 @@ namespace DcTestDungeonRegistry
             { "fos",             "The Forge of Souls",            632,  4922.86f,  2175.63f,  638.73f, 2.004f, 80, "", 80 },
             { "pos",             "Pit of Saron",                  658,   435.74f,   212.41f,  528.71f, 6.256f, 80, "", 80 },
             { "hor",             "Halls of Reflection",           668,  5239.01f,  1932.64f,  707.70f, 0.801f, 80, "", 80 },
+
+            // --- Classic RAIDS (raid-support Plan D/E). Entrances are the
+            // world-DB areatrigger targets (MC 2886, BWL 3726); level 60, no
+            // heroic mode; a raid run picks its size via `size=` (default 10
+            // for iteration speed — see the raid-support plan).
+            { "mc",              "Molten Core",                   409,  1091.89f,  -466.99f, -105.08f, 3.142f, 60, "" },
+            { "bwl",             "Blackwing Lair",                469, -7673.03f, -1106.08f,  396.65f, 0.178f, 60, "" },
         };
         return rows;
     }

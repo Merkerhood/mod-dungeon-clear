@@ -12,6 +12,7 @@
 #include <set>
 
 #include "CharacterCache.h"
+#include "DBCStores.h"
 #include "Chat.h"
 #include "Creature.h"
 #include "Group.h"
@@ -51,6 +52,11 @@
 namespace
 {
     // Stage timeouts: a setup stage overrunning these is itself the failure.
+    // Setup-stage bases; the per-run bound is Scaled(base) = base + 3s per
+    // member (raid-support Plan D): spawn/provision/teleport work is issued a
+    // bot at a time (provisioning literally 1 bot/tick globally), so a 25-man
+    // legitimately needs ~5x a 5-man's clock while a 5-man keeps roughly the
+    // old bounds.
     constexpr uint32 SPAWN_TIMEOUT_MS = 60 * 1000;
     constexpr uint32 PROVISION_TIMEOUT_MS = 60 * 1000;
     constexpr uint32 GROUP_TIMEOUT_MS = 30 * 1000;
@@ -226,6 +232,8 @@ void DcTestRunJob::InitIdentity(Player* gm, DcTestDungeonRegistry::Row const& ro
     _heroic = heroic;
     _level = level;
     _gmGuid = gm->GetGUID();
+    MapEntry const* mapEntry = sMapStore.LookupEntry(_mapId);
+    _isRaidMap = mapEntry && mapEntry->IsRaid();
 
     _limits.pauseGraceMs = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.PauseGraceS") * 1000;
     _limits.stallGraceMs = DcSettings::GetUInt(ObjectGuid::Empty, "TestRun.StallGraceS") * 1000;
@@ -250,7 +258,8 @@ void DcTestRunJob::InitIdentity(Player* gm, DcTestDungeonRegistry::Row const& ro
 }
 
 std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegistry::Row const& row,
-                                                   uint32 levelOverride, uint32 seed, bool heroic,
+                                                   uint32 levelOverride, uint32 seed, uint32 size,
+                                                   bool heroic,
                                                    DcTestGearTiers::Spec const& gear,
                                                    std::unordered_set<ObjectGuid> const& reservedGuids,
                                                    std::string const& planId, std::string* err)
@@ -277,7 +286,17 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_record.gearIlvl = job->_gear.ilvl;
     job->_record.gearQuality = job->_gear.quality;
 
-    std::array<DcTestComp::Slot, DcTestComp::kPartySize> const comp = DcTestComp::BuildComp(seed);
+    // size 0 keeps the classic 5-man draw (distinct classes) bit-for-bit; a
+    // requested size uses the quota'd raid comp (duplicates spread evenly).
+    std::vector<DcTestComp::Slot> comp;
+    if (size == 0)
+    {
+        auto const classic = DcTestComp::BuildComp(seed);
+        comp.assign(classic.begin(), classic.end());
+    }
+    else
+        comp = DcTestComp::BuildComp(seed, size);
+    job->_record.size = static_cast<uint32>(comp.size());
     for (DcTestComp::Slot const& c : comp)
     {
         Slot s;
@@ -333,9 +352,15 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
         ObjectGuid guid = claim(slot.classId);
         if (!guid)
         {
+            // Distinct-class substitution first; past 9 slots the distinct rule
+            // is impossible anyway, so a raid-sized run may substitute a class
+            // already in the party rather than fail the role.
+            bool const allowDuplicates = job->_slots.size() > 9;
             for (DcTestComp::Slot const& alt : DcTestComp::RolePool(slot.role))
             {
-                if (alt.classId == slot.classId || usedClasses.count(alt.classId))
+                if (alt.classId == slot.classId)
+                    continue;
+                if (!allowDuplicates && usedClasses.count(alt.classId))
                     continue;
                 guid = claim(alt.classId);
                 if (guid)
@@ -379,10 +404,12 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::CreateFromRoster(Player* gm,
                                                              std::string const& planId,
                                                              std::string* err)
 {
-    if (roster.size() != DcTestComp::kPartySize)
+    if (roster.size() < DcTestComp::kMinPartySize ||
+        roster.size() > DcTestComp::kMaxPartySize)
     {
         if (err)
-            *err = "a roster must be exactly " + std::to_string(DcTestComp::kPartySize) + " characters";
+            *err = "a roster must be " + std::to_string(DcTestComp::kMinPartySize) + "-" +
+                   std::to_string(DcTestComp::kMaxPartySize) + " characters";
         return nullptr;
     }
 
@@ -665,7 +692,7 @@ void DcTestRunJob::TickSpawning()
         return;
     }
 
-    if (_stageMs >= SPAWN_TIMEOUT_MS)
+    if (_stageMs >= Scaled(SPAWN_TIMEOUT_MS))
     {
         if (_realChars)
         {
@@ -693,7 +720,7 @@ void DcTestRunJob::TickSpawning()
 
 void DcTestRunJob::TickProvisioning(bool& provisionBudget)
 {
-    if (_stageMs >= PROVISION_TIMEOUT_MS)
+    if (_stageMs >= Scaled(PROVISION_TIMEOUT_MS))
     {
         FailSetup("provisioning timed out");
         return;
@@ -959,7 +986,7 @@ void DcTestRunJob::TickGrouping()
         Player* tank = ObjectAccessor::FindPlayer(_slots[0].guid);
         if (!tank)
         {
-            if (_stageMs >= GROUP_TIMEOUT_MS)
+            if (_stageMs >= Scaled(GROUP_TIMEOUT_MS))
                 FailSetup("tank vanished before grouping");
             return;
         }
@@ -979,6 +1006,13 @@ void DcTestRunJob::TickGrouping()
             return;
         }
         sGroupMgr->AddGroup(group);
+        // RAID party (raid-support Plan D): convert BEFORE the sixth member —
+        // AddMember refuses on a full 5-man party group. Raid entry also
+        // REQUIRES a raid group (MapMgr enforces it), so any raid-map run
+        // converts even at size <= 5.
+        bool const raidGroup = _slots.size() > 5 || IsRaidMap();
+        if (raidGroup)
+            group->ConvertToRaid();
         for (std::size_t i = 1; i < _slots.size(); ++i)
         {
             Player* bot = ObjectAccessor::FindPlayer(_slots[i].guid);
@@ -989,8 +1023,27 @@ void DcTestRunJob::TickGrouping()
                 return;
             }
         }
-        group->SetDungeonDifficulty(_heroic ? DUNGEON_DIFFICULTY_HEROIC
-                                            : DUNGEON_DIFFICULTY_NORMAL);
+        if (raidGroup)
+        {
+            // Sub-groups round-robin (8 x 5 slots), and the leader flagged MAIN
+            // TANK so DC's leader election and playerbots' GetMainTankGuid agree
+            // by construction.
+            uint8 subGroup = 0;
+            for (std::size_t i = 0; i < _slots.size(); ++i)
+            {
+                group->ChangeMembersGroup(_slots[i].guid, subGroup);
+                subGroup = (subGroup + 1) % MAX_RAID_SUBGROUPS;
+            }
+            group->SetGroupMemberFlag(tank->GetGUID(), true, MEMBER_FLAG_MAINTANK);
+        }
+        if (IsRaidMap())
+            // Classic raids run at raid difficulty 0 (10-man normal); the
+            // heroic flag is a dungeon-mode concept and never reaches here for
+            // a raid row (the registry validation refuses it).
+            group->SetRaidDifficulty(RAID_DIFFICULTY_10MAN_NORMAL);
+        else
+            group->SetDungeonDifficulty(_heroic ? DUNGEON_DIFFICULTY_HEROIC
+                                                : DUNGEON_DIFFICULTY_NORMAL);
         _tankGuid = tank->GetGUID();
         _groupFormed = true;
     }
@@ -1039,7 +1092,7 @@ void DcTestRunJob::TickGrouping()
         return;
     }
 
-    if (_stageMs >= GROUP_TIMEOUT_MS)
+    if (_stageMs >= Scaled(GROUP_TIMEOUT_MS))
         FailSetup("group did not form");
 }
 
@@ -1054,6 +1107,15 @@ void DcTestRunJob::UnbindFromMap() const
         sInstanceSaveMgr->PlayerUnbindInstance(slot.guid, _mapId, DUNGEON_DIFFICULTY_NORMAL,
                                                /*deleteFromDB*/ true);
         sInstanceSaveMgr->PlayerUnbindInstance(slot.guid, _mapId, DUNGEON_DIFFICULTY_HEROIC,
+                                               /*deleteFromDB*/ true);
+        // Raid saves are PERMANENT once a boss dies (non-resettable; "reset all
+        // instances" skips raids), so one leaked bind poisons every later run
+        // of the map for that character. Cover the two raid-only difficulty
+        // values as well — raw 0/1 are already covered by the dungeon pair —
+        // deleteFromDB both. No-ops for maps/difficulties with no bind.
+        sInstanceSaveMgr->PlayerUnbindInstance(slot.guid, _mapId, RAID_DIFFICULTY_10MAN_HEROIC,
+                                               /*deleteFromDB*/ true);
+        sInstanceSaveMgr->PlayerUnbindInstance(slot.guid, _mapId, RAID_DIFFICULTY_25MAN_HEROIC,
                                                /*deleteFromDB*/ true);
     }
 }
@@ -1085,7 +1147,7 @@ bool DcTestRunJob::CheckInstanceBudget()
         // bind ever does survive.
         uint32 idToCheck = 0;
         if (InstanceSave* save = sInstanceSaveMgr->PlayerGetInstanceSave(
-                bot->GetGUID(), _mapId, bot->GetDifficulty(/*isRaid*/ false)))
+                bot->GetGUID(), _mapId, bot->GetDifficulty(IsRaidMap())))
             idToCheck = save->GetInstanceId();
 
         if (bot->CheckInstanceCount(idToCheck))
@@ -1110,7 +1172,7 @@ void DcTestRunJob::TickTeleporting()
             Player* bot = ObjectAccessor::FindPlayer(slot.guid);
             if (!bot)
             {
-                if (_stageMs >= TELEPORT_TIMEOUT_MS)
+                if (_stageMs >= Scaled(TELEPORT_TIMEOUT_MS))
                     FailSetup("bot vanished before teleport");
                 return;  // transient — retry next tick
             }
@@ -1153,7 +1215,7 @@ void DcTestRunJob::TickTeleporting()
                     }
         if (evicting)
         {
-            if (_stageMs >= TELEPORT_TIMEOUT_MS)
+            if (_stageMs >= Scaled(TELEPORT_TIMEOUT_MS))
                 FailSetup("could not clear the party out of the dungeon it was already in");
             return;  // retry next tick
         }
@@ -1204,7 +1266,7 @@ void DcTestRunJob::TickTeleporting()
         Player* const leader = FindTank();
         if (!leader)
         {
-            if (_stageMs >= TELEPORT_TIMEOUT_MS)
+            if (_stageMs >= Scaled(TELEPORT_TIMEOUT_MS))
                 FailSetup("tank vanished before teleport");
             return;
         }
@@ -1217,7 +1279,7 @@ void DcTestRunJob::TickTeleporting()
     if (!tank || tank->GetMapId() != _mapId || !tank->IsInWorld() ||
         tank->IsBeingTeleported() || !tank->GetInstanceId())
     {
-        if (_stageMs >= TELEPORT_TIMEOUT_MS)
+        if (_stageMs >= Scaled(TELEPORT_TIMEOUT_MS))
             FailSetup("tank did not arrive at the dungeon entrance");
         return;
     }
@@ -1264,7 +1326,7 @@ void DcTestRunJob::TickTeleporting()
         return;
     }
 
-    if (_stageMs >= TELEPORT_TIMEOUT_MS)
+    if (_stageMs >= Scaled(TELEPORT_TIMEOUT_MS))
     {
         if (stranded.empty())
             FailSetup("party did not arrive at the dungeon entrance");
@@ -1333,6 +1395,18 @@ void DcTestRunJob::TickStarting()
                 _record.bossRoster.push_back(ref.name);
         }
         _record.bossesTotal = static_cast<uint32>(_roster.size());
+
+        // RAID runs lean on the playerbots raid strategies for the boss fights
+        // (DC stands down during encounters), and those attach by mapId only
+        // when AiPlayerbot.ApplyInstanceStrategies is on. A raid run with the
+        // knob off would test nothing but bots auto-attacking a raid boss —
+        // fail loudly at start instead of 40 minutes later.
+        if (IsRaidMap() && !sPlayerbotAIConfig.applyInstanceStrategies)
+        {
+            FailSetup("AiPlayerbot.ApplyInstanceStrategies is off — raid runs need the "
+                      "playerbots raid strategies to fight bosses; enable it and retry");
+            return;
+        }
 
         // The run must never wait for a human: kill the WaitAtBoss pre-pull
         // hold for this run whatever the conf says.

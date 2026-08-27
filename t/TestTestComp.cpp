@@ -7,6 +7,8 @@
 
 #include "TestRun/DcTestComp.h"
 
+#include <algorithm>
+#include <map>
 #include <set>
 #include <string_view>
 
@@ -108,4 +110,81 @@ TEST(DcTestComp, RolePoolLookup)
         EXPECT_STREQ(s.role, "heal");
     for (Slot const& s : RolePool("dps"))
         EXPECT_STREQ(s.role, "dps");
+}
+
+// --- Sized (raid) comps — raid-support Plan D ------------------------------
+
+TEST(DcTestComp, RoleQuotaTable)
+{
+    using DcTestComp::RoleQuota;
+    auto q = RoleQuota(5);
+    EXPECT_EQ(q.tanks, 1u);
+    EXPECT_EQ(q.healers, 1u);
+    EXPECT_EQ(q.dps, 3u);
+
+    q = RoleQuota(10);
+    EXPECT_EQ(q.tanks, 2u);
+    EXPECT_EQ(q.healers, 2u);
+    EXPECT_EQ(q.dps, 6u);
+
+    q = RoleQuota(25);
+    EXPECT_EQ(q.tanks, 3u);
+    EXPECT_EQ(q.healers, 6u);
+    EXPECT_EQ(q.dps, 16u);
+
+    q = RoleQuota(40);
+    EXPECT_EQ(q.tanks, 4u);
+    EXPECT_EQ(q.healers, 10u);
+    EXPECT_EQ(q.dps, 26u);
+
+    // Tiny sizes never quota away the whole party.
+    q = RoleQuota(2);
+    EXPECT_EQ(q.tanks + q.healers + q.dps, 2u);
+    EXPECT_GE(q.tanks, 1u);
+}
+
+TEST(DcTestComp, SizedCompIsDeterministicAndQuotaed)
+{
+    auto const a = DcTestComp::BuildComp(1234u, 25);
+    auto const b = DcTestComp::BuildComp(1234u, 25);
+    ASSERT_EQ(a.size(), 25u);
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        EXPECT_EQ(a[i].classId, b[i].classId) << i;
+        EXPECT_STREQ(a[i].specName, b[i].specName) << i;
+    }
+    std::size_t tanks = 0, heals = 0, dps = 0;
+    for (auto const& s : a)
+    {
+        if (std::string_view(s.role) == "tank") ++tanks;
+        else if (std::string_view(s.role) == "heal") ++heals;
+        else ++dps;
+    }
+    EXPECT_EQ(tanks, 3u);
+    EXPECT_EQ(heals, 6u);
+    EXPECT_EQ(dps, 16u);
+}
+
+TEST(DcTestComp, SizedCompSpreadsDuplicatesEvenly)
+{
+    // 6 healers over a 4-class heal pool (priest twice via disc/holy): the
+    // least-used draw means no class is used 3+ times while another is unused.
+    auto const comp = DcTestComp::BuildComp(777u, 25);
+    std::map<std::uint8_t, std::size_t> healUse;
+    for (auto const& s : comp)
+        if (std::string_view(s.role) == "heal")
+            ++healUse[s.classId];
+    std::size_t maxUse = 0, minUse = SIZE_MAX;
+    for (auto const& kv : healUse)
+    {
+        maxUse = std::max(maxUse, kv.second);
+        minUse = std::min(minUse, kv.second);
+    }
+    EXPECT_LE(maxUse - minUse, 1u);  // even spread across the classes drawn
+}
+
+TEST(DcTestComp, SizeIsClamped)
+{
+    EXPECT_EQ(DcTestComp::BuildComp(1u, 1).size(), DcTestComp::kMinPartySize);
+    EXPECT_EQ(DcTestComp::BuildComp(1u, 99).size(), DcTestComp::kMaxPartySize);
 }

@@ -56,8 +56,12 @@ public:
     // say", which is what every run did before the option existed. It is
     // resolved against the conf ONCE here, so a mid-run `.reload config` cannot
     // change what a run was geared to.
+    // `size` = party size (raid-support Plan D): 0 keeps the classic 5-man
+    // comp; 2-40 draws a sized comp with role quotas (DcTestComp::RoleQuota),
+    // grouped as a RAID past 5 members.
     static std::unique_ptr<DcTestRunJob> Create(Player* gm, DcTestDungeonRegistry::Row const& row,
-                                                 uint32 levelOverride, uint32 seed, bool heroic,
+                                                 uint32 levelOverride, uint32 seed, uint32 size,
+                                                 bool heroic,
                                                  DcTestGearTiers::Spec const& gear,
                                                  std::unordered_set<ObjectGuid> const& reservedGuids,
                                                  std::string const& planId, std::string* err);
@@ -296,6 +300,18 @@ private:
     float _x = 0.f, _y = 0.f, _z = 0.f, _o = 0.f;
     uint32 _level = 0;
     bool _heroic = false;  // run at DUNGEON_DIFFICULTY_HEROIC
+
+    // Is the run's map a RAID map (drives raid grouping, raid difficulty,
+    // bind hygiene and the budget check's difficulty read)? Derived once from
+    // the map store at InitIdentity.
+    bool _isRaidMap = false;
+    bool IsRaidMap() const { return _isRaidMap; }
+
+    // Setup-stage timeout scaled to the party size (see the bases in the .cpp).
+    uint32 Scaled(uint32 baseMs) const
+    {
+        return baseMs + 3000u * static_cast<uint32>(_slots.size());
+    }
     // Gear ceiling this run's bots are rolled to, already resolved against the
     // playerbots conf (ilvl 0 = no cap, quality 0 = factory default). Frozen at
     // Create so the run is reproducible from its own record. Unused on roster

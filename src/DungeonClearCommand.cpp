@@ -356,14 +356,15 @@ public:
             return true;
 
         static constexpr char const* kUsage =
-            "Usage: .dc test start <dungeon> [heroic] [level=N] [seed=N] [ilvl=N|none] "
-            "[quality=normal|uncommon|rare|epic|legendary]\n"
-            "   or: .dc test start <dungeon> party=Tank,Heal,Dps1,Dps2,Dps3 [heroic]";
+            "Usage: .dc test start <dungeon> [heroic] [size=N|10|25] [level=N] [seed=N] "
+            "[ilvl=N|none] [quality=normal|uncommon|rare|epic|legendary]\n"
+            "   or: .dc test start <dungeon> party=Tank,Heal,Dps1,Dps2,... [heroic]";
 
         std::string token;
         std::string party;
         uint32 level = 0;
         uint32 seed = 0;  // 0 = roll a random comp; seed=N replays a specific one
+        uint32 size = 0;  // 0 = classic 5-man; size=N (or bare 10/25) fields a raid comp
         DcTestGearTiers::Spec gear;
         bool heroic = false;
         std::istringstream in{std::string(args)};
@@ -396,10 +397,17 @@ public:
             }
             else if (word.rfind("party=", 0) == 0)
                 party = word.substr(6);
+            else if (word.rfind("size=", 0) == 0)
+                size = static_cast<uint32>(std::strtoul(word.c_str() + 5, nullptr, 10));
             else if (word == "heroic")
                 heroic = true;
             else if (token.empty())
                 token = word;
+            // Raid-size presets: a bare 10/25 AFTER the dungeon token reads as
+            // size (`.dc test start mc 25`). Before the token a bare number is
+            // still a mapId, so the shorthand can never eat one.
+            else if (word == "10" || word == "25")
+                size = static_cast<uint32>(std::strtoul(word.c_str(), nullptr, 10));
             else
             {
                 handler->SendSysMessage(kUsage);
@@ -418,18 +426,26 @@ public:
             // Reject rather than silently ignore: somebody passing level= with a
             // roster believes it will be applied, and applying it would mean
             // relevelling their character.
-            if (level || seed || !gear.IsDefault())
+            if (level || seed || size || !gear.IsDefault())
             {
                 handler->SendSysMessage(
-                    "level=, seed= and ilvl=/quality= do not apply to party= runs: the level comes "
-                    "from the characters (they are never relevelled or re-geared) and the roster "
-                    "is the comp.");
+                    "level=, seed=, size= and ilvl=/quality= do not apply to party= runs: the level "
+                    "comes from the characters (they are never relevelled or re-geared) and the "
+                    "roster is the comp (its length is the size).");
                 return true;
             }
             DcTestRunManager::Instance().StartRoster(issuer, token, party, heroic, &msg);
         }
         else
-            DcTestRunManager::Instance().Start(issuer, token, level, seed, heroic, gear, &msg);
+        {
+            if (size && (size < 2 || size > 40))
+            {
+                handler->SendSysMessage("size must be 2-40 (presets 10/25).");
+                return true;
+            }
+            DcTestRunManager::Instance().Start(issuer, token, level, seed, heroic, gear, &msg,
+                                               "", nullptr, nullptr, size);
+        }
         handler->SendSysMessage(msg);
         return true;
     }
