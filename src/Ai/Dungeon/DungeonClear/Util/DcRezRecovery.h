@@ -7,6 +7,8 @@
 #define _PLAYERBOT_DCREZRECOVERY_H
 
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ObjectGuid.h"
 
@@ -46,7 +48,16 @@ namespace DcRezRecovery
         std::string rezzerName;
         std::string targetName;
         std::string deadName = "Someone";
+        // Parallel pairing, resolved to GUIDs (see DcRezDecision::Result::pairs).
+        // Consumed on RAID runs only — each paired rezzer walks to its own
+        // corpse; 5-mans keep the single rezzer/target above.
+        std::vector<std::pair<ObjectGuid, ObjectGuid>> pairs;
     };
+
+    // The corpse `bot` is assigned to raise under `plan`, or Empty when it is
+    // not an elected rezzer. Honors the map scoping above: the single election
+    // everywhere, plus the parallel pairs on a raid map.
+    ObjectGuid PairedTargetFor(Plan const& plan, Player* bot);
 
     // Evaluate recovery for `bot`'s run. Callable by ANY member every tick
     // (leader and followers compute the same deterministic answer); maintains
@@ -87,6 +98,14 @@ namespace DcRezRecovery
     // recovery clock or fire an announcement. Cheap-early-outs on class before
     // it evaluates anything, because only a living rez class is ever elected.
     bool IsElectedRezzer(Player* bot);
+
+    // RAID full-wipe recovery: revive every same-map BOT member at the
+    // instance entrance (dungeon-catalogue coords), drop the lost fight's
+    // combat/threat/targets, reset the owner's approach cursors, and leave the
+    // run ENABLED to continue from the entrance. Humans are never revived or
+    // relocated. False when no entrance row exists for the map (the caller
+    // falls back to the classic disable).
+    bool RegroupAtEntrance(Player* bot);
 
     // "Neko is coming to resurrect Bib." / "Waiting for you to resurrect
     // Bib." — one status-panel sentence for the current recovery, empty when

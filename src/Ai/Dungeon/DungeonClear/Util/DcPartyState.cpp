@@ -102,21 +102,10 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
     if (!group)
         return true;  // Solo tank — always "ready."
 
-    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    // One member's readiness against the bars. Factored so the strict 5-man
+    // walk and the raid quorum walk below judge a member identically.
+    auto const memberMeetsBars = [&](Player* member)
     {
-        Player* member = ref->GetSource();
-        if (!member)
-            continue;
-        if (member->GetMapId() != bot->GetMapId())
-            continue;
-        if (member->isDead())
-            continue;  // Dead members hold the run via DcRezRecovery::IsPending
-                       // (or, with PostCombatRez off / recovery unviable, the
-                       // party-died bailout) — never via these readiness floors.
-                       // The moment one is rezzed they re-enter this walk as a
-                       // living-but-low member and the floors hold the tank
-                       // while they eat/drink back up.
-
         if (member != bot)
         {
             float const spread = spreadAnchor ? member->GetDistance(*spreadAnchor)
@@ -141,8 +130,63 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
                     return false;
             }
         }
+        return true;
+    };
+
+    // RAID QUORUM form: with 10-40 members, all-or-nothing readiness pins the
+    // whole run on any one straggler forever. Ready when every TANK and HEALER
+    // meets the bars (the roles a pull genuinely cannot start without) AND at
+    // least RaidReadyQuorumPct of living same-map members meet them AND no
+    // failing member is still visibly walking in (isMoving — someone closing
+    // will pass in a moment; releasing under them wastes the wait). A wedged
+    // straggler (failing, stationary) is quorum-tolerated and left to the
+    // stranded-recovery ladder. Dungeons keep the strict every-member walk.
+    // Boss musters stay strict on top of this via the Plan C muster gate.
+    bool const raid = bot->GetMap() && bot->GetMap()->IsRaid();
+    uint32 living = 0;
+    uint32 meeting = 0;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member)
+            continue;
+        if (member->GetMapId() != bot->GetMapId())
+            continue;
+        if (member->isDead())
+            continue;  // Dead members hold the run via DcRezRecovery::IsPending
+                       // (or, with PostCombatRez off / recovery unviable, the
+                       // party-died bailout) — never via these readiness floors.
+                       // The moment one is rezzed they re-enter this walk as a
+                       // living-but-low member and the floors hold the tank
+                       // while they eat/drink back up.
+
+        bool const ok = memberMeetsBars(member);
+        if (!raid)
+        {
+            if (!ok)
+                return false;
+            continue;
+        }
+
+        ++living;
+        if (ok)
+        {
+            ++meeting;
+            continue;
+        }
+        if (member == bot || PlayerbotAI::IsTank(member) || PlayerbotAI::IsHeal(member))
+            return false;
+        if (member->isMoving())
+            return false;
     }
-    return true;
+
+    if (!raid)
+        return true;
+    if (!living)
+        return false;
+    uint32 const quorumPct = DcSettings::GetUInt(bot, "RaidReadyQuorumPct");
+    return meeting * 100 >= living * quorumPct;
 }
 DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContext* context)
 {

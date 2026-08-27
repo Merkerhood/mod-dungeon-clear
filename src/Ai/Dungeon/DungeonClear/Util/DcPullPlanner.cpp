@@ -4,6 +4,8 @@
  */
 
 #include "DcPullPlanner.h"
+
+#include "Ai/Dungeon/DungeonClear/Util/DcFormation.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "DungeonClearUtil.h"   // DC_PULL_* macros + DcTargeting::GetPullTarget (until DcTargeting moves)
@@ -142,15 +144,39 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
     // Deterministic per-bot offset so the slot is identical every tick: MoveTo
     // dedups an unchanging destination, so the follower glides to one spot and
     // parks there instead of re-pathing to a fresh random point each tick (which
-    // would read as a nervous shuffle). Spread the party with the golden angle so
-    // even a handful of bots fan out evenly around the anchor rather than
-    // overlapping, and pick a 1-2yd radius for the requested gentle variance.
+    // would read as a nervous shuffle). Golden-angle fan, sized by DcFormation:
+    // the ring radius grows with the same-map population and roles split onto
+    // concentric rings (melee in, ranged, healers out), so a 25-40 member camp
+    // is a formation instead of 39 bodies on the old fixed 1-2yd circle. A
+    // 5-man census resolves to (nearly) that old circle — the ring floor keeps
+    // small parties tight.
     uint32 const seed = static_cast<uint32>(bot->GetGUID().GetCounter());
-    float const angle = static_cast<float>(seed) * 2.39996323f;  // golden angle (rad)
-    float const radius = 1.0f + static_cast<float>(seed % 101) / 100.0f;  // [1.0, 2.0]
+    uint32 meleeCount = 0, rangedCount = 0, healerCount = 0;
+    if (Group* group = bot->GetGroup())
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member->GetMapId() != bot->GetMapId())
+                continue;
+            if (PlayerbotAI::IsHeal(member))
+                ++healerCount;
+            else if (PlayerbotAI::IsRanged(member))
+                ++rangedCount;
+            else
+                ++meleeCount;
+        }
+    }
+    DcFormation::RoleRings const rings =
+        DcFormation::ComputeRoleRings(meleeCount, rangedCount, healerCount,
+                                      /*baseRadius*/ 1.0f);
+    float const ringRadius = PlayerbotAI::IsHeal(bot)     ? rings.healer
+                             : PlayerbotAI::IsRanged(bot) ? rings.ranged
+                                                          : rings.melee;
+    DcFormation::Offset const off = DcFormation::SlotOffset(seed, ringRadius);
 
-    float const fx = camp.GetPositionX() + radius * std::cos(angle);
-    float const fy = camp.GetPositionY() + radius * std::sin(angle);
+    float const fx = camp.GetPositionX() + off.dx;
+    float const fy = camp.GetPositionY() + off.dy;
     float const fz = camp.GetPositionZ();
 
     // Route the fuzzed point through the navmesh. PathGenerator clamps an
@@ -168,7 +194,11 @@ Position DcPullPlanner::ComputeCampSlot(Player* bot, Position const& camp)
 
     G3D::Vector3 const end = gen.GetActualEndPosition();
     Position const slot(end.x, end.y, end.z, camp.GetOrientation());
-    if (camp.GetExactDist(&slot) > 3.0f)
+    // Reject a snap that dragged the slot well past its intended ring (wedged
+    // against geometry). The tolerance follows the ring: the healer arc of a
+    // 25-man legitimately parks ~10yd out, which the old fixed 3yd cap — sized
+    // for the 1-2yd fan — would have rejected wholesale.
+    if (camp.GetExactDist(&slot) > ringRadius + 2.0f)
         return camp;
 
     // The anchor was screened for hazards when it was chosen, but this fan-out

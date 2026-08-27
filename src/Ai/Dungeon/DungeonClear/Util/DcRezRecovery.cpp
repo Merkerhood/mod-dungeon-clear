@@ -13,8 +13,12 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/DcApproachState.h"
+#include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "TestRun/DcTestDungeonRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -280,6 +284,29 @@ namespace
         in.nowMs = now;
         in.pendingSinceMs = run.rezPendingSinceMs;
         in.timeoutMs = DcSettings::GetUInt(bot, "PostCombatRezTimeoutSecs") * 1000;
+        // Raid wipe semantics: fraction verdict + entrance regroup (the run
+        // continues; DungeonClearDisableOnDeathAction routes Regroup to
+        // RegroupAtEntrance instead of the disable funnel).
+        if (bot->GetMap() && bot->GetMap()->IsRaid())
+        {
+            in.wipeFractionPct = DcSettings::GetUInt(bot, "RaidWipeFractionPct");
+            in.regroupOnWipe = true;
+        }
+        // Raid corpse piles get more clock: even in parallel, waves of raises
+        // (each adding rezzers back) and the drinking between them take real
+        // time. Scale by the corpses beyond the first, capped at twice the
+        // configured budget (which itself resolves through the .Raid layer).
+        if (bot->GetMap() && bot->GetMap()->IsRaid())
+        {
+            uint32 deadCount = 0;
+            for (Member const& m : members)
+                if (m.isDead)
+                    ++deadCount;
+            uint32 const scaled =
+                in.timeoutMs + (deadCount > 1 ? (deadCount - 1) * DC_REZ_RAID_PER_CORPSE_MS
+                                              : 0);
+            in.timeoutMs = std::min(scaled, in.timeoutMs * 2);
+        }
         in.partyEngaged = partyEngaged;
         in.anySurvivorCombatFlagged = anySurvivorCombatFlagged;
         in.noRezzerSinceMs = run.noRezzerSinceMs;
@@ -329,6 +356,10 @@ namespace
             plan.target = players[plan.verdict.targetIdx]->GetGUID();
             plan.targetName = players[plan.verdict.targetIdx]->GetName();
         }
+        for (auto const& [ri, ti] : plan.verdict.pairs)
+            if (ri >= 0 && ti >= 0 && ri < static_cast<int>(players.size()) &&
+                ti < static_cast<int>(players.size()))
+                plan.pairs.emplace_back(players[ri]->GetGUID(), players[ti]->GetGUID());
 
         // One announcement per recovery episode, from whichever member
         // evaluates first (the stamp on the shared run state dedupes the rest).
@@ -481,7 +512,7 @@ namespace DcRezRecovery
         Plan const plan = EvaluateImpl(bot, /*mutate*/ false);
         if (plan.verdict.outcome != DcRezDecision::Outcome::Hold ||
             plan.verdict.reason != DcRezDecision::Reason::Recovering ||
-            plan.rezzer != bot->GetGUID())
+            PairedTargetFor(plan, bot).IsEmpty())
             return false;
 
         // ...AND NOTHING ALIVE IS STILL ON THE PARTY. The engagement test above is
@@ -501,6 +532,122 @@ namespace DcRezRecovery
         // pending recovery, which is rare. Radius-bounded so a hostile area aura
         // (45yd, nothing actually on us) cannot stall recovery forever.
         return !DcCombatFlag::AnyPartyHeldByLiveEnemy(bot, DC_FIGHT_HOLDER_RADIUS);
+    }
+
+    ObjectGuid PairedTargetFor(Plan const& plan, Player* bot)
+    {
+        if (!bot)
+            return ObjectGuid::Empty;
+        if (plan.verdict.outcome != DcRezDecision::Outcome::Hold ||
+            plan.verdict.reason != DcRezDecision::Reason::Recovering)
+            return ObjectGuid::Empty;
+        if (plan.rezzer == bot->GetGUID())
+            return plan.target;
+        // Raid runs recover in PARALLEL: every paired rezzer works its own
+        // corpse. Dungeons keep the single election — the second rez class
+        // stays with the party (5 people, 1-2 corpses; a second walker is more
+        // exposure for no time saved).
+        if (bot->GetMap() && bot->GetMap()->IsRaid())
+            for (auto const& pr : plan.pairs)
+                if (pr.first == bot->GetGUID())
+                    return pr.second;
+        return ObjectGuid::Empty;
+    }
+
+    bool RegroupAtEntrance(Player* bot)
+    {
+        if (!bot)
+            return false;
+        Player* owner = ResolveRunOwner(bot);
+        PlayerbotAI* ownerAI = owner ? GET_PLAYERBOT_AI(owner) : nullptr;
+        if (!ownerAI)
+            return false;
+        Map* map = owner->FindMap();
+        if (!map)
+            return false;
+
+        // The entrance teleport target comes from the dungeon catalogue (its
+        // rows carry the world-DB areatrigger targets). No row -> the caller
+        // falls back to the classic disable.
+        DcTestDungeonRegistry::Row const* row = nullptr;
+        for (DcTestDungeonRegistry::Row const& r : DcTestDungeonRegistry::All())
+            if (r.mapId == map->GetId())
+            {
+                row = &r;
+                break;
+            }
+        if (!row)
+            return false;
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] raid wipe -> reviving the raid at the {} entrance and "
+                 "continuing the run", owner->GetName(), row->name);
+
+        Group* group = owner->GetGroup();
+        auto const regroupMember = [&](Player* member)
+        {
+            if (!member || !member->IsInWorld() || member->GetMapId() != map->GetId())
+                return;
+            PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+            if (!memberAI)
+                return;  // never revive/relocate a human — they release normally
+
+            // End the lost fight from both sides before moving anyone: threat
+            // and combat refs first, then the TARGET — CombatStop leaves
+            // `current target` set, and a bot relocated with a stale target
+            // walks the party straight back to the boss (the relocation-must-
+            // drop-the-target lesson).
+            member->GetThreatMgr().ClearAllThreat();
+            member->CombatStop(true);
+            member->AttackStop();
+            member->SetTarget();
+            memberAI->GetAiObjectContext()
+                ->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(nullptr);
+
+            if (!member->IsAlive() || member->HasPlayerFlag(PLAYER_FLAGS_GHOST))
+            {
+                // Same shape as the harness teardown revive: Spirit of
+                // Redemption must come off first, no resurrection sickness, and
+                // the corpse turns to bones so nothing resurrectable is left
+                // behind at the boss.
+                member->RemoveAurasDueToSpell(27827);
+                member->ResurrectPlayer(1.0f, /*applySickness*/ false);
+                member->SpawnCorpseBones();
+            }
+            member->TeleportTo(row->mapId, row->x, row->y, row->z, row->o);
+        };
+
+        if (group)
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                regroupMember(ref->GetSource());
+        }
+        else
+            regroupMember(owner);
+
+        // Run-state hygiene on the owner: the fight is over and the raid is at
+        // the entrance, so every cursor pointed at the boss room is stale. Same
+        // cluster `dc on` clears, minus the run-level toggles — the run stays
+        // ENABLED and re-enters the normal advance pipeline from the entrance.
+        AiObjectContext* ctx = ownerAI->GetAiObjectContext();
+        ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().Reset();
+        ctx->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().Reset();
+        ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Reset();
+        ctx->GetValue<uint32>(DcKey::StickyBoss)->Set(0u);
+        ctx->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
+
+        DcRunState& run = DcRun::Of(ownerAI);
+        run.rezPendingSinceMs = 0;
+        run.rezAnnounceMs = 0;
+        run.noRezzerSinceMs = 0;
+        run.noRezzerQuietSinceMs = 0;
+        run.progressMs = 0;  // stranded clock re-arms on the next evaluation
+
+        if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
+            DcStatusPublisher::SendAddonMessage(
+                botAI, "CHAT	The raid wiped â regrouping at the entrance "
+                       "and continuing.");
+        return true;
     }
 
     std::string DescribeWait(Player* bot)

@@ -187,6 +187,21 @@ inline constexpr DcSettingDef kDcSettings[] =
     // capture path is dungeonclear_decisions.jsonl in the worldserver's working
     // dir, overridable via the DUNGEONCLEAR_DECISIONS_FILE env var.
     { "RecordDecisions",       DcType::Bool,   0,   0,   1,  true  },
+    // Raid-only knobs (read only while the run's map is a raid; plain defaults,
+    // not raidVal rows, because no dungeon path consults them at all).
+    //
+    // Quorum for the raid form of IsPartyReady: the run advances when every
+    // tank + healer meets the readiness bars and at least this percentage of
+    // living members does; a wedged straggler below the quorum is left to the
+    // stranded-recovery ladder instead of pinning 24 others. 100 restores the
+    // strict every-member gate.
+    { "RaidReadyQuorumPct",    DcType::UInt,  90,  50, 100,  true  },
+    // Raid form of the wipe verdict: the fraction of the raid that must be dead
+    // (with nobody left engaged) before the run treats the fight as a WIPE. A
+    // literal everyone-dead test never fires at 25-40 — one pet-classed
+    // survivor hiding at range would hold the verdict open forever.
+    { "RaidWipeFractionPct",   DcType::UInt,  90,  50, 100,  true  },
+
     // Clamp ceiling 120 (was 60) so a raid run can widen the straggler gate by
     // override; the authored raid default is 40 — a 25-40 member column is
     // legitimately longer than a 5-man file, and holding raids to the 25yd

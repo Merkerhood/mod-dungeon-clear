@@ -2219,6 +2219,13 @@ bool DungeonClearDisableOnDeathAction::Execute(Event /*event*/)
                                          : DcRezRecovery::Plan{};
     std::string const& deadName = plan.deadName;
 
+    // RAID WIPE -> entrance regroup, not a disable: revive the raid at the
+    // instance entrance and keep the run going. Falls through to the classic
+    // disable only when no entrance is known for the map.
+    if (plan.verdict.outcome == DcRezDecision::Outcome::Regroup &&
+        DcRezRecovery::RegroupAtEntrance(bot))
+        return true;
+
     std::string reason;
     switch (plan.verdict.reason)
     {

@@ -234,6 +234,12 @@ constexpr uint32 DC_NO_REZZER_HOLD_MAX_MS    = 60000;
 // where it will never lift and every second of holding is spent under fire.
 constexpr uint32 DC_REZ_BLOCKED_HOLD_MAX_MS = 20000;
 
+// Raid recovery budget scaling: extra out-of-combat clock granted per corpse
+// beyond the first (capped at twice the configured budget in the glue). Even
+// with parallel rezzers, a 15-corpse pile is raised in waves — each wave's
+// raises add rezzers back for the next — with drinking in between.
+constexpr uint32 DC_REZ_RAID_PER_CORPSE_MS = 30000;
+
 // How close a live combat holder has to be to count as "still fighting us" for
 // the rez release. A hostile AREA AURA holds the flag from 45yd with nothing on
 // the party — the freeze DcCombatFlag exists for — so any radius used to decide

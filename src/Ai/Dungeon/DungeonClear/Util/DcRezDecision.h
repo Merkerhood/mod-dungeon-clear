@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DCREZDECISION_H
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 // Pure decision kernel for post-combat party resurrection. Historically the
@@ -67,6 +68,16 @@ namespace DcRezDecision
         std::uint32_t timeoutMs = 90000;      // PostCombatRezTimeoutSecs * 1000
         bool          partyEngaged = false;  // freezes the timeout
 
+        // --- raid wipe semantics ---------------------------------------------
+        // Fraction of same-map members that must be DEAD (with nobody engaged)
+        // for the fight to read as a wipe. 100 (the dungeon default) keeps the
+        // literal everyone-dead test; a raid passes ~90 because one hiding
+        // survivor must not hold the verdict open at 25-40 members.
+        std::uint32_t wipeFractionPct = 100;
+        // Raid runs: a wipe verdict asks for the ENTRANCE REGROUP (revive the
+        // raid at the instance entrance and continue) instead of the disable.
+        bool          regroupOnWipe = false;
+
         // --- the NoRezzer floor (see the branch below) ------------------------
         // Is any LIVING survivor still carrying the core combat flag? Deliberately
         // the flag and not engagement: the case this exists for is a boss that has
@@ -96,7 +107,8 @@ namespace DcRezDecision
         None,     // no deaths, the feature is disabled (the glue converts), or the
                   // instance forbids the spell and the run carries on short-handed
         Hold,     // suppress the bailout; recovery is in progress
-        Disable   // recovery not viable — run the classic disable funnel
+        Disable,  // recovery not viable — run the classic disable funnel
+        Regroup   // raid wipe — revive at the instance entrance and continue
     };
 
     enum class Reason
@@ -119,6 +131,15 @@ namespace DcRezDecision
         Reason  reason  = Reason::NoDeaths;
         int     rezzerIdx = -1;  // elected rezzer (the human for WaitingOnHuman)
         int     targetIdx = -1;  // dead member to raise first
+        // PARALLEL recovery (raid runs consume this; 5-mans keep the single
+        // election above): every living rez-class BOT paired with a distinct
+        // corpse, deterministically, so N rezzers raise N corpses at once
+        // instead of one rezzer working the pile serially against the clock.
+        // pairs[0] always equals {rezzerIdx, targetIdx} when a bot rezzer
+        // exists. Corpses beyond the rezzer count are left for the next
+        // evaluation (the first wave of raises adds rezzers back). Filled for
+        // Hold/Recovering only.
+        std::vector<std::pair<int, int>> pairs;  // {rezzerIdx, targetIdx}
     };
 
     // Target priority: dead healer -> dead tank -> group order. The healer
@@ -141,18 +162,68 @@ namespace DcRezDecision
         return deadTank >= 0 ? deadTank : firstDead;
     }
 
+    // Deterministic parallel pairing (see Result::pairs). Target order is the
+    // same priority PickTarget uses, extended to a full ordering: dead healers
+    // (group order), then dead tanks, then the remaining dead. Rezzer order:
+    // living rez-class bots, healers first, then group order — so pairs[0]
+    // reproduces the single election exactly.
+    inline std::vector<std::pair<int, int>> PickPairs(std::vector<Member> const& members)
+    {
+        std::vector<int> targets;
+        auto const pushDead = [&](bool healerPass, bool tankPass)
+        {
+            for (std::size_t i = 0; i < members.size(); ++i)
+            {
+                Member const& m = members[i];
+                if (!m.isDead)
+                    continue;
+                if (healerPass != m.isHealerRole)
+                    continue;
+                if (!healerPass && tankPass != m.isTankRole)
+                    continue;
+                targets.push_back(static_cast<int>(i));
+            }
+        };
+        pushDead(/*healers*/ true, false);
+        pushDead(false, /*tanks*/ true);
+        pushDead(false, /*rest*/ false);
+
+        std::vector<int> rezzers;
+        for (int healerPass = 1; healerPass >= 0; --healerPass)
+            for (std::size_t i = 0; i < members.size(); ++i)
+            {
+                Member const& m = members[i];
+                if (m.isDead || !m.canRezClass || !m.isBot)
+                    continue;
+                if ((healerPass != 0) != m.isHealerRole)
+                    continue;
+                rezzers.push_back(static_cast<int>(i));
+            }
+
+        std::vector<std::pair<int, int>> pairs;
+        std::size_t const n = targets.size() < rezzers.size() ? targets.size()
+                                                              : rezzers.size();
+        pairs.reserve(n);
+        for (std::size_t i = 0; i < n; ++i)
+            pairs.emplace_back(rezzers[i], targets[i]);
+        return pairs;
+    }
+
     // The verdict. Empty roster / no deaths -> None. See the header comment
     // for the election and timeout rules.
     inline Result Decide(Inputs const& in, std::vector<Member> const& members)
     {
         Result r;
 
-        bool anyDead = false, anyAlive = false;
+        std::size_t total = 0, dead = 0;
         for (Member const& m : members)
         {
-            anyDead  = anyDead  || m.isDead;
-            anyAlive = anyAlive || !m.isDead;
+            ++total;
+            if (m.isDead)
+                ++dead;
         }
+        bool const anyDead  = dead > 0;
+        bool const anyAlive = dead < total;
         if (!anyDead)
             return r;  // None / NoDeaths
 
@@ -164,11 +235,16 @@ namespace DcRezDecision
             return r;
         }
 
-        if (!anyAlive)
+        // Wipe. Full (everyone dead — a dead self-res candidate deliberately
+        // does not count in v1), or the raid fraction form: enough of the raid
+        // dead with nobody still fighting. The engagement test keeps a losing-
+        // but-live fight out of the verdict — it resolves to full wipe or to a
+        // normal recovery once combat drops.
+        bool const fractionWipe = in.wipeFractionPct < 100 && !in.partyEngaged &&
+                                  total > 0 && dead * 100 >= total * in.wipeFractionPct;
+        if (!anyAlive || fractionWipe)
         {
-            // Full wipe. A dead self-res candidate (soulstone/reincarnation)
-            // deliberately does not count in v1.
-            r.outcome = Outcome::Disable;
+            r.outcome = in.regroupOnWipe ? Outcome::Regroup : Outcome::Disable;
             r.reason = Reason::Wipe;
             return r;
         }
@@ -321,6 +397,8 @@ namespace DcRezDecision
 
         r.outcome = Outcome::Hold;
         r.reason = botRezzer >= 0 ? Reason::Recovering : Reason::WaitingOnHuman;
+        if (botRezzer >= 0)
+            r.pairs = PickPairs(members);
         return r;
     }
 }

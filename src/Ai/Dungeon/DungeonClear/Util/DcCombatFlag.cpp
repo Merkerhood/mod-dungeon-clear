@@ -8,10 +8,12 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 #include "AiObjectContext.h"
+#include "Value.h"
 #include "CombatManager.h"
 #include "Creature.h"
 #include "CreatureAI.h"
@@ -62,43 +64,84 @@ namespace DcCombatFlag
         return false;
     }
 
+    namespace
+    {
+        // The caller's own per-tick memo, or nullptr for a human/context-less
+        // read. Same 50ms within-tick contract as every DcTickMemo consumer:
+        // several rungs ask these party-level predicates each tick, and at raid
+        // sizes an unmemoised answer is a fresh full-group walk every time.
+        DcTickMemo* MemoFor(Player* bot)
+        {
+            PlayerbotAI* ai = bot ? GET_PLAYERBOT_AI(bot) : nullptr;
+            AiObjectContext* ctx = ai ? ai->GetAiObjectContext() : nullptr;
+            if (!ctx)
+                return nullptr;
+            DcTickMemo& m = ctx->GetValue<DcTickMemo&>(DcKey::TickMemo)->Get();
+            m.EnsureFresh(getMSTime());
+            return &m;
+        }
+    }
+
     bool AnyPartyEngagement(Player* bot)
     {
         if (!bot)
             return false;
 
-        if (IsEngaged(bot))
-            return true;
-        Group* group = bot->GetGroup();
-        if (!group)
-            return false;
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        DcTickMemo* const memo = MemoFor(bot);
+        if (memo && memo->partyEngagement >= 0)
+            return memo->partyEngagement == 1;
+
+        auto const compute = [&]()
         {
-            Player* member = ref->GetSource();
-            if (member && member != bot && member->GetMapId() == bot->GetMapId() &&
-                IsEngaged(member))
+            if (IsEngaged(bot))
                 return true;
-        }
-        return false;
+            Group* group = bot->GetGroup();
+            if (!group)
+                return false;
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (member && member != bot && member->GetMapId() == bot->GetMapId() &&
+                    IsEngaged(member))
+                    return true;
+            }
+            return false;
+        };
+        bool const engaged = compute();
+        if (memo)
+            memo->partyEngagement = engaged ? 1 : 0;
+        return engaged;
     }
 
     bool AnyPartyCombatFlag(Player* bot)
     {
         if (!bot)
             return false;
-        if (bot->IsInCombat())
-            return true;
-        Group* group = bot->GetGroup();
-        if (!group)
-            return false;
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+
+        DcTickMemo* const memo = MemoFor(bot);
+        if (memo && memo->partyCombatFlag >= 0)
+            return memo->partyCombatFlag == 1;
+
+        auto const compute = [&]()
         {
-            Player* member = ref->GetSource();
-            if (member && member != bot && member->IsAlive() &&
-                member->GetMapId() == bot->GetMapId() && member->IsInCombat())
+            if (bot->IsInCombat())
                 return true;
-        }
-        return false;
+            Group* group = bot->GetGroup();
+            if (!group)
+                return false;
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (member && member != bot && member->IsAlive() &&
+                    member->GetMapId() == bot->GetMapId() && member->IsInCombat())
+                    return true;
+            }
+            return false;
+        };
+        bool const flagged = compute();
+        if (memo)
+            memo->partyCombatFlag = flagged ? 1 : 0;
+        return flagged;
     }
 
     HolderScan ScanCombatHolders(Player* p)
@@ -176,19 +219,49 @@ namespace DcCombatFlag
     {
         if (!bot)
             return false;
-        if (IsHeldByLiveEnemy(bot, radius))
-            return true;
-        Group* group = bot->GetGroup();
-        if (!group)
-            return false;
-        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+
+        // Memoised per tick — this is the expensive one (a pathfind per combat
+        // reference per member). The radius is part of the key: a read with a
+        // different radius recomputes directly (rare; every hot site passes
+        // DC_FIGHT_HOLDER_RADIUS).
+        DcTickMemo* const memo = MemoFor(bot);
+        if (memo && memo->partyHeldByLiveEnemy >= 0 && memo->partyHeldRadius == radius)
+            return memo->partyHeldByLiveEnemy == 1;
+
+        auto const compute = [&]()
         {
-            Player* member = ref->GetSource();
-            if (member && member != bot && member->GetMapId() == bot->GetMapId() &&
-                IsHeldByLiveEnemy(member, radius))
+            if (IsHeldByLiveEnemy(bot, radius))
                 return true;
+            Group* group = bot->GetGroup();
+            if (!group)
+                return false;
+            // Cap the per-tick cost at raid scale: past this many members
+            // scanned without finding a holder, answer TRUE — the conservative
+            // direction for every caller (the rez release and the phantom
+            // hatch both treat "held" as "do not act yet"), and 12 members is
+            // already far beyond what a real all-clear needs to prove in one
+            // tick; the next tick re-asks with a fresh memo.
+            constexpr int kMaxMemberScans = 12;
+            int scanned = 0;
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (!member || member == bot || member->GetMapId() != bot->GetMapId())
+                    continue;
+                if (++scanned > kMaxMemberScans)
+                    return true;
+                if (IsHeldByLiveEnemy(member, radius))
+                    return true;
+            }
+            return false;
+        };
+        bool const held = compute();
+        if (memo)
+        {
+            memo->partyHeldByLiveEnemy = held ? 1 : 0;
+            memo->partyHeldRadius = radius;
         }
-        return false;
+        return held;
     }
 
     bool MayDrive(Player* bot, AiObjectContext* context)

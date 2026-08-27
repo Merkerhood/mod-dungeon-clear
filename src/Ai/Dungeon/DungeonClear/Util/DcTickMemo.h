@@ -44,6 +44,14 @@ struct DcTickMemo
     // Due scripted-pull stage ORDER: -2 unset, -1 none due, >= 0 the stage's order.
     // (-1 is a meaningful answer here, so the "unset" sentinel has to be distinct.)
     std::int32_t scriptedStage = -2;
+    // Party-level combat predicates (DcCombatFlag::AnyParty*) — full group
+    // walks, asked by several rungs per tick and O(N^2)-shaped at raid sizes.
+    // The heavy one (held-by-live-enemy: a pathfind per combat reference) also
+    // remembers the radius it answered for; a different radius recomputes.
+    std::int8_t partyEngagement = -1;
+    std::int8_t partyCombatFlag = -1;
+    std::int8_t partyHeldByLiveEnemy = -1;
+    float       partyHeldRadius = -1.0f;
 
     static constexpr std::uint32_t kMemoWindowMs = 50;
 

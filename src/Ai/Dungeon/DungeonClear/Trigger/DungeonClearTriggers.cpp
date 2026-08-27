@@ -339,6 +339,18 @@ bool DungeonClearAtBossTrigger::IsActive()
             if (!run.sealedMusterSince)
                 run.sealedMusterSince = now;
 
+            // RAID quorum: with 10-40 members, one wedged straggler outside must
+            // not hold the whole raid inside the boss's aggro radius for the full
+            // timeout. A raid holds only while an outside member is a tank/healer
+            // or the outside share exceeds the quorum's tolerance; a dungeon
+            // still holds for literally anyone outside (5 people, one door — the
+            // strict contract is cheap and right there).
+            bool const raidQuorum = bot->GetMap() && bot->GetMap()->IsRaid();
+            uint32 const quorumPct =
+                raidQuorum ? DcSettings::GetUInt(bot, "RaidReadyQuorumPct") : 100;
+            uint32 living = 0;
+            uint32 outsideCount = 0;
+            bool outsideCritical = false;
             Player* outside = nullptr;
             if (Group* group = bot->GetGroup())
             {
@@ -351,14 +363,21 @@ bool DungeonClearAtBossTrigger::IsActive()
                         continue;
                     if (!GET_PLAYERBOT_AI(member))
                         continue;   // a real player is never gated on
+                    ++living;
                     if (!SealedEncounterRegistry::InSealedRoom(
                             *sealed, member->GetPositionX(), member->GetPositionY()))
                     {
-                        outside = member;
-                        break;
+                        ++outsideCount;
+                        if (!outside)
+                            outside = member;
+                        if (PlayerbotAI::IsTank(member) || PlayerbotAI::IsHeal(member))
+                            outsideCritical = true;
                     }
                 }
             }
+            if (raidQuorum && outside && !outsideCritical && living &&
+                (living - outsideCount) * 100 >= living * quorumPct)
+                outside = nullptr;  // quorum inside, stragglers tolerated
 
             // Bounded: a member that cannot path in (stuck, mid-rez, feared out)
             // must not hold the run open. On expiry engage anyway and say so — that
@@ -774,8 +793,11 @@ bool DungeonClearPartyDiedTrigger::IsActive()
     // Evaluate also maintains the recovery clock + announcements as its side
     // effect — this per-tick call is one of the clock's two update sites (the
     // rez trigger on every bot is the other, covering a dead leader).
-    return DcRezRecovery::Evaluate(bot).verdict.outcome ==
-           DcRezDecision::Outcome::Disable;
+    // Disable runs the classic funnel; Regroup is the raid wipe verdict — the
+    // same action routes it to the entrance regroup instead (the run continues).
+    DcRezDecision::Outcome const outcome = DcRezRecovery::Evaluate(bot).verdict.outcome;
+    return outcome == DcRezDecision::Outcome::Disable ||
+           outcome == DcRezDecision::Outcome::Regroup;
 }
 
 bool DungeonClearRezPartyTrigger::IsActive()
@@ -797,9 +819,11 @@ bool DungeonClearRezPartyTrigger::IsActive()
         return false;
 
     DcRezRecovery::Plan const plan = DcRezRecovery::Evaluate(bot);
+    // PairedTargetFor covers both elections: the single rezzer everywhere, plus
+    // this bot's parallel pair on a raid run.
     return plan.verdict.outcome == DcRezDecision::Outcome::Hold &&
            plan.verdict.reason == DcRezDecision::Reason::Recovering &&
-           plan.rezzer == bot->GetGUID();
+           !DcRezRecovery::PairedTargetFor(plan, bot).IsEmpty();
 }
 
 bool DungeonClearAllClearedTrigger::IsActive()

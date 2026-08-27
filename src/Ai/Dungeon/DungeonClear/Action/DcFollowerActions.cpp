@@ -19,6 +19,7 @@
 
 #include "Creature.h"
 #include "DBCStores.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFormation.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "Log.h"
@@ -577,10 +578,25 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // stock collision shuffle permanently armed). Same deterministic
     // golden-angle fan as ComputeCampSlot, so the cluster spreads evenly and
     // each bot's slot never moves between ticks.
+    //
+    // RAID: the subgroup picks one of eight ring segments and the seed fans
+    // within it, and the follow distance grows with the same-map population —
+    // 40 bots on one golden spiral at 5-man distance is a conga line whose
+    // tail laps the corridor (DcFormation::RaidFollowAngle).
     uint32 const seed = static_cast<uint32>(bot->GetGUID().GetCounter());
-    float const angle =
-        Position::NormalizeOrientation(static_cast<float>(seed) * 2.39996323f);
-    return Follow(tank, dist, angle);
+    float angle = Position::NormalizeOrientation(static_cast<float>(seed) * 2.39996323f);
+    float followDist = dist;
+    if (bot->GetMap() && bot->GetMap()->IsRaid())
+    {
+        angle = DcFormation::RaidFollowAngle(bot->GetSubGroup(), seed);
+        uint32 sameMap = 0;
+        if (Group* group = bot->GetGroup())
+            for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
+                if (gref->GetSource() && gref->GetSource()->GetMapId() == bot->GetMapId())
+                    ++sameMap;
+        followDist = std::max(followDist, DcFormation::RingRadius(sameMap, followDist));
+    }
+    return Follow(tank, followDist, angle);
 }
 
 bool DungeonClearFilterLootAction::Execute(Event /*event*/)
@@ -1767,16 +1783,20 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
     // tick): confirm this bot is still the elected rezzer and resolve the
     // target member kernel-index -> GUID -> Player at execution time.
     DcRezRecovery::Plan const plan = DcRezRecovery::Evaluate(bot);
+    // PairedTargetFor resolves the corpse THIS bot is assigned: the single
+    // election's target everywhere, or this bot's parallel pair on a raid run
+    // (each paired rezzer walks to its own body). Empty = not a rezzer.
+    ObjectGuid const targetGuid = DcRezRecovery::PairedTargetFor(plan, bot);
     if (plan.verdict.outcome != DcRezDecision::Outcome::Hold ||
         plan.verdict.reason != DcRezDecision::Reason::Recovering ||
-        plan.rezzer != bot->GetGUID())
+        targetGuid.IsEmpty())
         return false;
 
     char const* rezAction = RezActionNameFor(bot->getClass());
     if (!rezAction)
         return false;  // election guarantees a rez class; belt-and-braces
 
-    Player* target = ObjectAccessor::FindPlayer(plan.target);
+    Player* target = ObjectAccessor::FindPlayer(targetGuid);
     if (!target || !target->isDead() || target->GetMapId() != bot->GetMapId())
         return false;  // vanished between trigger and action — re-elect next tick
 
