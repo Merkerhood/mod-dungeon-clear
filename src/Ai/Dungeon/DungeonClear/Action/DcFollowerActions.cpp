@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -32,6 +33,9 @@
 #include "Position.h"
 #include "ServerFacade.h"
 #include "SharedDefines.h"
+#include "SmartEnum.h"
+#include "Spell.h"
+#include "SpellMgr.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
@@ -1690,6 +1694,71 @@ namespace
     // cast gate to the spell edge would only hide that, and would put the cast right
     // on the boundary where a single snap flaps it in and out of range.
     constexpr float DC_REZ_CAST_RANGE = 20.0f;
+
+    // WHY the cast was refused — the one thing "not possible yet" never said.
+    //
+    // PlayerbotAI::CastSpell returns a bare bool and swallows every reason, so a
+    // refusal reads identically whether the caster is combat-flagged, still gliding,
+    // sitting, out of mana, out of LOS, or blocked by the instance. Four hundred
+    // identical trace lines (tr-20260827-075417-165) narrow that to nothing, and
+    // every candidate has a different fix. So name it, from both sides:
+    //
+    //   * the gates PlayerbotAI::CastSpell applies BEFORE it builds a spell at all —
+    //     stand state and "moving with a cast time" — which never reach CheckCast and
+    //     so leave no verdict of their own. Both are live here: every party rez is a
+    //     multi-second cast, and this rung asks for a stop it may not have got yet
+    //     ([[dc-stop-strength-noop-on-bots]]).
+    //   * the core's own verdict, from the same probe CanCastSpell uses. Two codes
+    //     matter and neither is visible any other way:
+    //       SPELL_FAILED_AFFECTING_COMBAT             the caster is combat-FLAGGED.
+    //         Every party rez carries SPELL_ATTR0_NOT_IN_COMBAT_ONLY_PEACEFUL
+    //         (verified in Spell.dbc for all four), so the flag alone refuses it —
+    //         and a bot can hold that flag while running the non-combat engine this
+    //         rung lives on ([[pb-combat-flag-vs-combat-engine]]), which is exactly
+    //         how a rung gated on !IsInCombat can still meet the refusal.
+    //       SPELL_FAILED_TARGET_CANNOT_BE_RESURRECTED the INSTANCE refuses it while
+    //         an encounter is in progress (Spell.cpp, "Xinef: exploit protection").
+    //
+    // INFO, not trace, because the question it answers is the first one asked of a
+    // run that ends "couldn't get X resurrected in time". Throttled per bot — the
+    // rung retries at tick rate — with the thread-local pattern VhTravelLog uses (a
+    // map's bots update on one thread, so each thread owns its table).
+    void RezRefusalDiag(PlayerbotAI* botAI, Player* bot, Player* target,
+                        char const* rezAction)
+    {
+        thread_local std::unordered_map<uint32, uint32> lastMs;
+        uint32& prev = lastMs[bot->GetGUID().GetCounter()];
+        if (prev && GetMSTimeDiffToNow(prev) < 3000)
+            return;
+        prev = getMSTime();
+
+        uint32 const spellId =
+            botAI->GetAiObjectContext()->GetValue<uint32>("spell id", rezAction)->Get();
+        SpellInfo const* const info = spellId ? sSpellMgr->GetSpellInfo(spellId) : nullptr;
+
+        char const* verdict = spellId ? "spell not in spellbook" : "no spell id for name";
+        if (info)
+        {
+            // Same construction CanCastSpell uses for its probe: a throwaway Spell,
+            // the unit target set, CheckCast(strict), delete. TRIGGERED_NONE so the
+            // caster-state checks we are asking about are actually applied.
+            Spell* probe = new Spell(bot, info, TRIGGERED_NONE);
+            probe->m_targets.SetUnitTarget(target);
+            SpellCastResult const result = probe->CheckCast(true);
+            delete probe;
+            verdict = EnumUtils::ToString(result).Constant;
+        }
+
+        uint32 const maxMana = bot->GetMaxPower(POWER_MANA);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] rez party: '{}' on {} REFUSED \xe2\x80\x94 {} | flagged={} "
+                 "moving={} standing={} mana={}% dist={:.1f}yd los={}",
+                 bot->GetName(), rezAction, target->GetName(), verdict,
+                 bot->IsInCombat() ? 1 : 0, bot->isMoving() ? 1 : 0,
+                 bot->IsStandState() ? 1 : 0,
+                 maxMana ? bot->GetPower(POWER_MANA) * 100 / maxMana : 0,
+                 bot->GetExactDist(target), bot->IsWithinLOSInMap(target) ? 1 : 0);
+    }
 }
 
 bool DungeonClearRezPartyAction::Execute(Event /*event*/)
@@ -1817,8 +1886,12 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
     if (bot->GetShapeshiftForm() != FORM_NONE)
         botAI->DoSpecificAction("caster form", Event(), /*silent*/ true);
     bool const cast = botAI->CastSpell(rezAction, target);
-    DC_PULL_TRACE("[DC:{}] rez party: cast '{}' on {} -> {}",
-                  bot->GetName(), rezAction, target->GetName(),
-                  cast ? "started" : "not possible yet");
-    return cast;
+    if (cast)
+    {
+        DC_PULL_TRACE("[DC:{}] rez party: cast '{}' on {} -> started", bot->GetName(),
+                      rezAction, target->GetName());
+        return true;
+    }
+    RezRefusalDiag(botAI, bot, target, rezAction);
+    return false;
 }

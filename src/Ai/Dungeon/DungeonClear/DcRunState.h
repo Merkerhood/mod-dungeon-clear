@@ -134,6 +134,11 @@ struct DcRunState
     // immaterial against graces measured in seconds.
     uint32 noRezzerSinceMs      = 0;  // getMSTime() the party first had no rezzer
     uint32 noRezzerQuietSinceMs = 0;  // ...and first read unengaged AND unflagged
+    // getMSTime() the instance was first seen refusing every resurrect
+    // (InstanceScript::IsEncounterInProgress — see the rezBlocked branch in
+    // DcRezDecision.h); 0 = the spell is castable. Cleared the moment the block
+    // lifts, so a boss mid-reset gets a fresh wait rather than a stale verdict.
+    uint32 rezBlockedSinceMs    = 0;
 
     // === stranded-member recovery failsafe (leader-owned) =========================
     // The no-progress clock + last-seen progress snapshot, ticked live on the

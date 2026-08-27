@@ -30,6 +30,10 @@
 //   target: dead healer -> dead tank -> group order (recover the run's spine
 //           first).
 //
+// A resurrection the INSTANCE refuses is a third answer on top of those two:
+// neither hold nor disable, but "carry on with who is standing". See
+// Inputs::rezBlocked and the branch that reads it.
+//
 // The recovery clock is OWNED BY THE GLUE (DcRezRecovery stamps/clears
 // DcRunState::rezPendingSinceMs); the kernel only compares. partyEngaged
 // freezes the timeout so fighting time never burns the recovery budget (a
@@ -77,11 +81,20 @@ namespace DcRezDecision
         // the flag-only hold so a flag nothing ever clears cannot hang the run.
         std::uint32_t noRezzerSinceMs = 0;
         std::uint32_t noRezzerHoldMaxMs = 0;      // 0 = no ceiling
+
+        // --- the instance refuses every party resurrect (see the branch below) ---
+        // Spell.cpp's exploit protection: inside a dungeon whose InstanceScript
+        // reports IsEncounterInProgress(), EVERY out-of-combat resurrect is refused
+        // with SPELL_FAILED_TARGET_CANNOT_BE_RESURRECTED. Owned by the glue.
+        bool          rezBlocked = false;
+        std::uint32_t blockedSinceMs = 0;    // getMSTime() the block was first seen
+        std::uint32_t blockedHoldMaxMs = 0;  // hold this long for it to lift; 0 = don't
     };
 
     enum class Outcome
     {
-        None,     // no deaths (or the feature is disabled — the glue converts)
+        None,     // no deaths, the feature is disabled (the glue converts), or the
+                  // instance forbids the spell and the run carries on short-handed
         Hold,     // suppress the bailout; recovery is in progress
         Disable   // recovery not viable — run the classic disable funnel
     };
@@ -95,7 +108,9 @@ namespace DcRezDecision
         Wipe,            // everyone on the map is dead
         NoRezzer,        // no living member's class can rez
         NoRezzerInFight, // ditto, but the survivors are still swinging — hold
-        TimedOut         // out-of-combat recovery clock expired
+        TimedOut,        // out-of-combat recovery clock expired
+        BlockedWaiting,  // the instance forbids resurrection — hold, it may lift
+        BlockedStandDown // ...it did not lift; carry on short-handed, do not disable
     };
 
     struct Result
@@ -155,6 +170,57 @@ namespace DcRezDecision
             // deliberately does not count in v1.
             r.outcome = Outcome::Disable;
             r.reason = Reason::Wipe;
+            return r;
+        }
+
+        // THE INSTANCE ITSELF REFUSES THE SPELL.
+        //
+        // Spell::CheckCast carries an exploit guard (Spell.cpp, "Xinef: exploit
+        // protection"): a resurrect cast by a player inside a dungeon whose
+        // InstanceScript reports IsEncounterInProgress() returns
+        // SPELL_FAILED_TARGET_CANNOT_BE_RESURRECTED — unconditionally, whether or not
+        // anyone is in combat. In most dungeons that window is one boss fight, and
+        // recovery is out of combat anyway, so it never showed.
+        //
+        // The Violet Hold is the counter-example that broke this feature. Its script
+        // OVERRIDES IsEncounterInProgress to `_encounterStatus == IN_PROGRESS`
+        // (instance_violet_hold.cpp), and that status is set the moment Sinclari
+        // starts the event and only clears when the hold is finished or reset. So for
+        // the WHOLE RUN, every party resurrect is refused — and the feature had no
+        // idea. The elected rezzer stood on the corpse re-casting into the refusal at
+        // the tick rate ("rez party: cast 'ancestral spirit' on Shikne -> not possible
+        // yet", 403 times in tr-20260827-075417-165 alone) until the 90s recovery
+        // budget expired and the run was disabled with "Couldn't get X resurrected in
+        // time". Eighteen of the first 72 runs of tp-20260827-065217-2 died that way,
+        // and every one of them spent the whole window parked over a body while the
+        // hold kept draining behind them.
+        //
+        // Two moves, and the ORDER matters. Hold briefly first: the ordinary shape of
+        // this input is a boss encounter mid-reset, where the block lifts in seconds
+        // and the normal recovery below is exactly right — standing down there would
+        // march the party into the next pull with a corpse it was about to raise. If
+        // the block outlives blockedHoldMaxMs it is structural (Violet Hold, the Black
+        // Morass, any long event) and no amount of waiting buys anything: keep
+        // clearing with who is standing. NOT a disable — the party is alive and the
+        // hold is winnable four-handed (99 of the 100 runs in tp-20260826-233949-1
+        // cleared it without ever needing a resurrection); and not a hold, which under
+        // a wave siege is only a slower loss.
+        //
+        // Deliberately ahead of the election, so it also covers the no-rezzer party:
+        // while the instance forbids the spell, which classes are still standing is
+        // not a fact about anything. Nothing latches — the moment the block lifts,
+        // the verdict falls through to the ordinary election/timeout logic below and
+        // recovery (or the classic disable) resumes.
+        if (in.rezBlocked)
+        {
+            bool const blockOutlivedTheWait =
+                in.blockedHoldMaxMs == 0 ||
+                (in.blockedSinceMs != 0 && in.nowMs >= in.blockedSinceMs &&
+                 (in.nowMs - in.blockedSinceMs) >= in.blockedHoldMaxMs);
+            r.targetIdx = PickTarget(members);
+            r.outcome = blockOutlivedTheWait ? Outcome::None : Outcome::Hold;
+            r.reason = blockOutlivedTheWait ? Reason::BlockedStandDown
+                                            : Reason::BlockedWaiting;
             return r;
         }
 

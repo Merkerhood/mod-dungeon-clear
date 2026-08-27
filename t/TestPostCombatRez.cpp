@@ -452,3 +452,115 @@ TEST(DcRezDecisionTest, SoloDeadTankIsAWipe)
     EXPECT_EQ(r.outcome, Outcome::Disable);
     EXPECT_EQ(r.reason, Reason::Wipe);
 }
+
+// ---- the instance refuses the spell ----------------------------------------------
+//
+// Spell::CheckCast refuses every resurrect cast inside a dungeon reporting an
+// encounter in progress. The Violet Hold holds that state for the entire run, so
+// the elected rezzer stood over a corpse re-casting into the refusal until the 90s
+// budget expired: 18 of the first 72 runs of tp-20260827-065217-2 ended as
+// "Couldn't get X resurrected in time" with the party alive and the hold draining.
+
+TEST(DcRezDecisionTest, BlockedHoldsWhileTheBlockMightStillLift)
+{
+    auto party = BaseParty();
+    party[2].isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = true;
+    in.blockedSinceMs = in.nowMs - 5000;
+    in.blockedHoldMaxMs = 20000;
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
+    EXPECT_EQ(r.reason, Reason::BlockedWaiting);
+    // A corpse is named so the status panel has someone to name; nobody is elected,
+    // because electing a rezzer is what arms the cast rung that cannot succeed.
+    EXPECT_EQ(r.targetIdx, 2);
+    EXPECT_EQ(r.rezzerIdx, -1);
+}
+
+TEST(DcRezDecisionTest, BlockedStandsDownOnceTheWaitRunsOut)
+{
+    auto party = BaseParty();
+    party[2].isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = true;
+    in.blockedSinceMs = in.nowMs - 20000;
+    in.blockedHoldMaxMs = 20000;
+    Result const r = Decide(in, party);
+    // Neither hold nor disable: the party is alive and the dungeon is winnable.
+    EXPECT_EQ(r.outcome, Outcome::None);
+    EXPECT_EQ(r.reason, Reason::BlockedStandDown);
+}
+
+TEST(DcRezDecisionTest, BlockedWithNoWaitConfiguredStandsDownImmediately)
+{
+    auto party = BaseParty();
+    party[2].isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = true;  // blockedHoldMaxMs left at 0
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::None);
+    EXPECT_EQ(r.reason, Reason::BlockedStandDown);
+}
+
+TEST(DcRezDecisionTest, AnUnstampedBlockClockStillHolds)
+{
+    // The glue stamps the clock a tick behind the first blocked read; until it does,
+    // the block is treated as brand new rather than as already expired.
+    auto party = BaseParty();
+    party[2].isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = true;
+    in.blockedSinceMs = 0;
+    in.blockedHoldMaxMs = 20000;
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
+    EXPECT_EQ(r.reason, Reason::BlockedWaiting);
+}
+
+TEST(DcRezDecisionTest, BlockedOutranksTheNoRezzerDisable)
+{
+    // Both rez classes are down. Normally that ends the run — but while the instance
+    // forbids the spell, which classes are still standing is not a fact about
+    // anything, and the survivors can still finish the dungeon (99 of 100 heroic runs
+    // of tp-20260826-233949-1 did, having never needed a rez at all).
+    auto party = BaseParty();
+    party[0].isDead = true;
+    party[1].isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = true;
+    in.blockedSinceMs = in.nowMs - 30000;
+    in.blockedHoldMaxMs = 20000;
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::None);
+    EXPECT_EQ(r.reason, Reason::BlockedStandDown);
+}
+
+TEST(DcRezDecisionTest, ABlockedFullWipeIsStillAWipe)
+{
+    auto party = BaseParty();
+    for (Member& m : party)
+        m.isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = true;
+    in.blockedSinceMs = in.nowMs - 30000;
+    in.blockedHoldMaxMs = 20000;
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::Disable);
+    EXPECT_EQ(r.reason, Reason::Wipe);
+}
+
+TEST(DcRezDecisionTest, TheBlockedBranchIsInertWhenNothingIsBlocked)
+{
+    // Nothing latches: the ordinary election is unchanged the moment the block lifts.
+    auto party = BaseParty();
+    party[2].isDead = true;
+    Inputs in = BaseInputs();
+    in.rezBlocked = false;
+    in.blockedSinceMs = in.nowMs - 30000;  // stale stamp the glue has yet to clear
+    in.blockedHoldMaxMs = 20000;
+    Result const r = Decide(in, party);
+    EXPECT_EQ(r.outcome, Outcome::Hold);
+    EXPECT_EQ(r.reason, Reason::Recovering);
+    EXPECT_EQ(r.rezzerIdx, 1);
+}

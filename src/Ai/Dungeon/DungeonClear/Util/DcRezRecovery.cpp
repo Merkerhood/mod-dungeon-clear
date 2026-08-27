@@ -12,12 +12,14 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStatusPublisher.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 #include <string>
 #include <vector>
 
 #include "Group.h"
+#include "InstanceScript.h"
 #include "Log.h"
 #include "Map.h"
 #include "Player.h"
@@ -101,6 +103,25 @@ namespace
             if (DcCombatFlag::IsEngaged(p))
                 return true;
         return false;
+    }
+
+    // "Would the resurrect spell even be allowed here?" — a mirror of the exploit
+    // guard in Spell::CheckCast (Spell.cpp, "Xinef: exploit protection"), which
+    // refuses SPELL_EFFECT_RESURRECT outright — SPELL_FAILED_TARGET_CANNOT_BE_
+    // RESURRECTED, in or out of combat — for any player casting inside a dungeon
+    // whose InstanceScript reports an encounter in progress.
+    //
+    // Read from the CASTER's side because that is what the core reads: the guard
+    // keys off m_caster's map and instance script, not the corpse's.
+    bool RezBlockedByInstance(Player* p)
+    {
+        if (!p)
+            return false;
+        Map* map = p->GetMap();
+        if (!map || !map->IsDungeon())
+            return false;
+        InstanceScript* const instance = DcTargeting::GetInstanceScript(p);
+        return instance && instance->IsEncounterInProgress();
     }
 
     // Same read, from a bare group walk instead of a built snapshot — for
@@ -214,12 +235,28 @@ namespace
             }
         }
 
+        // Is the instance refusing the spell right now, and since when? The clock
+        // clears the instant the block lifts, so the wait the kernel measures is
+        // always the CURRENT block — a boss that resets and re-engages does not
+        // inherit the seconds its last attempt burned.
+        bool const rezBlocked = RezBlockedByInstance(bot);
+        if (mutate)
+        {
+            if (!rezBlocked)
+                run.rezBlockedSinceMs = 0;
+            else if (run.rezBlockedSinceMs == 0)
+                run.rezBlockedSinceMs = now ? now : 1;
+        }
+
         // The recovery clock: runs only while nobody is FIGHTING (a fight clears
         // it, so a mid-recovery add pull resets the budget instead of burning it).
+        // A block clears it for the same reason and then some: time spent unable to
+        // cast must not be charged to a recovery that has not been allowed to start,
+        // or the timeout fires the moment the block lifts.
         bool const partyEngaged = AnyMemberEngaged(players);
         if (mutate)
         {
-            if (partyEngaged)
+            if (partyEngaged || rezBlocked)
                 run.rezPendingSinceMs = 0;
             else if (run.rezPendingSinceMs == 0)
                 run.rezPendingSinceMs = now ? now : 1;
@@ -249,6 +286,9 @@ namespace
         in.noRezzerQuietSinceMs = run.noRezzerQuietSinceMs;
         in.noRezzerQuietGraceMs = DC_NO_REZZER_QUIET_GRACE_MS;
         in.noRezzerHoldMaxMs = DC_NO_REZZER_HOLD_MAX_MS;
+        in.rezBlocked = rezBlocked;
+        in.blockedSinceMs = run.rezBlockedSinceMs;
+        in.blockedHoldMaxMs = DC_REZ_BLOCKED_HOLD_MAX_MS;
 
         plan.verdict = DcRezDecision::Decide(in, members);
 
@@ -292,12 +332,29 @@ namespace
 
         // One announcement per recovery episode, from whichever member
         // evaluates first (the stamp on the shared run state dedupes the rest).
-        if (mutate && plan.verdict.outcome == DcRezDecision::Outcome::Hold &&
-            run.rezAnnounceMs == 0)
+        //
+        // BlockedWaiting is deliberately NOT announced: it is a 20s probe of whether
+        // the instance is going to let go, and announcing it would spend the episode's
+        // one line on a state the party is about to leave — either into a real
+        // recovery (which then has nothing left to say) or into the stand-down, which
+        // is the line actually worth reading. The stand-down is not a Hold, so it is
+        // named explicitly here.
+        bool const blockedStandDown =
+            plan.verdict.reason == DcRezDecision::Reason::BlockedStandDown;
+        bool const announceable =
+            blockedStandDown || (plan.verdict.outcome == DcRezDecision::Outcome::Hold &&
+                                 plan.verdict.reason != DcRezDecision::Reason::BlockedWaiting);
+        if (mutate && announceable && run.rezAnnounceMs == 0)
         {
             run.rezAnnounceMs = now ? now : 1;
             std::string line;
-            if (plan.verdict.reason == DcRezDecision::Reason::WaitingOnHuman)
+            if (blockedStandDown)
+                // The one case where the run neither holds nor ends: nothing can raise
+                // them here, so the survivors keep clearing and the corpse comes back
+                // up when the encounter releases (or at the end of the run).
+                line = plan.targetName + " died and the encounter won't allow a "
+                       "resurrection \xe2\x80\x94 carrying on without them.";
+            else if (plan.verdict.reason == DcRezDecision::Reason::WaitingOnHuman)
                 line = plan.targetName + " died \xe2\x80\x94 waiting for you to resurrect them (" +
                        std::to_string(in.timeoutMs / 1000) + "s).";
             else if (plan.verdict.reason == DcRezDecision::Reason::NoRezzerInFight)
@@ -311,8 +368,10 @@ namespace
             if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
                 DcStatusPublisher::SendAddonMessage(botAI, "CHAT\t" + line);
             LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] post-combat rez: holding the run \xe2\x80\x94 {}",
-                     owner->GetName(), line);
+                     "[DC:{}] post-combat rez: {} \xe2\x80\x94 {}", owner->GetName(),
+                     blockedStandDown ? "the instance refuses every resurrect, clearing "
+                                        "short-handed"
+                                      : "holding the run", line);
         }
 
         return plan;
@@ -342,6 +401,20 @@ namespace DcRezRecovery
         if (!run.enabled || run.paused)
             return false;
 
+        // THE ONE CLOCK READ THIS PREDICATE MAKES, and it is here to stop a hold that
+        // can never end. When the instance refuses every resurrect (see
+        // RezBlockedByInstance) a corpse is not a recovery in progress, it is just a
+        // corpse — and holding the run on it parks the party over a body while the
+        // encounter that forbade the spell carries on around them. Match the kernel:
+        // hold while the block might still lift, then stop gating on it entirely.
+        //
+        // An unstamped clock reads as "the block just started", so the ordering
+        // caveat above still cuts the safe way: at worst this holds one tick longer
+        // than the verdict does, never one tick less.
+        if (RezBlockedByInstance(leaderTank) && run.rezBlockedSinceMs != 0 &&
+            getMSTime() - run.rezBlockedSinceMs >= DC_REZ_BLOCKED_HOLD_MAX_MS)
+            return false;
+
         if (leaderTank->isDead())
             return true;
         Group* group = leaderTank->GetGroup();
@@ -362,6 +435,12 @@ namespace DcRezRecovery
     {
         if (!bot || !Enabled(bot))
             return false;
+        // Nothing can rez here, so "is a rez class alive" is not the question — the
+        // run is allowed to resume and will clear short-handed. Refusing `dc on`
+        // over an unraisable corpse would leave the party standing in a Violet Hold
+        // that is still counting down.
+        if (RezBlockedByInstance(bot))
+            return true;
         Group* group = bot->GetGroup();
         if (!group)
             return bot->IsAlive() && IsRezClass(bot);
@@ -431,6 +510,9 @@ namespace DcRezRecovery
             return "";
         if (plan.verdict.reason == DcRezDecision::Reason::WaitingOnHuman)
             return "Waiting for you to resurrect " + plan.targetName + ".";
+        if (plan.verdict.reason == DcRezDecision::Reason::BlockedWaiting)
+            return "Can't resurrect " + plan.targetName +
+                   " while the encounter is in progress.";
         return plan.rezzerName + " is coming to resurrect " + plan.targetName + ".";
     }
 }

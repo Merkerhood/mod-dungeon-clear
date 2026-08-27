@@ -224,6 +224,16 @@ constexpr uint32 DC_FLAGGED_NO_ENGAGE_GRACE_MS = 5000;
 constexpr uint32 DC_NO_REZZER_QUIET_GRACE_MS = 12000;
 constexpr uint32 DC_NO_REZZER_HOLD_MAX_MS    = 60000;
 
+// --- the instance refuses the spell ----------------------------------------
+// How long the run holds over a corpse the instance will not let anyone raise
+// before it gives up waiting and clears short-handed (DcRezDecision's rezBlocked
+// branch). Sized for the case worth waiting out — a boss encounter mid-reset,
+// where IsEncounterInProgress clears within a few seconds of the last survivor
+// dropping combat — and deliberately short of anything longer, because the other
+// shape this input takes is a whole-dungeon event (Violet Hold, the Black Morass)
+// where it will never lift and every second of holding is spent under fire.
+constexpr uint32 DC_REZ_BLOCKED_HOLD_MAX_MS = 20000;
+
 // How close a live combat holder has to be to count as "still fighting us" for
 // the rez release. A hostile AREA AURA holds the flag from 45yd with nothing on
 // the party — the freeze DcCombatFlag exists for — so any radius used to decide
