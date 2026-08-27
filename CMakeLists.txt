@@ -550,3 +550,64 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    DOOR_TYPE_ROOMs on a key-item lock lying across the route into the Novos
 #    chamber — the Utgarde Keep forge-fire shape), and three DcGroundHazard rows
 #    (47346 Arcane Field 14/11, 49034 Blizzard and 49548 Poison Cloud both 10/8).
+# Data/Events/VioletHoldEvents.cpp + Overrides/VioletHoldDriver.cpp
+#   (map 608 — The Violet Hold, the Black Morass model one size down: a fully
+#    event-driven dungeon whose objectives ARE the clear. The stock pipeline has
+#    nothing to work with here — instance_encounters names Erekem (29315) and
+#    Moragg (29316) as the First/Second Prisoner credits, both are world spawns,
+#    so BossSpawnIndex anchors the clear at their CELL coordinates behind sealed
+#    lock-0 doors; and the pair actually released is rolled per instance
+#    (urand(BOSS_MORAGG, BOSS_ZURAMAT)), so those credit rows name the wrong
+#    bosses besides. Cyanigosa is a TempSummon and never derives at all.
+#    The patch REMOVES both cell anchors and adds four objectives: enter (gossip
+#    Sinclari 30658, menu 9997 -> 9998, which starts the 18-wave siege) and one
+#    per instance boss-state slot. Completion rides GetBossState(DATA_1ST_BOSS /
+#    DATA_2ND_BOSS / DATA_CYANIGOSA), never the completed-encounter mask.
+#    Five hooks, ids 15-19. Three defend hooks and not one because a Custom step
+#    is handed a default-constructed DungeonBossInfo, so a shared hook cannot
+#    tell which objective invoked it. Hook 19 (VhDriveWave) is the controller:
+#    Conditional + Repeatable + Optional + DrivesInCombat + StepsOwnMovement,
+#    one Custom step, SEVEN rungs re-decided per tick — force-pull, released
+#    prisoner, clean the door seal, kill the portal keeper, finish whatever is
+#    already within 30yd, STATION ON THE LIVE PORTAL, hold the staging point.
+#    Rungs 4-6 are the 2026-08-26 strategy correction. The first cut read the
+#    geometry as a chokepoint camp — all six trash waypoint paths converge on two
+#    points a yard apart at the door, so a party on the landing intercepts the
+#    whole siege for free — and that is neither how the Violet Hold is played nor
+#    how it is won: a keeper portal pumps 3-4 adds every 20s FOREVER and its only
+#    off-switch stands 52-86yd away at the rim, so a party at the door fights the
+#    pump's output on the pump's schedule while the gate bleeds. The party now
+#    stations ON the live portal (adds are summoned within 2yd of it and the
+#    keeper spawns in melee range, so the wave is met before it takes a step) and
+#    waits at STAGE (1892.29, 805.70, 38.44 — the core's own MiddleRoomLocation,
+#    45.5yd from the average rim portal against the door camp's 69.0) in between.
+#    VhLivePortal tells the two wave kinds apart by SERVER-SIDE VISIBILITY: an
+#    elite portal calls SetVisible(false) the instant it summons its elites, so
+#    an invisible portal reads as spent and the driver fights the elites where
+#    they are instead of parking on an empty rim spot. The camp (1855.0, 803.5,
+#    44.05) survives as the EMERGENCY position — rung 2, the only one that goes
+#    back to the door.
+#    And the loss condition is readable without a core change — _gateHealth has
+#    no GetData case, but every add at the door holds a 58040 aura on the Prison
+#    Door Seal (30896), so walking that creature's applied-aura list names
+#    exactly which mobs are draining the gate. 58040 ticks every 3s per caster
+#    against a 100-point gate: one add loses the run in 300s, three in 100s.
+#    Paired rows elsewhere: DcNeverTargetRegistry {608, 31079} (Azure Saboteur —
+#    IMMUNE_TO_PC bait that walks the whole room on waves 6 and 12),
+#    DcEventDoorRegistry::IsScriptOnly for the Prison Seal 191723 and all twelve
+#    Cells (lock 0, so BotCanOpenDoorLikePlayer reads them as clickable, and
+#    opening one does NOT release its boss), ::IsNavigationIgnored 193611/193615
+#    (the six Activation Crystals — GAMEOBJECT_TYPE_DOOR wall controls sitting
+#    permanently READY around the arena rim, the Steamvault access-panel shape),
+#    and one DcGroundHazard row {608, 58693} (Cyanigosa's Blizzard, 12/10 — a
+#    10yd PERSISTENT_AREA_AURA at 1500 frost per 2s. Lavanthor's Cauterizing
+#    Flames 59466 was checked and is NOT one: effect 2 + effect 6, no
+#    DynamicObject).)
+# t/TestVioletHold.cpp
+#   (the map-608 authored-data lints: the wave event's exact shape, the four
+#    objectives' distinct hooks, the roster removals, the camp-on-the-funnel
+#    geometry, the staging point being closer to every one of the six rim portals
+#    than the door camp is (the whole point of the station), the three entry
+#    lists' completeness/exclusivity/disjointness, and the four safety-rail
+#    registries. Suite name starts DungeonEvent so the `DungeonEvent*` gtest
+#    filter in t/run_tests.sh and CI picks it up.)

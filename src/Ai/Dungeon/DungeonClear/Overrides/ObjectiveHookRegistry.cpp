@@ -818,6 +818,7 @@ namespace
             // constructor side-effects has no referenced symbol and the linker
             // drops it, taking its hooks with it. Ids 8 and 12 live here.
             RegisterBlackMorassHooks(t);
+            RegisterVioletHoldHooks(t);
             return t;
         }();
         return kHooks;

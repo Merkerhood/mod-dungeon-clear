@@ -414,6 +414,7 @@ namespace
             RegisterAzjolNerubEvents(t);
             RegisterAhnkahetEvents(t);
             RegisterDrakTharonKeepEvents(t);
+            RegisterVioletHoldEvents(t);
             return t;
         }();
         return kEvents;

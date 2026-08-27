@@ -80,4 +80,8 @@ public:
 // The Black Morass (map 269) — the wave driver. See BlackMorassDriver.cpp.
 void RegisterBlackMorassHooks(ObjectiveHookRegistry::HookTable& out);
 
+// The Violet Hold (map 608) — the siege start, the three defend garrisons and
+// the wave driver. See VioletHoldDriver.cpp. Ids 15-19.
+void RegisterVioletHoldHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif

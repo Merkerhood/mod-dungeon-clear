@@ -74,6 +74,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestBossOrdering.cpp"
             "${MOD_PATH}/t/TestDifficultyGate.cpp"
             "${MOD_PATH}/t/TestEventRegistry.cpp"
+            "${MOD_PATH}/t/TestVioletHold.cpp"
             "${MOD_PATH}/t/TestDungeonEvent.cpp"
             "${MOD_PATH}/t/TestNavGeometry.cpp"
             "${MOD_PATH}/t/TestSplineWindow.cpp"

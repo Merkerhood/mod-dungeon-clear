@@ -72,6 +72,45 @@ namespace DcEventDoorRegistry
             // that true when the order is perturbed — a `dc skip`, a wing
             // filter, a future reorder.
             case 192236:  // Ahn'kahet — Taldaram Door (opens on Taldaram's death)
+            // The Violet Hold (map 608) — the Prison Seal and all twelve Cells.
+            // Every one of them is GAMEOBJECT_TYPE_DOOR with lockId 0, so
+            // BotCanOpenDoorLikePlayer reads the whole set as freely clickable,
+            // and every one of them is driven ONLY by instance_violet_hold:
+            //
+            //   191723 PRISON SEAL — the main door, and the only one spawned
+            //     startOpen. EVENT_START_ENCOUNTER shuts it 15s after Sinclari's
+            //     gossip and InstanceCleanup reopens it. A bot Use() would toggle
+            //     it under the encounter: opened mid-siege it breaks the seal the
+            //     whole fight is about, and closed before the party is through it
+            //     locks them out of their own dungeon.
+            //
+            //   191556 / 191562-191566 / 191606 / 191722 — the eight occupied
+            //     cells. StartBossEncounter opens exactly the one whose prisoner
+            //     the instance rolled, and the boss's own release (clearing
+            //     UNIT_FLAG_NON_ATTACKABLE, SetImmuneToNPC(false),
+            //     REACT_AGGRESSIVE, MovePoint to its fight position) rides that
+            //     same call. Force-opening a cell therefore does NOT release the
+            //     boss — it just exposes an inert, permanently NON_ATTACKABLE
+            //     creature the clear would then try to route to. Worse, opening
+            //     the WRONG one leaves the party staring at a boss the encounter
+            //     will never release.
+            //
+            //   191557-191560 — the four empty cells. Present on the map, never
+            //     opened by anything. Listed for completeness so a future
+            //     door-blocked walk-in cannot single one of them out.
+            case 191556:  // Violet Hold — Xevozz cell
+            case 191557:  // Violet Hold — empty cell
+            case 191558:  // Violet Hold — empty cell
+            case 191559:  // Violet Hold — empty cell
+            case 191560:  // Violet Hold — empty cell
+            case 191562:  // Violet Hold — Erekem Guard 2 cell
+            case 191563:  // Violet Hold — Erekem Guard 1 cell
+            case 191564:  // Violet Hold — Erekem cell
+            case 191565:  // Violet Hold — Zuramat cell
+            case 191566:  // Violet Hold — Lavanthor cell
+            case 191606:  // Violet Hold — Moragg cell
+            case 191722:  // Violet Hold — Ichoron cell
+            case 191723:  // Violet Hold — Prison Seal (the main door)
                 return true;
             default:
                 return false;
@@ -106,6 +145,70 @@ namespace DcEventDoorRegistry
             // which is what opens the real Main Chambers Door (183049).
             case 184125:  // Hydromancer Thespia's panel
             case 184126:  // Mekgineer Steamrigger's panel
+                return true;
+            // The Violet Hold (map 608) — the six Activation Crystals. Like the
+            // Steamvault access panels these are wall CONTROLS, not doors, but
+            // their template is GAMEOBJECT_TYPE_DOOR (lock 86 / 57, startOpen 0)
+            // and they sit permanently in GO_STATE_READY around the arena rim, so
+            // the closed-door predicate reads each one as a shut gate standing in
+            // the open room the driver walks the party across.
+            //
+            // Nothing about them is a door. instance_violet_hold spawns them
+            // GO_FLAG_NOT_SELECTABLE and only clears that at
+            // EVENT_START_ENCOUNTER; using one runs spell 57804
+            // (SPELL_EFFECT_SEND_EVENT -> EVENT_ACTIVATE_CRYSTAL), which summons
+            // the Defense System, not a door state change. They block nothing —
+            // the navmesh runs straight past all six — and a door-blocked walk-in
+            // on one would park the run on the far rim and auto-pause it.
+            //
+            // Deliberately IsNavigationIgnored and NOT IsScriptOnly: the crystals
+            // are a legitimate thing to CLICK (the Defense System's three Arcane
+            // Lightnings and the 58152 instakill are a real panic valve, and bots
+            // do not care about the Defenseless achievement). If that is ever
+            // wired it belongs in the events framework as a deliberate step, the
+            // way the Steamvault panels are — never opportunistically, by the
+            // watchdog, because it is on the wrong side of the room.
+            case 193611:  // Violet Hold — Activation Crystal (x5)
+            case 193615:  // Violet Hold — Intro Activation Crystal
+            // The Violet Hold — the Prison Seal and all twelve Cells. Already
+            // IsScriptOnly above (never click one); this is the other half of the
+            // rule, and without it the script-only listing is what HURTS: a
+            // flagged door the bot is not entitled to open falls straight through
+            // to the auto-pause in DcEngageActions' parkAndStall.
+            //
+            //   * THE CELLS sit almost ON TOP of the fight positions their bosses
+            //     are released to — Xevozz's cell (1908.06, 844.89) is 3.0yd from
+            //     where he fights, Zuramat's 7.1yd, Lavanthor's 8.5yd, Erekem's
+            //     8.3yd. So travelling to ANY released boss parks the party beside
+            //     one to three OTHER prisoners' permanently-shut cells, each of
+            //     which reads to the closed-door predicate as a gate across the
+            //     approach. That is the Ahn'kahet Taldaram-prison shape: a run
+            //     auto-paused standing on the objective it had already reached.
+            //     Nothing is behind a cell that the party ever needs — the boss
+            //     walks OUT to its fight position — so no cell is ever a corridor.
+            //
+            //   * THE PRISON SEAL (191723) is worse, because it is genuinely shut
+            //     for most of the run and genuinely cannot be solved. It closes 15s
+            //     after Sinclari's gossip and only the instance reopens it (on a
+            //     win, or on InstanceCleanup). A bot that ends up outside during
+            //     the siege therefore parks at a door no player can open either,
+            //     and pausing the run for a human who has no move to make is pure
+            //     loss — the real recovery is Sinclari's late-join gossip (menu
+            //     9997 option 1, visible only while IN_PROGRESS), and a full wipe
+            //     self-heals because InstanceCleanup reopens the door anyway.
+            case 191556:  // Violet Hold — Xevozz cell
+            case 191557:  // Violet Hold — empty cell
+            case 191558:  // Violet Hold — empty cell
+            case 191559:  // Violet Hold — empty cell
+            case 191560:  // Violet Hold — empty cell
+            case 191562:  // Violet Hold — Erekem Guard 2 cell
+            case 191563:  // Violet Hold — Erekem Guard 1 cell
+            case 191564:  // Violet Hold — Erekem cell
+            case 191565:  // Violet Hold — Zuramat cell
+            case 191566:  // Violet Hold — Lavanthor cell
+            case 191606:  // Violet Hold — Moragg cell
+            case 191722:  // Violet Hold — Ichoron cell
+            case 191723:  // Violet Hold — Prison Seal (the main door)
                 return true;
             // Blackrock Depths — the Giant Doors apparatus (map 230). Four
             // GAMEOBJECT_TYPE_DOOR entries make up one machine, and only the

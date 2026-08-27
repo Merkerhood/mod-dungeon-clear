@@ -155,6 +155,16 @@ namespace
             // and Done is its "nothing to steer this tick" yield rather than a
             // completion. Repeatable besides: a momentary Done latches nothing.
             {600, 1},
+            // Violet Hold "Repel the wave": VhWaveActive requires the leader on
+            // map 608 AND within 200yd of the arena centroid, then probes a 200yd
+            // grid scan OF THE BOT for an open portal, a live wave TempSummon or a
+            // RELEASED prisoner. Its lone step (hook 19, VhDriveWave) OWNS the
+            // travel — it walks the tank to the locked portal keeper, to a released
+            // boss, or back to the door camp — so there is nothing an arrival step
+            // would add. Done is its "nothing to steer this tick" yield, not a
+            // completion, and it is Repeatable besides: a momentary Done latches
+            // nothing and the next wave re-fires it.
+            {608, 5},
             // Underbog "Send Ghaz'an up to his platform": deliberately map-wide,
             // and the one case where near-gating would be WRONG. Its hook fires
             // the same DoAction areatrigger 4302 fires, and path 1383921 opens by
@@ -581,6 +591,15 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // rung would never run once, and the tank would fight wherever the pull
         // left it — which is inside an 11yd / 1665-per-second Arcane Field.
         {600, 1},
+        // The Violet Hold "Repel the wave". An 18-wave siege in which a keeper
+        // portal summons 3 (+1 from wave 12) trash EVERY 20 SECONDS for as long
+        // as its keeper lives, and the keeper stands at the portal and never
+        // aggros. The party is in combat from wave 1 to wave 18, so the
+        // non-combat rung would run only in the shrinking gaps between waves and
+        // stop entirely once the party fell behind — at which point nothing ever
+        // walks the tank to the one thing that turns the pump off, and the door
+        // seal drains out from under a party that never leaves combat.
+        {608, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -911,6 +930,18 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // ran. It is also what makes the driver YIELD on Done — this rung sits
         // above the stock combat movers and the tank must keep its rotation.
         {600, 1},
+        // The Violet Hold, all five events. Hooks 15-19 issue every metre of
+        // their own movement: hook 15 walks the tank into Sinclari's 5yd interact
+        // range, hooks 16-18 garrison the door camp, and hook 19 runs the
+        // long-haul funnel out to rim portals 52-86yd away. With the per-tick
+        // hold in place each of those splines is cancelled the tick after it is
+        // issued. On events 2-4 the flag is also what makes the garrison YIELD
+        // rather than claim the tick, which the tank's rotation depends on.
+        {608, 1},
+        {608, 2},
+        {608, 3},
+        {608, 4},
+        {608, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

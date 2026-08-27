@@ -153,12 +153,35 @@ namespace
     // ~10yd of the route and the rest are 20yd+ east of it, off-path. This table
     // is meant to stay small and justified; add the row if run data shows the
     // clear actually detouring to them.
+    // The Violet Hold (map 608) — the Azure Saboteur (31079).
+    //
+    // Class 1: killing it is not merely useless, it is IMPOSSIBLE. Its template
+    // carries unit_flags 768 = IMMUNE_TO_PC | IMMUNE_TO_NPC and the script never
+    // clears them, so the party literally cannot damage it. But it is faction
+    // 1720, red-name and fully SELECTABLE, and on waves 6 and 12 it walks the
+    // ENTIRE room — the middle-of-the-room portal to whichever prisoner's cell the
+    // instance rolled, up to 88yd away — casting Shield Disruption at the far end.
+    //
+    // AttackersValue::IsPossibleTarget does already reject IMMUNE_TO_PC, so the
+    // combat engine will not pick it. This row is about the CLEAR, which is a
+    // different question with a different answer: the saboteur is the only moving
+    // hostile on the field during a boss-release wave, exactly when the wave
+    // driver is otherwise idle at the door camp, and it is the shape that pulls a
+    // clear across an arena (the Ahn'kahet Twilight Volunteer, one map over,
+    // failed in precisely this way — LeaderFightAnchor resolved the party's
+    // standoff onto a mob nobody could kill). Belt and braces on a mob whose whole
+    // job in the encounter is to be walked past.
+    //
+    // NOT LISTED: the Prison Door Seal (30896), Defense Dummy Target (30857) and
+    // Defense System (30837). All three are NOT_SELECTABLE as well as immune, so
+    // they are invisible to every selector on both sides of the question.
     DcNeverTargetRow const kRows[] =
     {
         { 576, 26793 },  // The Nexus — Crystalline Frayer (seed pod; unkillable until Ormorok dies)
         { 619, 30111 },  // Ahn'kahet — Twilight Worshipper (Jedoga's kneeling congregation, 65yd out)
         { 619, 30385 },  // Ahn'kahet — Twilight Volunteer (24/25 permanently unattackable; the 25th walks in)
         { 600, 27583 },  // Drak'Tharon Keep — Novos Summon Target (killing one softlocks the Novos gate)
+        { 608, 31079 },  // The Violet Hold — Azure Saboteur (IMMUNE_TO_PC bait that walks the whole room)
     };
 }
 

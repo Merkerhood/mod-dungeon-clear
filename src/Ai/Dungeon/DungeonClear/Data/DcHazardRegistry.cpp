@@ -326,7 +326,44 @@ namespace
     // DEAD Drakkari Invader within 10yd of him and tick 2 detonates it. No
     // DynamicObject, no GameObject, no live creature — nothing any of the three
     // tables can key on. It is a healing and spread fact, not a registry row.
-    constexpr std::array<DcGroundHazard, 7> kGroundHazards = {{
+    // The Violet Hold (map 608) — 58693 BLIZZARD, Cyanigosa, wave 18. From
+    // Spell.dbc: Effect[0] = 27 SPELL_EFFECT_PERSISTENT_AREA_AURA applying aura 3
+    // SPELL_AURA_PERIODIC_DAMAGE, EffectRadiusIndex 13 = 10.0yd,
+    // EffectAmplitude 2000ms, BasePoints+DieSides = 1500 frost per two seconds,
+    // DurationIndex 31 = 8000ms. Effect[1] is a -40% movement-speed leg on the
+    // same footprint, which is why walking out of it is slower than walking into
+    // it. AttributesEx 0x88 carries no channel bit, so it behaves like every other
+    // DynamicObject pool and is NOT interrupted by anything the boss does.
+    //
+    // She casts it every 5-10s (then repeating) at a RANDOM party member within
+    // 45yd — DoCastRandomTarget(SPELL_BLIZZARD, 0, 45.0f) — so the pool lands on
+    // top of whoever it picked rather than under her, the Acid Cloud shape and not
+    // the Arcane Field shape.
+    //
+    // SIZING. vacateRadius is the RAW 10yd aura, the same rule every row here
+    // follows. The retreat then aims at 10 + retreatSlack 6 = 16yd, so `radius` —
+    // the placement keep-out — must stay below that or the retreat could never
+    // find a spot PointIsHot accepts: 12 leaves the same 4yd budget for NavmeshSnap
+    // pulling a candidate back toward the pool that the 10/8 rows leave. Do not
+    // raise `radius` toward 16 without raising retreatSlack with it.
+    //
+    // ONE ROW, not two: 58693 has no SpellDifficulty.dbc row (checked, as for
+    // Arcane Vacuum 58694 and Mana Destruction 59374), so the DynamicObject
+    // reports the same id on normal and heroic.
+    //
+    // zBand 6: the whole fight happens on the arena floor at z ~38.4
+    // (MiddleRoomLocation), and the nearest other deck — the door landing at
+    // z 44.1 — is 5.7yd up and 37yd away in plan, so it is never inside the
+    // cylinder anyway.
+    //
+    // DELIBERATELY ABSENT — Lavanthor's Cauterizing Flames (59466), which the
+    // Violet Hold plan flagged for verification. It does NOT qualify: Spell.dbc
+    // gives it Effect[0] = 2 SPELL_EFFECT_SCHOOL_DAMAGE and Effect[1] = 6 apply
+    // aura 87 at implicit target 22 (TARGET_UNIT_SRC_AREA_ENEMY), i.e. a one-shot
+    // AoE nuke plus a damage-taken debuff. There is no SPELL_EFFECT_PERSISTENT_
+    // AREA_AURA leg, so no DynamicObject is ever spawned and there is nothing for
+    // this table to key on. It is a healing fact, not a registry row.
+    constexpr std::array<DcGroundHazard, 8> kGroundHazards = {{
         //                   radius  zBand  vacate  hold  slack
         // Cloud of Disease — the pool a dying Diseased Ghoul (10495) leaves.
         { 289, 17742, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
@@ -341,6 +378,8 @@ namespace
         { 600, 49034, 10.0f, 6.0f, 8.0f, 2.0f, 6.0f },
         // Poison Cloud — Tharon'ja, flesh phase, on a random party member.
         { 600, 49548, 10.0f, 6.0f, 8.0f, 2.0f, 6.0f },
+        // Blizzard — Cyanigosa, on a random party member within 45yd. 10yd aura.
+        { 608, 58693, 12.0f, 6.0f, 10.0f, 2.0f, 6.0f },
     }};
 
     // ---- the trap table --------------------------------------------------
