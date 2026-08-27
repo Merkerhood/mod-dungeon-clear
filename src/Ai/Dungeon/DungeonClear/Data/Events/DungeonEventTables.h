@@ -276,6 +276,7 @@ namespace DcVioletHold
 }
 
 void RegisterVioletHoldEvents(std::vector<DungeonEvent>& out);
+void RegisterMoltenCoreEvents(std::vector<DungeonEvent>& out);
 
 // Every TempSummon the siege can field — the trash, the elites, the three portal
 // keepers, Ichoron's globules, Xevozz's spheres and Cyanigosa. Probed by
@@ -334,6 +335,7 @@ void RegisterAzjolNerubRoster(std::vector<BossRosterPatch>& t);
 void RegisterAhnkahetRoster(std::vector<BossRosterPatch>& t);
 void RegisterDrakTharonKeepRoster(std::vector<BossRosterPatch>& t);
 void RegisterVioletHoldRoster(std::vector<BossRosterPatch>& t);
+void RegisterMoltenCoreRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;

@@ -62,6 +62,7 @@ namespace
             RegisterAhnkahetRoster(t);
             RegisterDrakTharonKeepRoster(t);
             RegisterVioletHoldRoster(t);
+            RegisterMoltenCoreRoster(t);
             return t;
         }();
         return kPatches;
