@@ -183,6 +183,11 @@ function RunCard({ run }: { run: LiveRun }) {
           {run.heroic && (
             <span className="ml-2 text-xs text-fuchsia-300">heroic</span>
           )}
+          {(run.bots?.length ?? 0) > 5 && (
+            <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300">
+              {run.bots!.length}-man
+            </span>
+          )}
           <span className="ml-3 font-mono text-xs text-ink-500">
             {run.runId}
           </span>{" "}

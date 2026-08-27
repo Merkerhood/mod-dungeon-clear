@@ -40,6 +40,14 @@ export interface Dungeon {
   level: number;
   heroicLevel: number;   // 0 = no heroic mode
   wing: string;
+  /* Raid rows only (raid-support Plan D): the launch form offers the party
+   * size within [sizeMin, sizeMax], defaulting to defaultSize. Absent on
+   * 5-man rows. */
+  raid?: boolean;
+  sizeMin?: number;
+  sizeMax?: number;
+  sizePresets?: number[];
+  defaultSize?: number;
   gear?: GearChoice[];
   gearHeroic?: GearChoice[];
 }
@@ -250,6 +258,7 @@ export interface RunRecord {
   instanceId?: number;
   level?: number;
   heroic?: boolean;
+  size?: number;         // party size fielded (schema 11+; 0/absent = 5-man)
   compSeed?: number;
   gearIlvl?: number;
   gearQuality?: number;

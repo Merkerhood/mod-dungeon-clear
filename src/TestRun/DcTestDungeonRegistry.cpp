@@ -9,10 +9,12 @@
 #include <fstream>
 #include <sstream>
 
+#include "DBCStores.h"
 #include "PlayerbotAIConfig.h"
 
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 
+#include "TestRun/DcTestComp.h"
 #include "TestRun/DcTestGearTiers.h"
 #include "TestRun/DcTestRunRecord.h"
 
@@ -190,8 +192,19 @@ namespace DcTestDungeonRegistry
               << ",\"mapId\":" << row.mapId
               << ",\"level\":" << row.recommendedLevel
               << ",\"heroicLevel\":" << row.heroicLevel
-              << ",\"wing\":\"" << EscapeJson(row.wing) << '"'
-              << ",\"gear\":";
+              << ",\"wing\":\"" << EscapeJson(row.wing) << '"';
+            // RAID rows (raid-support Plan D): tell the dashboard's launch
+            // form to offer the size control, with the module's own bounds so
+            // the two can't drift. defaultSize 10 mirrors the plan's
+            // iteration-speed choice; the worldserver still validates.
+            if (MapEntry const* mapEntry = sMapStore.LookupEntry(row.mapId);
+                mapEntry && mapEntry->IsRaid())
+                s << ",\"raid\":true"
+                  << ",\"sizeMin\":" << DcTestComp::kMinPartySize
+                  << ",\"sizeMax\":" << DcTestComp::kMaxPartySize
+                  << ",\"sizePresets\":[10,25]"
+                  << ",\"defaultSize\":10";
+            s << ",\"gear\":";
             appendLadder(s, row.mapId, row.recommendedLevel);
             if (row.heroicLevel)
             {

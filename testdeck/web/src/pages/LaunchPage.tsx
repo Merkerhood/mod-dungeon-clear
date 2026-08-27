@@ -114,6 +114,11 @@ export default function LaunchPage() {
                   heroic
                 </span>
               )}
+              {d.raid && (
+                <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300">
+                  raid
+                </span>
+              )}
             </div>
           </button>
         ))}
@@ -183,6 +188,12 @@ function LaunchDrawer({
      box means "the default", which for all four of these is 0. */
   const [levelText, setLevelText] = useState("");
   const [seedText, setSeedText] = useState("");
+  /* Raid rows only: party size, prefilled with the catalogue's default so a
+     bare launch fields the size the raid plan expects. Blank = classic 5-man
+     comp (still legal on a raid map — the harness raid-groups any size). */
+  const [sizeText, setSizeText] = useState(
+    dungeon.raid && dungeon.defaultSize ? String(dungeon.defaultSize) : "",
+  );
   const [ilvl, setIlvl] = useState(0);
   const [quality, setQuality] = useState(0);
   const [totalText, setTotalText] = useState("5");
@@ -195,6 +206,9 @@ function LaunchDrawer({
 
   const level = Number(levelText || 0);
   const seed = Number(seedText || 0);
+  const size = dungeon.raid ? Number(sizeText || 0) : 0;
+  const sizeMin = dungeon.sizeMin ?? 2;
+  const sizeMax = dungeon.sizeMax ?? 40;
   const total = Number(totalText);
   const concurrent = Number(concurrentText);
 
@@ -208,6 +222,8 @@ function LaunchDrawer({
   const maxConcurrent = catalogue.limits?.maxConcurrent || 0;
 
   const levelOk = level <= 80;
+  const sizeOk =
+    size === 0 || (Number.isInteger(size) && size >= sizeMin && size <= sizeMax);
   const totalOk = /^\d+$/.test(totalText) && total >= 1 && (!maxTotal || total <= maxTotal);
   const concurrentOk =
     /^\d+$/.test(concurrentText) && (!maxConcurrent || concurrent <= maxConcurrent);
@@ -215,6 +231,7 @@ function LaunchDrawer({
   const canLaunch =
     busy === null &&
     levelOk &&
+    sizeOk &&
     (mode !== "roster" || !!rosterName) &&
     (mode !== "plan" || planOk);
 
@@ -248,6 +265,7 @@ function LaunchDrawer({
           heroic,
           level,
           seed,
+          size,
           ilvl,
           quality,
         });
@@ -267,7 +285,7 @@ function LaunchDrawer({
       }
 
       const outcome = await startRun(
-        { dungeon: dungeon.token, heroic, level, seed, ilvl, quality },
+        { dungeon: dungeon.token, heroic, level, seed, size, ilvl, quality },
         (attempt, of) => {
           setBusy(`driver logging in — retrying (${attempt}/${of})…`);
           setPendingNote(
@@ -441,6 +459,25 @@ function LaunchDrawer({
             </>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {dungeon.raid && (
+                <Field
+                  label="Raid size"
+                  hint={
+                    `${sizeMin}–${sizeMax}` +
+                    (dungeon.sizePresets?.length
+                      ? ` · presets ${dungeon.sizePresets.join("/")}`
+                      : "") +
+                    " · blank = 5-man comp"
+                  }
+                >
+                  <NumberBox
+                    value={sizeText}
+                    onChange={setSizeText}
+                    invalid={!sizeOk}
+                    placeholder={String(dungeon.defaultSize ?? 10)}
+                  />
+                </Field>
+              )}
               <Field label="Bot level" hint="blank = dungeon default">
                 <NumberBox
                   value={levelText}
