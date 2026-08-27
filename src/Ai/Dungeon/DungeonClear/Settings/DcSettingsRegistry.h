@@ -40,6 +40,12 @@ enum class DcType
 // out can never change normal-difficulty behaviour by accident.
 inline constexpr double kDcNoHeroic = std::numeric_limits<double>::quiet_NaN();
 
+// Sentinel for `DcSettingDef::raidVal`: this row has NO raid layer. Same NaN
+// trick, same rationale — the raid profile is a deliberately small set (spread,
+// recovery budgets: numbers that must scale with 10-40 members), and a row that
+// opts out resolves identically on raid maps and dungeon maps.
+inline constexpr double kDcNoRaid = std::numeric_limits<double>::quiet_NaN();
+
 struct DcSettingDef
 {
     char const* key;          // config key suffix, e.g. "BossEngageRangeFloor"
@@ -57,7 +63,19 @@ struct DcSettingDef
     // not admin input, and a value outside the row's own range would be one the
     // addon could never reproduce as an override. Pinned by a gtest.
     double      heroicVal = kDcNoHeroic;
+    // Default used instead of `defVal` while the run's map is a RAID (any raid
+    // difficulty). kDcNoRaid = no raid layer (the common case). Resolution sits
+    // ABOVE the heroic layer: conf "DungeonClear.<key>.Raid" -> raidVal -> the
+    // heroic path -> conf -> defVal (see GetRaw in DcSettings.cpp). Same range
+    // contract as heroicVal: raid values MUST sit inside [minVal, maxVal].
+    double      raidVal = kDcNoRaid;
 };
+
+// True when the row carries an authored raid default (NaN-compare, as above).
+inline bool DcHasRaidDefault(DcSettingDef const& d)
+{
+    return !std::isnan(d.raidVal);
+}
 
 // True when the row carries an authored heroic default. NaN compares unequal to
 // itself, which is exactly the "unset" test wanted here.
@@ -133,7 +151,10 @@ inline constexpr DcSettingDef kDcSettings[] =
     // cover the rezzer drinking back the mana to afford the cast. OFF restores
     // the classic disable-on-first-death. See Util/DcRezDecision.h.
     { "PostCombatRez",            DcType::Bool,   1,  0,   1,  true  },
-    { "PostCombatRezTimeoutSecs", DcType::UInt,  90, 10, 600,  true  },
+    // Raid layer: many more corpses to walk between and drink for — the 5-man
+    // budget ends winnable raid recoveries early (Plan B's multi-rezzer election
+    // scales the work, this scales the clock).
+    { "PostCombatRezTimeoutSecs", DcType::UInt,  90, 10, 600,  true, kDcNoHeroic, 180 },
 
     // Stranded-member recovery failsafe. The dominant way a run stalls now is a
     // party member falling THROUGH the world geometry (or wedging where the
@@ -166,7 +187,11 @@ inline constexpr DcSettingDef kDcSettings[] =
     // capture path is dungeonclear_decisions.jsonl in the worldserver's working
     // dir, overridable via the DUNGEONCLEAR_DECISIONS_FILE env var.
     { "RecordDecisions",       DcType::Bool,   0,   0,   1,  true  },
-    { "PartyMaxSpread",        DcType::Float, 25,  10,  60,  true  },
+    // Clamp ceiling 120 (was 60) so a raid run can widen the straggler gate by
+    // override; the authored raid default is 40 — a 25-40 member column is
+    // legitimately longer than a 5-man file, and holding raids to the 25yd
+    // dungeon spread would freeze the advance behind every straggler.
+    { "PartyMaxSpread",        DcType::Float, 25,  10, 120,  true, kDcNoHeroic, 40 },
 
     // In-combat regroup (contribution-gated, Option B): reconnect a follower to the
     // fight ONLY when it truly can't contribute from where it stands — a DPS with no

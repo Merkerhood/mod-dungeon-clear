@@ -21,6 +21,7 @@
 #include "InstanceScript.h"
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFormGate.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Log.h"
@@ -1165,7 +1166,7 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // primary gate is upstream (a gated roster anchor / the Conditional
     // difficulty overload), so reaching here means an authoring slip — skip the
     // event so the clear advances rather than stalling on inert content.
-    if (bot && bot->GetMap() && !DcGateMatches(ev.gate, bot->GetMap()->GetDifficulty()))
+    if (bot && bot->GetMap() && !DcGateMatches(ev.gate, DcDifficulty::Of(bot->GetMap())))
         return EventDriveOutcome::Skipped;
 
     uint32 const now = getMSTime();
@@ -1301,15 +1302,20 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
     if (!bot || !context)
         return nullptr;
 
-    Difficulty const difficulty =
-        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
     std::vector<DungeonEvent const*> const conditional =
-        DungeonEventRegistry::Conditional(mapId, difficulty);
+        DungeonEventRegistry::Conditional(mapId, DcDifficulty::Of(bot->GetMap()));
     if (conditional.empty())
         return nullptr;
 
     auto const& cleared =
         context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
+
+    // Raid boss stand-down: while an encounter is live, the ONLY events allowed
+    // to drive are the ones registered as part of the encounter itself
+    // (DungeonEvent::encounterActive — the Razorgore-orb seam). Evaluated once
+    // out here, not per event: IsActive is raid-gated and leader-memoised, so
+    // dungeon runs pay a single Map::IsRaid().
+    bool const standDown = DcBossStandDown::IsActive(bot);
 
     for (DungeonEvent const* ev : conditional)
     {
@@ -1318,6 +1324,8 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
         // on every map: on a map with no wave event it rejects here, before any
         // activation predicate is evaluated.
         if (requireDrivesInCombat && !ev->drivesInCombat)
+            continue;
+        if (standDown && !ev->encounterActive)
             continue;
         // Already done this run — its synthetic latch key is set.
         if (cleared.count(ConditionalLatchKey(ev->id)))
@@ -1335,10 +1343,8 @@ void DungeonEventExecutor::SweepCompletedConditionalEvents(Player* bot,
     if (!bot || !context)
         return;
 
-    Difficulty const difficulty =
-        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
     std::vector<DungeonEvent const*> const conditional =
-        DungeonEventRegistry::Conditional(mapId, difficulty);
+        DungeonEventRegistry::Conditional(mapId, DcDifficulty::Of(bot->GetMap()));
     if (conditional.empty())
         return;
 

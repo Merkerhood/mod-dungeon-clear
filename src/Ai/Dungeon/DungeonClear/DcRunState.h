@@ -52,6 +52,14 @@ struct DcRunState
     bool        enabled = false;   // the run's master switch (leader-owned)
     bool        paused  = false;   // soft-stop layered on `enabled`; see OnResume
 
+    // This run is on a RAID map — stamped by `dc on` from Map::IsRaid(), read
+    // via DcRun::IsRaid. Raid runs change the non-interference contract: DC
+    // owns everything BETWEEN fights and stands down completely during a boss
+    // encounter (playerbots' raid strategies own the fight — see
+    // Util/DcBossStandDown). Stamped rather than re-derived so the flag is
+    // one honest fact of the run session, cleared with it by Reset().
+    bool        raidRun = false;
+
     // Short human phrase describing WHY the run is paused, for the status panel to
     // tell a manual `dc pause` apart from a door auto-pause. Set at each pause site
     // the moment `paused` flips true; read only while paused. Empty falls back to a
@@ -139,6 +147,16 @@ struct DcRunState
     // DcRezDecision.h); 0 = the spell is castable. Cleared the moment the block
     // lifts, so a boss mid-reset gets a fresh wait rather than a stale verdict.
     uint32 rezBlockedSinceMs    = 0;
+
+    // === raid boss stand-down (leader-owned, read cross-bot) ======================
+    // The hysteresis state + per-tick memo behind DcBossStandDown::IsActive: while
+    // a raid encounter is live every DC combat behavior and recovery ladder goes
+    // inert so the playerbots raid strategy owns the fight. Evaluated on the
+    // leader at most once per tick window; members read the verdict cross-bot,
+    // the same access pattern as the latches above. See Util/DcBossStandDown.h.
+    bool   standDownActive   = false;  // the current verdict
+    uint32 standDownSignalMs = 0;      // getMSTime() an encounter signal last read true
+    uint32 standDownEvalMs   = 0;      // memo stamp of the last leader evaluation
 
     // === stranded-member recovery failsafe (leader-owned) =========================
     // The no-progress clock + last-seen progress snapshot, ticked live on the

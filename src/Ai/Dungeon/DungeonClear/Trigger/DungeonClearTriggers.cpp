@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearTriggers.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
@@ -858,6 +859,12 @@ bool DungeonClearStalledTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
+    // Raid boss stand-down: a stale stall reason must never drive fallback
+    // maneuvers into a live encounter (the fight is the raid strategy's; DC
+    // resumes at loot). Cheap for dungeons — IsActive is raid-gated.
+    if (DcBossStandDown::IsActive(bot))
+        return false;
+
     // Only fall back when there is an actual stall reason set by Advance or
     // EngageBoss. If the path is clear, this trigger never fires.
     std::string const& reason = AI_VALUE(std::string&, DcKey::StallReason);
@@ -1687,15 +1694,19 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
         return false;
     }
 
-    // Never force-clear combat in a RAID zone. A raid encounter is exactly where an
-    // errant combat drop does the most damage (a wrongly-cleared boss reference can
-    // reset the fight for the whole raid), the phantom-combat deadlock this recovers
-    // is a 5-man dungeon-clear problem, and raid bosses routinely hold the raid in
-    // combat with no per-bot reachable target during phase transitions / adds — the
-    // precise shape this would misread. Gate it out entirely rather than trust the
-    // reachability test there.
+    // Never force-clear combat during a raid ENCOUNTER. A boss fight is exactly
+    // where an errant combat drop does the most damage (a wrongly-cleared boss
+    // reference can reset the fight for the whole raid), and raid bosses
+    // routinely hold the raid in combat with no per-bot reachable target during
+    // phase transitions / adds — the precise shape this would misread. The gate
+    // is the boss stand-down verdict, not the map type: OUTSIDE encounters a
+    // raid run needs this recovery exactly like a dungeon does (phantom combat
+    // from a gated/underground spawn wedges a 40-bot advance just as hard).
+    // The breaker's ACTION is also zeroed by the stand-down check in the combat
+    // multiplier; gating here too keeps the per-tick holder scan off the books
+    // for the whole fight.
     Map* const map = bot->GetMap();
-    if (!map || map->IsRaid())
+    if (!map || DcBossStandDown::IsActive(bot))
     {
         stuckCombatSinceMs = 0;
         holderCloseWatch.Reset();

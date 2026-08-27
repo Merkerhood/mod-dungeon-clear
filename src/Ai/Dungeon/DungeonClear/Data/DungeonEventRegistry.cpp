@@ -453,12 +453,12 @@ std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId)
     return out;
 }
 
-std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId, Difficulty difficulty)
+std::vector<DungeonEvent const*> DungeonEventRegistry::Conditional(uint32 mapId, DcDiffKey key)
 {
     std::vector<DungeonEvent const*> out;
     for (DungeonEvent const& e : EventTable())
         if (e.mapId == mapId && e.activation == EventActivation::Conditional &&
-            DcGateMatches(e.gate, difficulty))
+            DcGateMatches(e.gate, key))
             out.push_back(&e);
     return out;
 }

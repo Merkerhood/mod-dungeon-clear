@@ -33,6 +33,14 @@
 # set for their run is never overruled by a heroic default. Every key that ships
 # with a heroic default is listed in the HEROIC DEFAULTS section at the end of
 # the general settings; writing a "<key>.Heroic" line replaces it.
+#
+# RAID MAPS: the same mechanism exists one layer up for raid runs. A setting can
+# be given a raid value by appending ".Raid" to the key; it applies on any raid
+# map (any raid difficulty) and outranks the heroic layer. The built-in raid
+# defaults are listed in the RAID DEFAULTS section after the heroic one. The
+# full order: per-player override -> "<key>.Raid" (raid maps) -> built-in raid
+# default -> "<key>.Heroic" (heroic-tier maps) -> built-in heroic default ->
+# "<key>" -> built-in default.
 
 ########################################
 # GENERAL SETTINGS  (per-player overridable — see note above)
@@ -1431,6 +1439,28 @@ DungeonClear.SpectateSpeed = 2.5
 # DungeonClear.SmartRestHealthPct.Heroic = 70
 # DungeonClear.SmartRestDpsManaPct.Heroic = 35
 # DungeonClear.SmartRestHealerManaPct.Heroic = 60
+
+###############################################################################
+# RAID DEFAULTS
+#
+#   Every key below ships with a different built-in default while the run is on
+#   a RAID map (any raid difficulty). Same contract as the heroic section: the
+#   lines are commented out and show the value the module already uses.
+#
+#   Why these and not others: the raid profile is only the numbers that must
+#   scale with 10-40 members. Behaviour (routing, pulls, doors, events) is
+#   shared with dungeons; the boss fights themselves are owned by the
+#   playerbots raid strategies while dungeon-clear stands down.
+###############################################################################
+
+#    A 25-40 member column is legitimately longer than a 5-man file; the 25yd
+#    dungeon spread would hold the advance behind every straggler. (The clamp
+#    ceiling for overrides is 120.)
+# DungeonClear.PartyMaxSpread.Raid = 40
+
+#    Many more corpses to walk between and drink for after a bad fight — the
+#    5-man budget ends winnable raid recoveries early.
+# DungeonClear.PostCombatRezTimeoutSecs.Raid = 180
 
 ###############################################################################
 # `.dc test` — AUTOMATED DUNGEON TEST RUNS

@@ -9,6 +9,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
@@ -158,6 +159,17 @@ namespace DcStrandedRecovery
         // A pause is an intentional hold, not a stall: keep the clock fresh so a
         // long Wait-at-Boss / door pause never makes the run look frozen on resume.
         if (run.paused)
+        {
+            run.progressMs = now ? now : 1;
+            return false;
+        }
+
+        // Raid boss stand-down: a live encounter is the playerbots strategy's
+        // fight — a rescue teleport mid-encounter would yank fighters out of
+        // position (and engagement alone can't be trusted through submerge /
+        // phase-flip signal gaps). Same clock treatment as a pause, so the
+        // failsafe re-arms clean when the fight ends.
+        if (DcBossStandDown::IsActive(bot))
         {
             run.progressMs = now ? now : 1;
             return false;

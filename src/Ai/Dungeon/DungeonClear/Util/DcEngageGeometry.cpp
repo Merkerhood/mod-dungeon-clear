@@ -562,8 +562,9 @@ bool DcEngageGeometry::EnRouteSweepApplies(Player* bot)
     // bend the WALK (PullEnRouteAvoid), its rooms are wide enough for that detour
     // to exist, and its pull profile is tuned against measured baselines. Checked
     // before the table so a map that later earns a row cannot arm heroic by
-    // accident.
-    if (map->GetDifficulty() == DUNGEON_DIFFICULTY_HEROIC)
+    // accident. IsHeroic (not a raw difficulty compare) so a 25-man NORMAL
+    // raid — whose raw difficulty is also 1 — is not misread as heroic.
+    if (map->IsHeroic())
         return false;
     return RouteSweepRegistry::SweepsRoute(map->GetId());
 }

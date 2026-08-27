@@ -13,6 +13,7 @@
 #include "Position.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
@@ -173,10 +174,35 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
     if (!action || !botAI || !bot)
         return 1.0f;
 
-    // Touch EXACTLY ONE combat action. Fast-path everything else so a fight's full
-    // action list pays only a single string compare per tick — the combat engine
-    // otherwise stays fully stock.
-    if (action->getName() != "drop target")
+    std::string const& name = action->getName();
+
+    // RAID BOSS STAND-DOWN — the one shared check that makes every DC combat
+    // trigger node inert during a raid encounter, instead of a copy in each of
+    // the ~12 triggers. While DcBossStandDown reads active, every "dungeon
+    // clear *" combat action is zeroed (the playerbots raid strategy owns the
+    // fight, ACTION_RAID=60+), and the drop-target carve-out below stands down
+    // too (return stock behavior). The ONE exemption is the combat event
+    // driver: encounter events (BWL's Razorgore orb) are DC's job mid-fight,
+    // and the executor itself refuses any event not flagged encounterActive
+    // while stand-down holds (see FindDueConditionalEvent), so letting the
+    // action through here is safe for every other event.
+    // Order of tests: the prefix compare is paid only after the cheap
+    // exact-compare fast path fails, and IsActive itself is raid-gated +
+    // leader-memoised, so dungeon runs pay one Map::IsRaid() at most.
+    bool const isDcAction = name.compare(0, 13, "dungeon clear") == 0;
+    if (!isDcAction && name != "drop target")
+        return 1.0f;
+    if (DcBossStandDown::IsActive(bot))
+    {
+        if (name == "dungeon clear run event combat")
+            return 1.0f;
+        return isDcAction ? 0.0f : 1.0f;  // DC inert; "drop target" back to stock
+    }
+
+    // Touch EXACTLY ONE combat action outside stand-down. Fast-path everything
+    // else so a fight's full action list pays only the compares above per tick —
+    // the combat engine otherwise stays fully stock.
+    if (name != "drop target")
         return 1.0f;
 
     // Drop-target ping-pong guard. Engine transitions are action-driven: the stock

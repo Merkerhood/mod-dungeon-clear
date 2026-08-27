@@ -226,7 +226,8 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
     // Apply per-dungeon roster corrections (remove wrong/event-locked bosses,
     // add real bosses or travel objectives) before wing-filtering and snapping.
     std::vector<DungeonBossInfo> roster =
-        BossRosterRegistry::Apply(mapId, difficulty, BossSpawnIndex::Get(mapId, difficulty));
+        BossRosterRegistry::Apply(mapId, DcDifficulty::Of(map),
+                                  BossSpawnIndex::Get(mapId, difficulty));
 
     // Per-team faction reclassification (friendly-faction bosses -> flyby
     // objectives) before wing-filtering and snapping.

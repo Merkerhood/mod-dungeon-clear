@@ -21,14 +21,14 @@
 
 TEST(DcDifficultyGateTest, GateMatchesTruthTable)
 {
-    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::Any, DUNGEON_DIFFICULTY_NORMAL));
-    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::Any, DUNGEON_DIFFICULTY_HEROIC));
+    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::Any, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL)));
+    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::Any, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC)));
 
-    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::NormalOnly, DUNGEON_DIFFICULTY_NORMAL));
-    EXPECT_FALSE(DcGateMatches(DcDifficultyGate::NormalOnly, DUNGEON_DIFFICULTY_HEROIC));
+    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::NormalOnly, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL)));
+    EXPECT_FALSE(DcGateMatches(DcDifficultyGate::NormalOnly, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC)));
 
-    EXPECT_FALSE(DcGateMatches(DcDifficultyGate::HeroicOnly, DUNGEON_DIFFICULTY_NORMAL));
-    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::HeroicOnly, DUNGEON_DIFFICULTY_HEROIC));
+    EXPECT_FALSE(DcGateMatches(DcDifficultyGate::HeroicOnly, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL)));
+    EXPECT_TRUE(DcGateMatches(DcDifficultyGate::HeroicOnly, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC)));
 }
 
 // --- BossRosterRegistry::Apply is difficulty-aware ------------------------
@@ -58,9 +58,9 @@ TEST(DcDifficultyGateTest, AnyGatedPatchAppliesOnBothDifficulties)
     };
 
     std::vector<DungeonBossInfo> normal =
-        BossRosterRegistry::Apply(543, DUNGEON_DIFFICULTY_NORMAL, base);
+        BossRosterRegistry::Apply(543, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), base);
     std::vector<DungeonBossInfo> heroic =
-        BossRosterRegistry::Apply(543, DUNGEON_DIFFICULTY_HEROIC, base);
+        BossRosterRegistry::Apply(543, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC), base);
 
     ASSERT_EQ(normal.size(), heroic.size());
     for (size_t i = 0; i < normal.size(); ++i)
@@ -114,7 +114,7 @@ TEST(DcDifficultyGateTest, ShatteredHallsHeroicReordersHallwaySweep)
         GateBoss(16808, 3, "Warchief Kargath Bladefist", 540),
     };
     std::vector<DungeonBossInfo> const out =
-        BossRosterRegistry::Apply(540, DUNGEON_DIFFICULTY_HEROIC, heroicBase);
+        BossRosterRegistry::Apply(540, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC), heroicBase);
 
     auto indexOf = [&](uint32 entry) -> std::size_t
     {
@@ -150,7 +150,7 @@ TEST(DcDifficultyGateTest, ShatteredHallsHeroicReordersHallwaySweep)
         GateBoss(16808, 2, "Warchief Kargath Bladefist", 540),
     };
     std::vector<DungeonBossInfo> const normalOut =
-        BossRosterRegistry::Apply(540, DUNGEON_DIFFICULTY_NORMAL, normalBase);
+        BossRosterRegistry::Apply(540, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL), normalBase);
     auto normalIndexOf = [&](uint32 entry) -> std::size_t
     {
         for (std::size_t i = 0; i < normalOut.size(); ++i)
@@ -221,15 +221,15 @@ TEST(DcDifficultyGateTest, ConditionalOverloadFiltersExactlyByGate)
         size_t expectHeroic = 0;
         for (DungeonEvent const* ev : all)
         {
-            if (DcGateMatches(ev->gate, DUNGEON_DIFFICULTY_NORMAL))
+            if (DcGateMatches(ev->gate, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL)))
                 ++expectNormal;
-            if (DcGateMatches(ev->gate, DUNGEON_DIFFICULTY_HEROIC))
+            if (DcGateMatches(ev->gate, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC)))
                 ++expectHeroic;
         }
 
-        EXPECT_EQ(DungeonEventRegistry::Conditional(seed.mapId, DUNGEON_DIFFICULTY_NORMAL).size(),
+        EXPECT_EQ(DungeonEventRegistry::Conditional(seed.mapId, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_NORMAL)).size(),
                   expectNormal) << "map " << seed.mapId;
-        EXPECT_EQ(DungeonEventRegistry::Conditional(seed.mapId, DUNGEON_DIFFICULTY_HEROIC).size(),
+        EXPECT_EQ(DungeonEventRegistry::Conditional(seed.mapId, DcDiffKey::Dungeon(DUNGEON_DIFFICULTY_HEROIC)).size(),
                   expectHeroic) << "map " << seed.mapId;
     }
 }

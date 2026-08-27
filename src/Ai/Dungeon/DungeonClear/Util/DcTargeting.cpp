@@ -998,7 +998,7 @@ bool DcTargeting::HasPendingSummonEvent(Player* bot, AiObjectContext* ctx, uint3
 
     auto const& cleared =
         ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
-    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(map->GetId(), map->GetDifficulty()))
+    for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(map->GetId(), DcDifficulty::Of(map)))
     {
         if (ev->panelGatesBossEntry != bossEntry)
             continue;

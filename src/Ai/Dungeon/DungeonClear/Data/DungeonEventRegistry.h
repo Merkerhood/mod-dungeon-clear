@@ -356,6 +356,17 @@ struct DungeonEvent
     // else.
     bool drivesInCombat{false};
 
+    // RAID runs only: this event is part of a boss ENCOUNTER and keeps driving
+    // while the raid boss stand-down holds (the exemption in the DC combat
+    // multiplier and FindDueConditionalEvent — see Util/DcBossStandDown.h).
+    // The canonical case is BWL's Razorgore orb: the fight is the playerbots
+    // strategy's, but the orb click and the possessed-Razorgore egg run are
+    // DC's orchestration inside it. An event WITHOUT this flag is refused
+    // outright during stand-down, whatever its other flags say. Usually paired
+    // with drivesInCombat (an encounter is a fight); meaningless on 5-man maps
+    // where stand-down never arms.
+    bool encounterActive{false};
+
     // This event's STEPS are the sole driver: they issue their own movement, and
     // they decide per tick whether they need the tick at all.
     //
@@ -650,10 +661,10 @@ public:
     // overload below so a heroic-only event never surfaces on a normal run.
     static std::vector<DungeonEvent const*> Conditional(uint32 mapId);
 
-    // The Conditional events whose difficulty gate matches `difficulty`. This is
+    // The Conditional events whose difficulty gate matches `key`. This is
     // the runtime lookup — every live consumer (executor, panel, targeting) has
-    // the bot's map in hand and must pass its difficulty.
-    static std::vector<DungeonEvent const*> Conditional(uint32 mapId, Difficulty difficulty);
+    // the bot's map in hand and must pass its difficulty key (DcDifficulty::Of).
+    static std::vector<DungeonEvent const*> Conditional(uint32 mapId, DcDiffKey key);
 
     // --- Room-aggro pre-clear (milestone 3) ------------------------------
 
