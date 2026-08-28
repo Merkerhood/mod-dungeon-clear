@@ -84,4 +84,8 @@ void RegisterBlackMorassHooks(ObjectiveHookRegistry::HookTable& out);
 // the wave driver. See VioletHoldDriver.cpp. Ids 15-19.
 void RegisterVioletHoldHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Blackwing Lair (map 469) — Razorgore's orb and egg run, the one hook that
+// drives INSIDE a raid boss encounter. See BlackwingLairDriver.cpp. Id 20.
+void RegisterBlackwingLairHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif

@@ -119,6 +119,24 @@ namespace DcRel
     // Inert on every map without a drivesInCombat event, which is all of them bar
     // Black Morass — the trigger resolves the flag before it fires.
     inline constexpr float EventDueCombat         = 61.0f; // leader: wave-encounter event driver
+    // BLACKWING LAIR ONLY, one member: the elected orb runner's walk to the Orb of
+    // Domination and the click itself (DungeonClearRazorgoreOrbTrigger).
+    //
+    // 62 because of what it has to beat on a raid map, which is not the DC ladder
+    // at all — during a raid encounter every other DC rung is zeroed by the
+    // stand-down (see DungeonClearCombatMultiplier) and the bot's tick belongs to
+    // mod-playerbots' `bwl` strategy, whose nodes sit at ACTION_RAID (60) and
+    // ACTION_RAID+1 (61). One of them, `bwl razorgore avoid aoe`, exists precisely
+    // to walk bots out of the boss's frontal cone — and it would walk the runner
+    // off the orb ledge every tick of the trip. So this has to outrank 61.
+    //
+    // Kept BELOW the Hakkar band (62-64, Sunken Temple — another map, cannot
+    // contend) and the phantom-combat hatch (65). It ties nothing: it is the only
+    // rung in the module gated on a single elected member of a single map's single
+    // encounter, and it YIELDS (returns false) the moment the runner is parked, so
+    // it owns the tick only while actually travelling or clicking.
+    inline constexpr float RazorgoreOrb           = 62.0f; // runner: take the orb
+
     // Registered in BOTH engines (like BreakStuckCombat / HazardVacate). The combat
     // registration is the working one; the NON-combat registration is a liveness net.
     // Every watchdog the maneuver owns — tag-leg and return-leg timeouts, the CC

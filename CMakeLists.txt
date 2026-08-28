@@ -611,3 +611,59 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    lists' completeness/exclusivity/disjointness, and the four safety-rail
 #    registries. Suite name starts DungeonEvent so the `DungeonEvent*` gtest
 #    filter in t/run_tests.sh and CI picks it up.)
+# Data/Events/BlackwingLairEvents.cpp
+#   (Blackwing Lair / Razorgore the Untamed, phase 1 — the encounter the module
+#    orchestrates from INSIDE a raid boss fight. One conditional event:
+#    Conditional + Repeatable + Optional + DrivesInCombat + ENCOUNTERACTIVE +
+#    StepsOwnMovement, one Custom step (hook 20). encounterActive is the flag
+#    that makes it possible at all: on a raid map every DC combat behaviour goes
+#    inert the moment an encounter starts (DcBossStandDown) and this is the one
+#    sanctioned exception, the seam DungeonEvent::encounterActive was written
+#    for. Phase 1 cannot be done by the stock bots at any skill level: a player
+#    must click the Orb of Domination (GO 177808) to mind-control Razorgore
+#    (19832, NINETY SECONDS, and it leaves the clicker locked out for SIXTY by
+#    Mind Exhaustion 23958), then drive the possessed boss to each of THIRTY
+#    Black Dragon Eggs (GO 177807) and cast Destroy Egg (19873 — 3s, 10yd,
+#    interrupt-on-move). Measured budget: a 262yd greedy tour at his 10 yd/s plus
+#    90s of casting = ~135s, i.e. TWO OR THREE mind-control windows and a
+#    rotation of runners, exactly like a human raid. Meanwhile the instance
+#    spawns 2-5 adds every 15s from eight floor positions until the last egg
+#    pops, and Razorgore DYING in phase 1 casts 20038 and instakills the raid —
+#    which is why the run's job is to make phase 1 end, and why the DPS guard
+#    (RaidBwlStrategy::AppendTargetExclusions) lives upstream in mod-playerbots
+#    where phase and target selection actually are. The other seven BWL bosses
+#    need nothing: all eight carry kill-credit rows (instance_encounters
+#    610-617) so BossSpawnIndex derives them.)
+# Overrides/BlackwingLairDriver.cpp
+#   (the imperative half, hook 20. Unlike every other controller in this module
+#    it NEVER MOVES THE BOT THAT RUNS IT — the leader is the raid's main tank
+#    holding an add wave, so every branch ends in Done (yield) and the work is
+#    side effects on other units: walking the POSSESSED BOSS egg to egg and
+#    casting from it. Its second actor is delegated, not driven: the orb refuses
+#    a user with a pet and roots the charmer for 90s, so the driver ELECTS a
+#    runner (DcRazorgore::SelectRunner — ranged dps first, healers last, never
+#    the tank) and publishes it in DcRunState; that bot walks itself over on its
+#    own tick. Per-egg no-progress clock retires an unreachable egg for the pass
+#    rather than wedging the encounter on it, and a cast the caster keeps
+#    refusing falls back to the same spell TRIGGERED — same script, same credit,
+#    minus the channel.)
+# Util/DcRazorgoreDecision.h
+#   (the pure kernel behind both: Decide() over a snapshot View, and the runner
+#    election. No world state, so t/TestBlackwingLair.cpp exercises the whole FSM
+#    — completion, the possessed branch, the runner rotation — without a map.)
+# Action/DcRazorgoreOrbAction.cpp
+#   (the runner's half: DungeonClearRazorgoreOrb{Trigger,Action}, both engines,
+#    DcRel::RazorgoreOrb 62 — it has to outrank mod-playerbots' `bwl` nodes at
+#    ACTION_RAID 60/61, one of which walks bots out of Razorgore's frontal cone
+#    and would walk the runner off the orb ledge every tick. The 78yd walk to the
+#    ledge goes through LongRangePathfinder + one escort spline because the
+#    engine PathGenerator truncates a >74-poly path silently. Yields the tick the
+#    moment the runner is parked, so a possessing DPS still runs its rotation.
+#    Exempted by name from the stand-down zero in DungeonClearCombatMultiplier,
+#    alongside the combat event driver.)
+# t/TestBlackwingLair.cpp
+#   (the map-469 authored-data lints plus the kernel: the event's exact flag set
+#    (encounterActive is the one that must never be dropped), hook 20's
+#    registration, the FSM's ordering guarantees, and the runner election's hard
+#    gates and preference order. Suite name starts DungeonEvent so the
+#    `DungeonEvent*` gtest filter in t/run_tests.sh picks it up.)

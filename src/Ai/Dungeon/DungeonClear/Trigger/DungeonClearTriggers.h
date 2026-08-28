@@ -577,4 +577,31 @@ public:
     bool IsActive() override;
 };
 
+// BLACKWING LAIR ONLY, and only for ONE member of the raid: the bot the leader's
+// Razorgore driver elected to take the Orb of Domination.
+//
+// The rest of the encounter is the raid strategy's and the leader driver's. This
+// exists because the orb has requirements the tank cannot meet — the clicker must
+// own no pet, must not be inside the 60s Mind Exhaustion lockout, and is ROOTED
+// for the 90 seconds the mind control lasts — so a second actor has to walk 78yd
+// to the ledge and stand there while the raid holds the floor.
+//
+// It is deliberately the RUNNER'S OWN trigger rather than something the leader
+// does to it. A leader reaching across to drive a follower's MotionMaster fights
+// that bot's AI and the `bwl` strategy's own repositioning every tick and loses;
+// publishing "you are the runner" and letting the bot act on its own tick is the
+// pattern every other cross-bot decision in this module uses.
+//
+// Free everywhere else: the map compare rejects before anything else is read.
+// See DcLeaderSignal::IsLeaderRazorgoreRunner and DungeonClearRazorgoreOrbAction.
+class DungeonClearRazorgoreOrbTrigger : public Trigger
+{
+public:
+    DungeonClearRazorgoreOrbTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear razorgore orb", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

@@ -278,6 +278,67 @@ namespace DcVioletHold
 void RegisterVioletHoldEvents(std::vector<DungeonEvent>& out);
 void RegisterMoltenCoreEvents(std::vector<DungeonEvent>& out);
 
+// --- Blackwing Lair (map 469) ---------------------------------------------
+// The numbers Razorgore's two halves must agree on. The declarative half (the
+// event row and its activation predicate) is BlackwingLairEvents.cpp; the
+// controller is Overrides/BlackwingLairDriver.cpp; the arithmetic is
+// Util/DcRazorgoreDecision.h.
+namespace DcBlackwingLair
+{
+    constexpr uint32 MAP_ID = 469;
+
+    constexpr uint32 NPC_RAZORGORE = 12435;
+
+    // The Orb of Domination and the thirty Black Dragon Eggs. Both are GOOBERs
+    // (type 10) and both are WORLD SPAWNS, present from map load — so the driver
+    // can grid-scan for them before anything has been engaged, unlike a
+    // TempSummon-based encounter.
+    constexpr uint32 GO_ORB_OF_DOMINATION = 177808;
+    constexpr uint32 GO_BLACK_DRAGON_EGG  = 177807;
+    constexpr uint32 EGG_COUNT            = 30;
+
+    // instance_blackwing_lair's DATA_EGG_EVENT. The ONE readable progress seam
+    // this encounter offers: it returns NOT_STARTED / IN_PROGRESS / SPECIAL /
+    // DONE. There is deliberately no egg COUNT accessor in the instance script,
+    // so "how many are left" is answered by scanning the eggs themselves.
+    constexpr uint32 DATA_EGG_EVENT = 2;
+
+    // Mind control (19832, 90s) and the charmer's lockout (23958, 60s). The
+    // driver never runs a timer against either — it reads the charm and the aura
+    // straight off the units, which is authoritative through a wipe, a despawn
+    // and a phase flip alike.
+    constexpr uint32 SPELL_MIND_CONTROL   = 19832;
+    constexpr uint32 SPELL_MIND_EXHAUSTION = 23958;
+    constexpr uint32 SPELL_DESTROY_EGG    = 19873;
+
+    // The orb, and where the runner stands to take it: on the upper ledge at
+    // z 413, above and clear of all eight add-spawn positions (all z 407).
+    constexpr float ORB_X = -7614.83f;
+    constexpr float ORB_Y = -1026.62f;
+    constexpr float ORB_Z = 413.38f;
+
+    // "Standing at the orb" — the runner clicks from here, and holds here for
+    // its whole window (possession roots the charmer anyway; this only keeps it
+    // from being walked off before the click).
+    constexpr float ORB_STATION_RADIUS = 4.0f;
+
+    // Covers the whole chamber from anywhere in it: the eggs span ~80yd of x by
+    // ~93yd of y across two tiers, and the orb sits 78yd from the boss's spawn.
+    constexpr float ROOM_SCAN = 150.0f;
+
+    // Proximity gate for the event's activation predicate — the leader must
+    // actually be at the encounter, not corpse-running the entrance ramp.
+    constexpr float EVENT_DUE_RANGE = 200.0f;
+
+    // The event row and the hook that drives it. Hook ids are ONE FLAT SPACE
+    // across every dungeon (see ObjectiveHookRegistry::AddHook); 15-19 are the
+    // Violet Hold's.
+    constexpr uint32 EVENT_RAZORGORE_ORB = 1;
+    constexpr uint32 HOOK_RAZORGORE_ORB  = 20;
+}
+
+void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);
+
 // Every TempSummon the siege can field — the trash, the elites, the three portal
 // keepers, Ichoron's globules, Xevozz's spheres and Cyanigosa. Probed by
 // ALIVENESS by the wave event's activation predicate, which is sound only

@@ -196,6 +196,14 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
     {
         if (name == "dungeon clear run event combat")
             return 1.0f;
+        // The encounter driver's second actor. Razorgore's orb runner is a
+        // FOLLOWER, not the leader, so the event-driver exemption above does not
+        // cover it — and the whole point of the encounterActive seam is that this
+        // orchestration keeps running inside the fight. Its own trigger is gated on
+        // being the one elected member of map 469, so this exemption is inert
+        // everywhere else. See DungeonClearRazorgoreOrbTrigger.
+        if (name == "dungeon clear razorgore orb")
+            return 1.0f;
         return isDcAction ? 0.0f : 1.0f;  // DC inert; "drop target" back to stock
     }
 

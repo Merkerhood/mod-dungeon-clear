@@ -10,6 +10,8 @@
 
 #include "ObjectGuid.h"
 
+#include <vector>
+
 // The authoritative, leader-owned state of one dungeon-clear RUN — the run's
 // identity/mode, its current manual-override objective, and the two cross-bot
 // leader-fight signals that used to live in translation-unit-static maps. Owned
@@ -186,6 +188,44 @@ struct DcRunState
     uint32 progressAnchors   = 0;       // cleared-anchor count last seen
     float  progressBestDist  = -1.0f;   // closest tank approach to the current anchor (<0 = unset)
     uint32 progressAnchorEntry = 0;     // anchor entry progressBestDist is keyed to (re-arm on change)
+
+    // === Blackwing Lair — Razorgore's orb and egg run (leader-owned) =============
+    // The one encounter DC orchestrates from INSIDE a raid fight (see
+    // DungeonEvent::encounterActive). All of it is the leader's; the runner GUID is
+    // the only field read cross-bot, through DcLeaderSignal::GetRazorgoreOrbStation,
+    // by the runner's own orb rung.
+    //
+    // Note what is NOT here: any timer for the 90s mind control or the 60s charmer
+    // lockout. Both are auras on live units and are read straight off them, which
+    // stays correct through a wipe, a despawn and the phase flip — a mirrored timer
+    // would not.
+    ObjectGuid razorRunnerGuid;            // elected orb runner (empty = none yet)
+    uint32     razorRunnerPickedMs = 0;    // getMSTime() of the last election (throttle)
+    ObjectGuid razorEggGuid;               // the egg currently being driven at
+    uint32     razorEggElectedMs   = 0;    // getMSTime() it was elected / last got closer
+    uint32     razorMoveIssuedMs   = 0;    // getMSTime() of the last boss spline
+    float      razorEggBestDist    = 0.0f; // closest approach to it (no-progress clock)
+    uint8      razorEggAttempts    = 0;    // polite cast attempts before going triggered
+    // Eggs parked for this pass — unreachable, or refusing every cast. Retried in
+    // full once the reachable field is exhausted, so a wedge costs time, never the
+    // encounter.
+    std::vector<ObjectGuid> razorEggSkipped;
+
+    // Drop the whole Razorgore block. Called when phase 1 ends and on the run
+    // teardown below: the encounter soft-resets itself after a phase-1 wipe
+    // (the boss respawns in 30s and the instance clears the field), so coming
+    // back holding a stale runner or skip list is the one way this state can lie.
+    void ClearRazorgore()
+    {
+        razorRunnerGuid.Clear();
+        razorRunnerPickedMs = 0;
+        razorEggGuid.Clear();
+        razorEggElectedMs = 0;
+        razorMoveIssuedMs = 0;
+        razorEggBestDist = 0.0f;
+        razorEggAttempts = 0;
+        razorEggSkipped.clear();
+    }
 
     // Full run teardown: every session + signal field. Used on dc on / dc off /
     // death / all-cleared. (The pull preference/bool are NOT here — see the header

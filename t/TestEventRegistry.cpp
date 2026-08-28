@@ -165,6 +165,17 @@ namespace
             // completion, and it is Repeatable besides: a momentary Done latches
             // nothing and the next wave re-fires it.
             {608, 5},
+            // Blackwing Lair "Razorgore — orb and egg run": RazorgoreEggRunDue
+            // requires the leader on map 469 AND within 200yd of the orb, then a
+            // live Razorgore and at least one un-broken egg in a 150yd grid scan
+            // OF THE BOT (the chamber is ~80 x 93yd, so that is "in the room").
+            // Its lone step (hook 20, DriveRazorgoreOrb) owns everything it
+            // steers — the POSSESSED BOSS's splines and the runner's election —
+            // so an arrival step would only park the tank, which is the one thing
+            // this encounter must not do: the tank is holding an add wave. Done
+            // is its "nothing to steer this tick" yield, not a completion, and it
+            // is Repeatable besides, so a momentary Done latches nothing.
+            {469, 1},
             // Underbog "Send Ghaz'an up to his platform": deliberately map-wide,
             // and the one case where near-gating would be WRONG. Its hook fires
             // the same DoAction areatrigger 4302 fires, and path 1383921 opens by
@@ -600,6 +611,18 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // walks the tank to the one thing that turns the pump off, and the door
         // seal drains out from under a party that never leaves combat.
         {608, 5},
+        // Blackwing Lair "Razorgore — orb and egg run". The instance spawns 2-5
+        // adds every 15 seconds from eight floor positions for as long as an egg
+        // is standing, and each one DoZoneInCombat()s itself — so from the first
+        // egg to the thirtieth (a measured ~135s: a 262yd tour plus 30 three-
+        // second casts) the raid never leaves combat. The non-combat rung would
+        // get its ticks only before the first egg and never again, which is
+        // precisely backwards: nothing would re-elect a runner when a 90s mind
+        // control expires, and phase 1 would never end. Note this driver does not
+        // steer the TANK at all — it yields every tick — so the cost the flag
+        // usually carries (taking the combat tick off the stock movers) is not
+        // paid here.
+        {469, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -942,6 +965,14 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         {608, 3},
         {608, 4},
         {608, 5},
+        // Blackwing Lair "Razorgore — orb and egg run". The movement this event
+        // issues is not the tank's at all: hook 20 walks the MIND-CONTROLLED BOSS
+        // from egg to egg with its own splines, and the tank must be left alone to
+        // hold the add wave. The per-tick hold would do exactly the wrong thing in
+        // both directions — park the tank out of its fight, and (via
+        // ResolveEscortConflict) cancel the orb runner's long-haul glide to the
+        // ledge the tick after it is issued.
+        {469, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

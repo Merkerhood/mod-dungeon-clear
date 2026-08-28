@@ -749,6 +749,41 @@ private:
     uint32   _fleeSetAtMs = 0;
 };
 
+// BLACKWING LAIR ONLY, one member, both engines. The orb runner's half of
+// Razorgore's egg run: walk to the Orb of Domination and take it.
+//
+// Three states, and only the first two own the tick:
+//
+//   TRAVELLING — the orb is on the upper ledge 78yd from the boss's spawn, which
+//   is a LONG HAUL: the engine PathGenerator caps a generated path at 74 polys
+//   and a request past that truncates SILENTLY, leaving the bot standing still
+//   with nothing to observe at the call site. So the walk goes through
+//   LongRangePathfinder + one escort spline, exactly like the Violet Hold
+//   driver's portal hops, with a bare MovePoint only for the last short leg.
+//
+//   CLICKING — standing at the orb, no pet, no Mind Exhaustion, not mid-cast:
+//   GameObject::Use(bot). That call reaches go_orb_of_domination::GossipHello
+//   before the goober type is ever considered, so it IS the player's click — the
+//   script sets the boss's charmer, has it attack the runner, and casts 19832.
+//
+//   POSSESSING (or waiting) — YIELD. The bot is rooted by the possession anyway
+//   (SetCharmedBy flags the charmer UNIT_FLAG_DISABLE_MOVE) and it has a rotation
+//   to run against the add wave; claiming ticks it does not need would take a DPS
+//   out of the fight for 90 seconds at a time. The only thing that reclaims the
+//   tick here is drift off the station.
+//
+// Driven by DungeonClearRazorgoreOrbTrigger; the election that names the runner
+// is the leader's (BlackwingLairDriver.cpp).
+class DungeonClearRazorgoreOrbAction : public DcMovementAction
+{
+public:
+    DungeonClearRazorgoreOrbAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear razorgore orb")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

@@ -464,6 +464,10 @@ public:
     // Do not hold position for this event's steps — they issue their own movement
     // (see DungeonEvent::stepsOwnMovement).
     EventBuilder& StepsOwnMovement();
+    // RAID maps: keep driving this event while the raid boss stand-down holds,
+    // because it IS part of the encounter (see DungeonEvent::encounterActive).
+    // Without it the executor refuses the event outright during a fight.
+    EventBuilder& EncounterActive();
     // Difficulty gates (see DungeonEvent::gate). Default is both difficulties.
     EventBuilder& HeroicOnly();
     EventBuilder& NormalOnly();

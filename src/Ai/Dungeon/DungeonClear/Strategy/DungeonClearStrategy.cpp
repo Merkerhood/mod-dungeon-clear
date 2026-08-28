@@ -301,6 +301,15 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear hazard vacate",
         { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
 
+    // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
+    // in BOTH engines: the walk to the ledge starts before the raid pulls and has
+    // to survive the pull, and the click itself can land either side of the combat
+    // flag. Inert everywhere else — the trigger's first test is the map id. See
+    // DungeonClearRazorgoreOrbTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear razorgore orb",
+        { NextAction("dungeon clear razorgore orb", DcRel::RazorgoreOrb) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance 26.5 (DcRel::NeedsRest) — above advance (15) and follow-tank (25)
     // so a bot below target sits and rests instead of walking, and tie-broken just
@@ -477,6 +486,15 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear hazard vacate",
         { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
+
+    // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
+    // in BOTH engines: the walk to the ledge starts before the raid pulls and has
+    // to survive the pull, and the click itself can land either side of the combat
+    // flag. Inert everywhere else — the trigger's first test is the map id. See
+    // DungeonClearRazorgoreOrbTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear razorgore orb",
+        { NextAction("dungeon clear razorgore orb", DcRel::RazorgoreOrb) }));
 
     // Conditional-event driver, COMBAT side. Fires only for an event that opted in
     // with DrivesInCombat() — a continuous WAVE encounter where the party is in

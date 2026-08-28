@@ -1404,3 +1404,27 @@ void DcLeaderSignal::SetLeaderDazeImmunity(Player* leader, bool apply)
         leader->RemoveAurasDueToSpell(1604);
     }
 }
+
+bool DcLeaderSignal::IsLeaderRazorgoreRunner(Player* bot)
+{
+    if (!bot || !bot->IsAlive())
+        return false;
+
+    // The leader is the main tank and is never its own orb runner (the driver's
+    // election excludes it); resolving through FindLeaderTank also means a
+    // follower asking this question gets the leader's answer, not its own stale
+    // default-constructed run state.
+    Player* leader = FindLeaderTank(bot);
+    if (!leader || leader == bot)
+        return false;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    DcRunState const& st = DcRun::Of(leaderAI->GetAiObjectContext());
+    if (!st.enabled || st.paused)
+        return false;
+
+    return st.razorRunnerGuid == bot->GetGUID();
+}

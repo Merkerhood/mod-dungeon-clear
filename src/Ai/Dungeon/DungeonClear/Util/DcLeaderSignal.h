@@ -307,6 +307,20 @@ public:
     // aura already on the tank when applied. Paired with the pull-mode toggle.
     static void SetLeaderDazeImmunity(Player* leader, bool apply);
 
+    // BLACKWING LAIR, Razorgore: is `bot` the orb runner the leader elected?
+    //
+    // The only cross-bot fact the egg run publishes. The leader's driver picks a
+    // member that can legally take the Orb of Domination (alive bot, no pet, no
+    // Mind Exhaustion, not the tank) and stamps it into its own run state; that
+    // member's orb rung reads this on its OWN tick and walks itself over. The
+    // leader never touches the runner's movement — a cross-bot MotionMaster poke
+    // fights both the runner's own AI and the `bwl` raid strategy's repositioning,
+    // every tick, and loses.
+    //
+    // False for everyone else, for a real player (no AI to drive), and whenever
+    // the leader's run is off or paused.
+    static bool IsLeaderRazorgoreRunner(Player* bot);
+
 };
 
 #endif  // _DC_LEADER_SIGNAL_H

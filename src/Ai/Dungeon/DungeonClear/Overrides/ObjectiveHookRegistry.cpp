@@ -819,6 +819,7 @@ namespace
             // drops it, taking its hooks with it. Ids 8 and 12 live here.
             RegisterBlackMorassHooks(t);
             RegisterVioletHoldHooks(t);
+            RegisterBlackwingLairHooks(t);
             return t;
         }();
         return kHooks;

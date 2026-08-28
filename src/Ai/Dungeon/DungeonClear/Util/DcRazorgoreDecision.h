@@ -1,0 +1,183 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU AGPL v3 license, you may redistribute it
+ * and/or modify it under version 3 of the License, or (at your option), any later version.
+ */
+
+#ifndef _PLAYERBOT_DCRAZORGOREDECISION_H
+#define _PLAYERBOT_DCRAZORGOREDECISION_H
+
+#include <cstdint>
+#include <vector>
+
+#include "Define.h"
+
+// PURE kernel for Blackwing Lair's Razorgore egg run — the two decisions the
+// driver makes every tick, lifted out of the world so they can be tested without
+// a map: WHICH member takes the orb, and WHAT the driver does next.
+//
+// The glue (grid scans, charm state, movement, the actual cast) lives in
+// Overrides/BlackwingLairDriver.cpp. Everything here is arithmetic over a
+// snapshot, in the same shape as DcRegroupDecision / DcStrandedDecision.
+//
+// THE ENCOUNTER, in the terms these functions use:
+//   A player clicks the Orb of Domination (GO 177808), which mind-controls
+//   Razorgore for 90 SECONDS (spell 19832) and leaves the clicker unable to take
+//   the orb again for 60 SECONDS (Mind Exhaustion, 23958). While possessed the
+//   boss must be walked to each of THIRTY Black Dragon Eggs (GO 177807) and cast
+//   Destroy Egg (19873, 3s cast, 10yd) on it. The measured tour is ~262yd of
+//   travel plus 90s of casting — call it 135s — so the run spans TWO OR THREE
+//   mind-control windows and needs a rotation of runners, exactly like a human
+//   raid. Everything else in the room (an add every ~4s, forever, until the last
+//   egg pops) belongs to the playerbots raid strategy.
+namespace DcRazorgore
+{
+    // The commit band for a cast. The spell's own range is 10yd; stopping at 6
+    // leaves room for the boss's bounding radius and for the half-yard of slide
+    // between the stop and the cast landing, and 19873 carries interrupt flags 31
+    // — MOVING CANCELS IT — so arriving "just barely" in range is how a cast gets
+    // eaten and the driver loops.
+    inline constexpr float kCastBand = 6.0f;
+
+    // Re-issue guard for the boss's spline: don't re-path while the destination
+    // has moved less than this (eggs never move, but the nearest-egg election can
+    // flip between two near-equidistant candidates on a step of drift, and that
+    // flip re-plots the spline every tick and travels nowhere — the Violet Hold
+    // repath-epsilon lesson).
+    inline constexpr float kRepathEpsilon = 3.0f;
+
+    // How long one egg may stay elected without the boss getting closer to it
+    // before the driver gives up on it. Covers the two real ways a single egg can
+    // wedge a 30-egg run: a partial path that ends short of it (the two tiers of
+    // this room are joined by one ramp), and a cast that keeps failing for a
+    // reason the caller cannot see. Blacklisted eggs are retried once the rest of
+    // the field is gone, so a wedge costs time and never the encounter.
+    inline constexpr uint32 kEggStallMs = 15000;
+
+    // Cast attempts on ONE egg, in range and stationary, before the driver stops
+    // asking politely and casts it triggered. The polite cast is the honest one
+    // (3s channel, interruptible, exactly what a player's possess bar does); the
+    // triggered one is the same spell, same script, same credit, minus the
+    // channel. See BwlCastEggDestroy.
+    inline constexpr uint8 kPoliteCastAttempts = 3;
+
+    // What the driver should do this tick.
+    enum class Step : uint8
+    {
+        Idle,        // event not live here — yield, drive nothing
+        NeedRunner,  // no usable designated runner — elect one
+        StageRunner, // runner elected but not at the orb yet — it walks itself
+        ClickOrb,    // runner is standing at the orb and may take it
+        WaitCast,    // the possessed boss is mid-cast — yield the tick
+        MoveBoss,    // possessed, target egg out of the commit band — walk
+        CastEgg,     // possessed, in the band and stopped — destroy the egg
+        Done,        // no eggs remain / the instance says the event is over
+    };
+
+    // One tick's worth of world, as facts.
+    struct View
+    {
+        bool   eventDone{false};      // instance GetData(DATA_EGG_EVENT) == DONE
+        bool   bossAlive{false};
+        uint32 eggsRemaining{0};
+
+        bool   bossCharmed{false};    // ...by OUR designated runner, specifically
+        bool   bossCasting{false};
+
+        bool   haveRunner{false};     // a designated runner exists and is alive
+        bool   runnerAtOrb{false};
+        bool   runnerCanClick{false}; // no pet, no Mind Exhaustion, not casting
+
+        bool   haveEgg{false};        // an egg is elected (not all blacklisted)
+        float  bossToEgg{0.0f};       // distance from the boss to that egg
+    };
+
+    // The whole FSM. Deliberately total and deliberately ordered: completion
+    // first (so a late tick after the 30th egg can never re-elect a runner and
+    // re-take the orb on a boss the raid is now trying to kill), then the
+    // possessed branch (the only one that does real work), then the staging that
+    // gets us back into it.
+    inline Step Decide(View const& v)
+    {
+        if (v.eventDone || !v.bossAlive || v.eggsRemaining == 0)
+            return Step::Done;
+
+        if (v.bossCharmed)
+        {
+            // A 3s cast is 30 ticks; claiming them all would starve the raid's
+            // combat engine for the whole egg run.
+            if (v.bossCasting)
+                return Step::WaitCast;
+            if (!v.haveEgg)
+                return Step::Idle;  // every egg blacklisted this pass — let the
+                                    // caller clear the list and come back
+            return v.bossToEgg > kCastBand ? Step::MoveBoss : Step::CastEgg;
+        }
+
+        // Not (or no longer) possessed: 90s expired, the runner died, or we have
+        // not started. Everything here is about getting a live body onto the orb.
+        if (!v.haveRunner)
+            return Step::NeedRunner;
+        if (!v.runnerAtOrb)
+            return Step::StageRunner;
+        if (!v.runnerCanClick)
+            return Step::NeedRunner;  // exhausted / pet / casting -> someone else
+        return Step::ClickOrb;
+    }
+
+    // A candidate for the orb, reduced to the facts that decide it.
+    struct RunnerCandidate
+    {
+        uint32 guidLow{0};
+        bool   alive{false};
+        bool   isBot{false};       // a real player has no PlayerbotAI to drive
+        bool   isLeader{false};    // the elected DC leader is the main tank
+        bool   isTank{false};
+        bool   isHealer{false};
+        bool   isRanged{false};
+        bool   hasPet{false};      // the orb script refuses a user with a pet
+        bool   exhausted{false};   // Mind Exhaustion (23958) still up
+    };
+
+    // Elect the orb runner. Returns an index into `pool`, or -1 when nobody is
+    // eligible (a raid of hunters and warlocks — the caller logs and stalls,
+    // which is honest: the encounter genuinely cannot be done that way).
+    //
+    // Hard gates come from the orb script itself (alive, a bot, no pet, not
+    // exhausted) plus one of ours: never the elected leader, which is the main
+    // tank and is the only thing standing between the raid and the add wave.
+    //
+    // The preference order is the human one. A RANGED DPS is first because the
+    // orb sits on the upper ledge 78yd from the boss's spawn and every add
+    // spawns on the floor below: a ranged bot parked there keeps DPSing through
+    // its own window, where a melee bot is simply out of the fight for 90s.
+    // Healers are last — losing one to a 90s root is how the raid dies to the
+    // adds — but they are not excluded, because a comp can be short of anything.
+    // Ties break on the lowest GUID so every context computes the same runner.
+    inline int SelectRunner(std::vector<RunnerCandidate> const& pool)
+    {
+        int best = -1;
+        int bestRank = 0;
+        for (size_t i = 0; i < pool.size(); ++i)
+        {
+            RunnerCandidate const& c = pool[i];
+            if (!c.alive || !c.isBot || c.hasPet || c.exhausted || c.isLeader)
+                continue;
+
+            int rank;
+            if (c.isHealer)         rank = 1;   // last resort
+            else if (c.isTank)      rank = 2;   // an off-tank: better than a healer
+            else if (!c.isRanged)   rank = 3;   // melee dps: out of the fight, but fine
+            else                    rank = 4;   // ranged dps: the right answer
+
+            if (best < 0 || rank > bestRank ||
+                (rank == bestRank && c.guidLow < pool[best].guidLow))
+            {
+                best = static_cast<int>(i);
+                bestRank = rank;
+            }
+        }
+        return best;
+    }
+}
+
+#endif  // _PLAYERBOT_DCRAZORGOREDECISION_H

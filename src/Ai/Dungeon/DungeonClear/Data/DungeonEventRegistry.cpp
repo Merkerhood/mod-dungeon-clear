@@ -70,6 +70,12 @@ EventBuilder& EventBuilder::StepsOwnMovement()
     return *this;
 }
 
+EventBuilder& EventBuilder::EncounterActive()
+{
+    _ev.encounterActive = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::HeroicOnly()
 {
     _ev.gate = DcDifficultyGate::HeroicOnly;
@@ -416,6 +422,7 @@ namespace
             RegisterDrakTharonKeepEvents(t);
             RegisterMoltenCoreEvents(t);
             RegisterVioletHoldEvents(t);
+            RegisterBlackwingLairEvents(t);
             return t;
         }();
         return kEvents;
