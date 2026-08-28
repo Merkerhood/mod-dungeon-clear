@@ -5,6 +5,8 @@
 
 #include "DungeonClearStrategy.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Multiplier/DungeonClearMultiplier.h"
 #include "Ai/Dungeon/DungeonClear/Strategy/DcRelevance.h"
 #include "Playerbots.h"
@@ -540,4 +542,36 @@ void DungeonClearCombatStrategy::InitMultipliers(std::vector<Multiplier*>& multi
     // can hold the combat engine instead of ping-ponging back out. See
     // DungeonClearCombatMultiplier.
     multipliers.push_back(new DungeonClearCombatMultiplier(botAI));
+}
+
+bool DungeonClearCombatStrategy::HasTargetExclusions() const
+{
+    Player* const self = botAI ? botAI->GetBot() : nullptr;
+    return self && DcTargetExclusionRegistry::HasRowsFor(self->GetMapId());
+}
+
+void DungeonClearCombatStrategy::AppendTargetExclusions(GuidSet& exclusions,
+                                                        TargetValueExclusionType type)
+{
+    // DPS and ATTACKER pools only. A TANK pick is untouched on purpose: the
+    // encounters that need this are the ones where somebody must still HOLD the
+    // creature everyone else is barred from killing.
+    if (type != TargetValueExclusionType::Dps && type != TargetValueExclusionType::Attacker)
+        return;
+
+    Player* const self = botAI ? botAI->GetBot() : nullptr;
+    if (!self)
+        return;
+
+    uint32 const mapId = self->GetMapId();
+    if (!DcTargetExclusionRegistry::HasRowsFor(mapId))
+        return;
+
+    AiObjectContext* context = botAI->GetAiObjectContext();
+    for (ObjectGuid const guid : AI_VALUE(GuidVector, DcKey::Stock::Attackers))
+    {
+        Unit* unit = botAI->GetUnit(guid);
+        if (unit && DcTargetExclusionRegistry::IsExcluded(self, mapId, unit->GetEntry()))
+            exclusions.insert(guid);
+    }
 }

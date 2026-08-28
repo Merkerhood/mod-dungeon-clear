@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
@@ -249,4 +250,29 @@ TEST(DungeonEventBlackwingLairTest, RunnerElectionIsStableAcrossContexts)
     EXPECT_EQ(DcRazorgore::SelectRunner({a, b, c}), 1);
     EXPECT_EQ(DcRazorgore::SelectRunner({c, a, b}), 2);
     EXPECT_EQ(DcRazorgore::SelectRunner({b, c, a}), 0);
+}
+
+// --- the phase-1 damage guard --------------------------------------------
+
+TEST(DungeonEventBlackwingLairTest, RazorgoreIsATargetExclusionRowOnHisOwnMap)
+{
+    // The guard lives in dungeon-clear, not in mod-playerbots' `bwl` strategy,
+    // because GatherStrategyTargetExclusions walks EVERY strategy on the bot's
+    // combat engine — DungeonClearCombatStrategy included. Keeping it here puts
+    // the combat guard in the same module as the driver whose work it protects.
+    EXPECT_TRUE(DcTargetExclusionRegistry::HasRowsFor(MAP_ID));
+
+    // ...and nowhere else. HasRowsFor is the cheap gate mod-playerbots caches per
+    // engine; a stray map here would make every bot on it rebuild its combat
+    // strategy list on every target pick.
+    EXPECT_FALSE(DcTargetExclusionRegistry::HasRowsFor(409));  // Molten Core
+    EXPECT_FALSE(DcTargetExclusionRegistry::HasRowsFor(608));  // The Violet Hold
+    EXPECT_FALSE(DcTargetExclusionRegistry::HasRowsFor(0));
+
+    // The row is keyed to Razorgore specifically — the adds around him are
+    // ordinary targets and must stay killable.
+    EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, 12422u));
+    EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, 12416u));
+    // Right entry, wrong map: never excluded.
+    EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, 409u, NPC_RAZORGORE));
 }

@@ -661,6 +661,27 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    moment the runner is parked, so a possessing DPS still runs its rotation.
 #    Exempted by name from the stand-down zero in DungeonClearCombatMultiplier,
 #    alongside the combat event driver.)
+# Data/DcTargetExclusionRegistry.{h,cpp}
+#   (the third and last member of the "do not attack that" family, and the only
+#    one that reaches the STOCK combat engine's target selection. FightInPlace /
+#    BossPullback answer "where do we fight it"; DcNeverTargetRegistry answers
+#    "is killing this progress" as a permanent (mapId, entry) fact filtering only
+#    DC's own scans; this answers "will killing it right now LOSE THE RUN", and
+#    it is WINDOWED — the same creature is the correct target ten seconds later.
+#    Razorgore is the row it exists for: killing him before the thirtieth egg
+#    breaks casts 20038 and instakills the raid, and in phase 2 he is the whole
+#    objective. It reaches the engine through DungeonClearCombatStrategy's
+#    override of Strategy::AppendTargetExclusions/HasTargetExclusions —
+#    GatherStrategyTargetExclusions walks EVERY strategy on the bot's combat
+#    engine, not a hardcoded raid list, so DC has the same authority over what
+#    the raid shoots that `moltencore` and `karazhan` have with NO change to
+#    mod-playerbots. That is the point: raid content DC drives keeps its combat
+#    guards next to the encounter logic, in a module we control. The gate is
+#    map-keyed rather than a flat true so a bot on an unlisted map never rebuilds
+#    its strategy-name list per target pick; it stays fresh because the cache is
+#    recomputed on every strategy add/remove and ApplyInstanceStrategies does
+#    both on every map change. Tanks are never excluded — somebody still has to
+#    HOLD the thing nobody may kill.)
 # t/TestBlackwingLair.cpp
 #   (the map-469 authored-data lints plus the kernel: the event's exact flag set
 #    (encounterActive is the one that must never be dropped), hook 20's
