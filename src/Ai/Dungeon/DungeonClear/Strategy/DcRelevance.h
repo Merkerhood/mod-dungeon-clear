@@ -151,6 +151,19 @@ namespace DcRel
     // contends with its own rotation at all — the fine positioning inside the camp
     // stays the strategy's.
     inline constexpr float RazorgoreCamp          = 61.5f; // raid: hold the orb camp
+    // Every member, BOTH engines: let go of a creature the run is forbidden to
+    // damage right now (DcTargetExclusionRegistry). One tick's work — drop the
+    // victim, clear the current target — and then the rung goes inert again.
+    //
+    // 61.25 puts it under the camp (61.5) and the orb (62) and over the raid
+    // strategy's own nodes (ACTION_RAID 60 / +1 61), which is exactly the ordering
+    // the Razorgore case needs: `bwl razorgore mark boss` sits at 61 and paints the
+    // moon icon on a boss the raid must not kill, and RtiTargetValue short-circuits
+    // the exclusion pass, so something above it has to take the target back off the
+    // DPS. It ranks BELOW the positioning rungs because a bot in the wrong place is
+    // the more urgent problem — and because dropping a target it is no longer
+    // shooting at is free to defer by a tick.
+    inline constexpr float HoldFire               = 61.25f; // drop a barred target
 
     // Registered in BOTH engines (like BreakStuckCombat / HazardVacate). The combat
     // registration is the working one; the NON-combat registration is a liveness net.

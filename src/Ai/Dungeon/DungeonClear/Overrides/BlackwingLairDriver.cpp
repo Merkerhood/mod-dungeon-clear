@@ -58,9 +58,12 @@
 //   single window by design.
 //
 // WHAT WE DO NOT DO HERE: keep the raid off the boss. Killing Razorgore in phase
-// 1 instakills everyone (20038), but target selection during a raid stand-down
-// belongs to mod-playerbots — the guard is RaidBwlStrategy::AppendTargetExclusions
-// upstream. The best thing this driver can do about that risk is finish quickly.
+// 1 instakills everyone (20038), and that guard is real and DC's own, but it lives
+// in the target-selection seam rather than in this driver —
+// DcTargetExclusionRegistry, DungeonClearDpsTargetValue and the hold-fire rung,
+// which between them bar him from every DPS pick and take him back off anyone who
+// already had him. The best thing this driver can do about the risk is what it
+// already does: finish phase 1 quickly.
 //
 // AND WHAT WE NO LONGER DO: walk the raid to the orb platform. Grethok the
 // Controller is a boss anchor now (RegisterBlackwingLairRoster), so the ordinary
@@ -185,6 +188,10 @@ namespace
             c.isRanged  = PlayerbotAI::IsRanged(p);
             c.hasPet    = p->GetPet() != nullptr;
             c.exhausted = p->HasAura(SPELL_MIND_EXHAUSTION);
+            // Straight-line to the orb, not a path length: the tie-break is
+            // bucketed at 10yd and everyone in the pool is in the same chamber, so
+            // a pathfinder call per candidate per election would buy nothing.
+            c.distToOrb = p->GetExactDist2d(ORB_X, ORB_Y);
             pool.push_back(c);
             members.push_back(p);
         }

@@ -498,6 +498,31 @@ namespace DcBlackwingLair
     // has — the last egg, a wipe, the event's own 10-minute timeout (it is
     // Optional and skips), `dc pause`, a dead leader.
     bool EggRunHoldsTheRaid(Player* bot);
+
+    // IS THIS BOT HOLDING THE POSSESSION RIGHT NOW?
+    //
+    // Read off the bot's OWN unit fields — UNIT_FIELD_CHARM, resolved and checked
+    // against Razorgore's entry — and off nothing else. That independence is the
+    // whole point of it.
+    //
+    // The runner's rung and the raid's camp both hang off DcRunState::
+    // razorDrivingMs, a stamp the LEADER refreshes on every tick its driver runs.
+    // That is right for positioning (a stamp that goes stale releases the raid,
+    // which is the safe direction) and WRONG for the channel: 19832 is a channel
+    // on the runner's own body, and the instant the runner's rung goes inert the
+    // bot's rotation comes back — a swing, a wand shot, a step out of a cone, a
+    // health potion at ACTION_EMERGENCY — and ends it. Razorgore is then freed
+    // mid-run, the runner eats a 60s lockout, and the raid is left holding a boss
+    // it must not kill. Every reason the leader's stamp can go stale (the leader
+    // dies, walks out of EVENT_DUE_RANGE, the event stops being due for a tick,
+    // `dc pause`) is a reason the possession is STILL UP and still needs guarding.
+    //
+    // So the possession guards itself: the charm is a fact about this bot, no
+    // cross-bot signal is involved, and both the rung that owns the tick and the
+    // multiplier that mutes everything else read it here.
+    //
+    // Free everywhere else — the map compare rejects before the field is read.
+    bool HoldsThePossession(Player* bot);
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);

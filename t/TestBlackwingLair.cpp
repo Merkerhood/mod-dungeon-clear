@@ -573,3 +573,76 @@ TEST(DungeonEventBlackwingLairTest, RazorgoreIsATargetExclusionRowOnHisOwnMap)
     // Right entry, wrong map: never excluded.
     EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, 409u, NPC_RAZORGORE));
 }
+
+// --- the brake that does not go through the raid icon ---------------------
+
+TEST(DungeonEventBlackwingLairTest, HoldFireOutranksTheRaidStrategyAndYieldsToPositioning)
+{
+    // The rung has to beat what actually points the raid's damage during phase 1,
+    // which is not the DC ladder: `bwl razorgore mark boss` sits at ACTION_RAID+1
+    // (61) and paints the moon icon on Razorgore, and both stock DPS pickers
+    // return the icon's unit BEFORE the target-exclusion pass runs. So something
+    // above 61 has to take the target back off the DPS.
+    EXPECT_GT(DcRel::HoldFire, 61.0f);
+
+    // ...and yield to both BWL positioning rungs. A bot in the wrong place is the
+    // more urgent problem, and letting go of a target it is no longer shooting at
+    // costs nothing to defer by a tick.
+    EXPECT_LT(DcRel::HoldFire, DcRel::RazorgoreCamp);
+    EXPECT_LT(DcRel::HoldFire, DcRel::RazorgoreOrb);
+
+    // Below the phantom-combat hatch, like everything else in this band: when
+    // nothing is fightable at all, that rung has to win.
+    EXPECT_LT(DcRel::HoldFire, DcRel::BreakStuckCombat);
+}
+
+TEST(DungeonEventBlackwingLairTest, TheExclusionRowCoversTheWholeEggPhaseNotJustTheGap)
+{
+    // The user-facing contract: Razorgore is killed once the eggs are gone, and
+    // not before. The row's window is therefore the PHASE — DATA_EGG_EVENT != DONE
+    // — and not "while somebody holds the possession". Between one mind control
+    // breaking and the next runner reaching the ledge there is a gap of ten to
+    // fifteen seconds in which Razorgore is loose, in combat, and being tanked;
+    // that gap is exactly when a window-scoped guard would open and exactly when
+    // the raid would kill him.
+    //
+    // Nothing in this file can evaluate the row's live predicate (it reads an
+    // InstanceScript), so what is pinned here is the shape: the row exists, it is
+    // his map and his entry, and it is windowed rather than permanent — a
+    // permanent row would block the phase-2 kill, which is the objective.
+    EXPECT_TRUE(DcTargetExclusionRegistry::HasRowsFor(MAP_ID));
+    EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, NPC_RAZORGORE))
+        << "the row must carry a live gate, not a flat always-on: a permanent bar "
+           "would also block the phase-2 kill this whole encounter is aiming at";
+}
+
+// --- shortening the gap between windows -----------------------------------
+
+TEST(DungeonEventBlackwingLairTest, TheElectionBreaksTiesOnTheWalkToTheOrb)
+{
+    // Every second between one possession ending and the next beginning is a
+    // second of a freed Razorgore, and the new runner's WALK is nearly all of it.
+    // Among candidates of equal rank the election therefore takes the one already
+    // closest to the ledge.
+    DcRazorgore::RunnerCandidate near = Bot(90);  near.isRanged = true;  near.distToOrb = 5.0f;
+    DcRazorgore::RunnerCandidate far = Bot(10);   far.isRanged = true;   far.distToOrb = 70.0f;
+    EXPECT_EQ(DcRazorgore::SelectRunner({near, far}), 0)
+        << "the lower GUID is 70yd away; distance decides before GUID does";
+    EXPECT_EQ(DcRazorgore::SelectRunner({far, near}), 1);
+
+    // RANK STILL WINS OUTRIGHT. A healer standing on the orb does not displace a
+    // ranged DPS across the room: losing the healer to a 90s root is how the raid
+    // dies to the add wave, and thirty yards of walking is the cheaper price.
+    DcRazorgore::RunnerCandidate healerAtOrb = Bot(1);
+    healerAtOrb.isHealer = true;
+    healerAtOrb.distToOrb = 0.0f;
+    EXPECT_EQ(DcRazorgore::SelectRunner({healerAtOrb, far}), 1);
+
+    // And the bucket is coarse on purpose: two bots standing together must not
+    // trade the job back and forth as they shuffle, so inside one bucket the GUID
+    // decides and the answer is stable.
+    DcRazorgore::RunnerCandidate a = Bot(70); a.isRanged = true; a.distToOrb = 1.0f;
+    DcRazorgore::RunnerCandidate b = Bot(12); b.isRanged = true; b.distToOrb = 9.0f;
+    EXPECT_EQ(DcRazorgore::SelectRunner({a, b}), 1);
+    EXPECT_EQ(DcRazorgore::SelectRunner({b, a}), 0);
+}

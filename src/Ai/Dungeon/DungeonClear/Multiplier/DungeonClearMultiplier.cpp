@@ -11,6 +11,7 @@
 #include "Player.h"
 #include "Playerbots.h"
 #include "Position.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
@@ -18,12 +19,43 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
+// BLACKWING LAIR, the orb runner, and the hardest guard in the module: while this
+// bot holds Razorgore's possession, NOTHING it could do is worth doing.
+//
+// 19832 is a channel on the runner's own body, and the encounter hangs off it —
+// break it and a boss the raid must not kill is loose, the runner is locked out of
+// the orb for 60s, and the egg run loses a whole window. The orb rung already owns
+// the tick and spends it on nothing, but owning the tick is only as strong as the
+// rung's relevance, and the relevance band it sits in (62) does not cover
+// everything: ACTION_EMERGENCY is 90 and stock `drop target` is 99, so a health
+// potion, a healthstone, a flee, or a target drop outranks it and ends the channel
+// — and those are exactly the actions a rooted bot with adds on it reaches for.
+//
+// Zeroing every OTHER action is the only shape that closes that. It costs the
+// runner its self-preservation for ninety seconds, which is the same price a human
+// raider pays holding the orb: they cannot act either. The raid's job is to keep
+// the adds off the ledge (that is what the camp rung is for); the runner's job is
+// to stand still.
+//
+// Free everywhere else — HoldsThePossession rejects on a map compare, and it reads
+// this bot's own charm field rather than any cross-bot signal, so no stale stamp
+// can drop the guard while the channel is still up.
+static float RazorgorePossessionClamp(Player* bot, std::string const& name)
+{
+    if (!DcBlackwingLair::HoldsThePossession(bot))
+        return 1.0f;
+    return name == "dungeon clear razorgore orb" ? 1.0f : 0.0f;
+}
+
 float DungeonClearMultiplier::GetValue(Action* action)
 {
     if (!action || !botAI || !bot)
         return 1.0f;
 
     std::string const& name = action->getName();
+
+    if (float const clamp = RazorgorePossessionClamp(bot, name); clamp != 1.0f)
+        return clamp;
 
     // Rest-target cap. Applies to EVERY bot in an active DC run — the leader tank
     // AND its followers — so the whole group stops eating/drinking at the group's
@@ -176,6 +208,12 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     std::string const& name = action->getName();
 
+    // The possession clamp, first and unconditional — see its definition above.
+    // The runner is IN COMBAT for most of its window (the adds are on it), so the
+    // combat engine is where this actually has to bite.
+    if (float const clamp = RazorgorePossessionClamp(bot, name); clamp != 1.0f)
+        return clamp;
+
     // RAID BOSS STAND-DOWN — the one shared check that makes every DC combat
     // trigger node inert during a raid encounter, instead of a copy in each of
     // the ~12 triggers. While DcBossStandDown reads active, every "dungeon
@@ -207,6 +245,13 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
         // below the ledge for the whole egg run, and the egg run happens entirely
         // inside the stand-down.
         if (name == "dungeon clear razorgore orb" || name == "dungeon clear razorgore camp")
+            return 1.0f;
+        // Hold-fire rides the same exemption, and needs it more than either: the
+        // window it guards is a RAID ENCOUNTER by definition — a creature is barred
+        // because killing it right now loses the fight — so the stand-down is
+        // always up while it has work. Zeroing it here would have left it dead in
+        // the only place it exists to run.
+        if (name == "dungeon clear hold fire")
             return 1.0f;
         return isDcAction ? 0.0f : 1.0f;  // DC inert; "drop target" back to stock
     }

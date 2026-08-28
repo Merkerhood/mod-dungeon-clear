@@ -209,7 +209,15 @@ namespace DcRazorgore
         bool   isRanged{false};
         bool   hasPet{false};      // the orb script refuses a user with a pet
         bool   exhausted{false};   // Mind Exhaustion (23958) still up
+        float  distToOrb{0.0f};    // how far this candidate has to walk
     };
+
+    // Distance bucket for the election tie-break, in yards. Coarse on purpose: the
+    // question is "who is materially closer to the orb", not "who is closer by half
+    // a yard", and a fine comparison would flip the elected runner every time two
+    // bots shuffled a step inside the camp — which re-issues a glide and walks
+    // nobody anywhere (the Violet Hold repath-epsilon lesson, one level up).
+    inline constexpr float kOrbDistanceBucket = 10.0f;
 
     // Elect the orb runner. Returns an index into `pool`, or -1 when nobody is
     // eligible (a raid of hunters and warlocks — the caller logs and stalls,
@@ -219,15 +227,31 @@ namespace DcRazorgore
     // exhausted) plus one of ours: never the elected leader, which is the main
     // tank and is the only thing standing between the raid and the add wave.
     //
-    // The preference order is the human one. A RANGED DPS is first because the
-    // orb sits on the upper ledge 78yd from the boss's spawn and every add
-    // spawns on the floor below: a ranged bot parked there keeps DPSing through
-    // its own window, where a melee bot is simply out of the fight for 90s.
-    // Healers are last — losing one to a 90s root is how the raid dies to the
-    // adds — but they are not excluded, because a comp can be short of anything.
-    // Ties break on the lowest GUID so every context computes the same runner.
+    // The preference order is the human one. A RANGED DPS is first — and the
+    // reason has changed, so it is worth restating. It is NOT that a ranged bot
+    // keeps DPSing through its window: the runner is MUTE for the whole ninety
+    // seconds whatever class it is (the rung owns every tick and the multiplier
+    // clamp behind it zeroes everything else), because 19832 is a channel that its
+    // own rotation ends. It is that a melee runner is the one that has a swing to
+    // suppress at all — autoattack runs off GetVictim() inside Unit::Update rather
+    // than off the action engine, so it is the one thing here that is stopped by a
+    // side effect rather than by simply declining to act. Preferring ranged keeps
+    // that path cold. Melee is still perfectly eligible, and safe.
+    //
+    // Healers are last — losing one to a 90s root is how the raid dies to the adds
+    // — but nobody is excluded, because a comp can be short of anything.
+    //
+    // WHAT DOES DECIDE, once rank ties, is how far the candidate has to WALK. The
+    // gap between one window ending and the next beginning is dead time in which a
+    // freed Razorgore is loose on the raid, and the walk is nearly all of it — so
+    // among equals the election takes the bot that is already closest to the
+    // ledge, bucketed (kOrbDistanceBucket) so it is a real difference and not a
+    // step of drift. GUID breaks what is still tied, so every context that runs
+    // this on the same snapshot computes the same runner.
     inline int SelectRunner(std::vector<RunnerCandidate> const& pool)
     {
+        auto bucket = [](float d) { return static_cast<int>(d / kOrbDistanceBucket); };
+
         int best = -1;
         int bestRank = 0;
         for (size_t i = 0; i < pool.size(); ++i)
@@ -239,15 +263,23 @@ namespace DcRazorgore
             int rank;
             if (c.isHealer)         rank = 1;   // last resort
             else if (c.isTank)      rank = 2;   // an off-tank: better than a healer
-            else if (!c.isRanged)   rank = 3;   // melee dps: out of the fight, but fine
+            else if (!c.isRanged)   rank = 3;   // melee dps: fine, and mute like anyone
             else                    rank = 4;   // ranged dps: the right answer
 
-            if (best < 0 || rank > bestRank ||
-                (rank == bestRank && c.guidLow < pool[best].guidLow))
+            if (best < 0 || rank > bestRank)
             {
                 best = static_cast<int>(i);
                 bestRank = rank;
+                continue;
             }
+            if (rank < bestRank)
+                continue;
+
+            RunnerCandidate const& incumbent = pool[best];
+            int const mine = bucket(c.distToOrb);
+            int const theirs = bucket(incumbent.distToOrb);
+            if (mine < theirs || (mine == theirs && c.guidLow < incumbent.guidLow))
+                best = static_cast<int>(i);
         }
         return best;
     }

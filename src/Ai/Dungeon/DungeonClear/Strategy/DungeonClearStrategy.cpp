@@ -331,6 +331,16 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear razorgore camp",
         { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));
 
+    // Let go of a creature the run is barred from damaging right now
+    // (DcTargetExclusionRegistry). Registered in BOTH engines for the same reason
+    // the camp is: the barred window spans combat and the gaps in it, and a bot
+    // that walked out of combat still carrying the target resumes on it the moment
+    // it walks back in. Inert on every map with no rows.
+    // See DungeonClearHoldFireTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hold fire",
+        { NextAction("dungeon clear hold fire", DcRel::HoldFire) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance 26.5 (DcRel::NeedsRest) — above advance (15) and follow-tank (25)
     // so a bot below target sits and rests instead of walking, and tie-broken just
@@ -527,6 +537,16 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear razorgore camp",
         { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));
+
+    // Let go of a creature the run is barred from damaging right now
+    // (DcTargetExclusionRegistry). Registered in BOTH engines for the same reason
+    // the camp is: the barred window spans combat and the gaps in it, and a bot
+    // that walked out of combat still carrying the target resumes on it the moment
+    // it walks back in. Inert on every map with no rows.
+    // See DungeonClearHoldFireTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hold fire",
+        { NextAction("dungeon clear hold fire", DcRel::HoldFire) }));
 
     // Conditional-event driver, COMBAT side. Fires only for an event that opted in
     // with DrivesInCombat() — a continuous WAVE encounter where the party is in

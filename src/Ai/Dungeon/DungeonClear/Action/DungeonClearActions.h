@@ -838,6 +838,36 @@ public:
     bool Execute(Event event) override;
 };
 
+// LET GO of a creature DcTargetExclusionRegistry bars right now. One tick, three
+// side effects, and then the trigger that fires it goes inert:
+//
+//   * AttackStop(), because autoattack runs off GetVictim() inside Unit::Update
+//     and not off the action engine — declining to pick a new target does not stop
+//     a swing already in flight, and on a 40-bot raid those swings are the damage
+//     that matters;
+//   * clear `current target`, because the whole class rotation reads it, so a
+//     stale one keeps casting into the barred creature long after the picker
+//     stopped offering it;
+//   * interrupt a cast already flying at it, for the same reason — a 2.5s cast
+//     started one tick before the bar came up still lands.
+//
+// It does NOT try to pick a replacement. The stock pickers do that on the next
+// tick and they now honour the bar (Value/DungeonClearDpsTargetValue), so a raid
+// with adds up flows straight onto the adds; a raid with nothing else to shoot
+// simply holds its fire, which is the correct answer and the whole point.
+//
+// See DungeonClearHoldFireTrigger for what "barred" means and why the exclusion
+// pool alone could not carry it.
+class DungeonClearHoldFireAction : public Action
+{
+public:
+    DungeonClearHoldFireAction(PlayerbotAI* botAI)
+        : Action(botAI, "dungeon clear hold fire")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

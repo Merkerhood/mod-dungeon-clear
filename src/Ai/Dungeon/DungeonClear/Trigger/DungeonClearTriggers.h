@@ -622,4 +622,39 @@ public:
     bool IsActive() override;
 };
 
+// IS THIS BOT AIMED AT SOMETHING IT IS FORBIDDEN TO DAMAGE RIGHT NOW?
+//
+// The second half of DcTargetExclusionRegistry, and the half that had to exist.
+// The registry's first half (DungeonClearCombatStrategy::AppendTargetExclusions)
+// takes a barred creature out of the DPS pool, which is enough only if the pool is
+// what points the damage. On Razorgore it is not: `bwl razorgore mark boss` paints
+// the moon raid icon on him so the off-tank picks him up, and both DpsTargetValue
+// and DpsAoeTargetValue return RtiTargetValue's answer BEFORE the exclusion pass
+// ever runs. So every DPS in the raid pointed at a boss whose phase-1 death casts
+// 20038 on all of them. Measured, tr-20260827-233058-1: pull at 23:31:36, Razorgore
+// dead at 23:31:44, seventeen of twenty-five bots dead with him.
+//
+// The marks are deliberate and stay (the off-tank needs them). What changes is that
+// a barred target is TAKEN BACK: the DC-side picker refuses to hand one out
+// (Value/DungeonClearDpsTargetValue), and this rung lets go of one the bot is
+// already holding — the case the picker cannot reach, because a bot that acquired
+// the boss a tick before the bar came up keeps auto-attacking it off GetVictim()
+// with no further target pick involved.
+//
+// TANKS ARE EXEMPT, by the same reasoning as the registry's Tank carve-out: the
+// encounters that bar a creature are the ones where somebody must still HOLD it.
+// A freed Razorgore between mind controls has to be tanked by someone.
+//
+// Free on every map with no rows — HasRowsFor is a scan of a table with one entry
+// in it, keyed on the map.
+class DungeonClearHoldFireTrigger : public Trigger
+{
+public:
+    DungeonClearHoldFireTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear hold fire", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

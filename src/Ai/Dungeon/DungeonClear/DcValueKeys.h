@@ -38,6 +38,12 @@ namespace DcKey
     inline constexpr char const* ClearedAnchors          = "dungeon clear cleared anchors";
     inline constexpr char const* SeenBosses              = "dungeon clear seen bosses";
     inline constexpr char const* SeenDueEvents           = "dungeon clear seen due events";
+    // The empty raid-icon name, and the only reason it exists: RtiTargetValue reads
+    // its icon out of a NAMED string value, so a DPS picker constructed against a
+    // value that always reads "" resolves icon index -1 and skips the raid-mark
+    // short-circuit entirely. That is how DungeonClearDpsTargetValue reruns the
+    // stock pick with the icon disarmed — see its header.
+    inline constexpr char const* NoRti                   = "dungeon clear no rti";
     inline constexpr char const* StickyBoss              = "dungeon clear sticky boss";
     inline constexpr char const* RunInstance             = "dungeon clear run instance";
     inline constexpr char const* StallReason             = "dungeon clear stall reason";
@@ -89,6 +95,8 @@ namespace DcKey
         inline constexpr char const* CurrentTarget     = "current target";
         inline constexpr char const* PossibleTargets   = "possible targets";
         inline constexpr char const* Attackers         = "attackers";
+        inline constexpr char const* DpsTarget         = "dps target";
+        inline constexpr char const* DpsAoeTarget      = "dps aoe target";
         inline constexpr char const* LootTarget        = "loot target";
         inline constexpr char const* AvailableLoot     = "available loot";
         inline constexpr char const* HasAvailableLoot  = "has available loot";

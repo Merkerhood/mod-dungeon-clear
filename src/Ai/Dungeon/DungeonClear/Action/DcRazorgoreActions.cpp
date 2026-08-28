@@ -13,9 +13,11 @@
 #include "MotionMaster.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "Spell.h"
 #include "Playerbots.h"
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Action/DungeonClearActions.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Trigger/DungeonClearTriggers.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -24,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 // Blackwing Lair's two member-side rungs: the orb runner's walk to the ledge,
 // and the rest of the raid's camp at the foot of it. See their classes in
@@ -193,8 +196,21 @@ bool DungeonClearRazorgoreOrbTrigger::IsActive()
     if (!bot || bot->isDead() || bot->GetMapId() != DcBlackwingLair::MAP_ID)
         return false;
 
-    // The leader's election is the whole gate — it already checks that the run is
-    // live and unpaused, and that this bot is the one member that may take the orb.
+    // HOLDING THE POSSESSION OUTRANKS THE ELECTION, and is tested first because
+    // it is the case the election cannot cover. The elected-runner signal expires
+    // ~3s after the leader's driver stops running — a dead leader, a leader that
+    // walked out of EVENT_DUE_RANGE, `dc pause`, one tick where the event was not
+    // due — and the moment it does, this rung goes inert and the bot's own
+    // rotation comes back and ends the channel. The charm is up regardless of any
+    // of that, and while it is up this rung has to own every tick (see the
+    // possessing branch of Execute). Read off this bot's own unit fields, so no
+    // cross-bot signal can take it away.
+    if (DcBlackwingLair::HoldsThePossession(bot))
+        return true;
+
+    // Otherwise the leader's election is the gate — it already checks that the run
+    // is live and unpaused, and that this bot is the one member that may take the
+    // orb.
     return DcLeaderSignal::IsLeaderRazorgoreRunner(bot);
 }
 
@@ -202,8 +218,6 @@ bool DungeonClearRazorgoreOrbAction::Execute(Event /*event*/)
 {
     if (!bot || !botAI)
         return false;
-
-    Creature* razor = bot->FindNearestCreature(NPC_RAZORGORE, ROOM_SCAN, /*alive*/ true);
 
     // ALREADY DRIVING HIM — and therefore doing nothing else whatsoever.
     //
@@ -225,7 +239,14 @@ bool DungeonClearRazorgoreOrbAction::Execute(Event /*event*/)
     // to its station is the same interruption as any other movement, and the charm
     // roots the charmer regardless, so the old "reclaim the tick on drift" branch
     // could only ever fire by breaking the thing it was protecting.
-    if (razor && razor->IsCharmed() && razor->GetCharmerGUID() == bot->GetGUID())
+    //
+    // The test is the bot's OWN charm field (DcBlackwingLair::HoldsThePossession),
+    // not a room scan for the boss: a scan can come back empty for a tick — a grid
+    // that has not loaded, a boss 151yd away because our own spline is walking him
+    // there — and one empty tick here hands the rotation back to a bot that is
+    // still channelling. The charm is the thing that must not be broken, so the
+    // charm is the thing that decides.
+    if (DcBlackwingLair::HoldsThePossession(bot))
     {
         // Drop the victim rather than merely declining to pick one. Autoattack is
         // driven off GetVictim() inside Unit::Update, not off the action engine,
@@ -242,6 +263,10 @@ bool DungeonClearRazorgoreOrbAction::Execute(Event /*event*/)
 
         return true;
     }
+
+    // Not holding it: everything from here is about getting to the orb and taking
+    // it, and the boss himself only has to be found for the last two tests.
+    Creature* razor = bot->FindNearestCreature(NPC_RAZORGORE, ROOM_SCAN, /*alive*/ true);
 
     if (bot->GetExactDist2d(ORB_X, ORB_Y) > ORB_STATION_RADIUS)
         return RazorgoreTravel(bot, botAI, ORB_X, ORB_Y, ORB_Z);
@@ -352,4 +377,79 @@ bool DungeonClearRazorgoreCampAction::Execute(Event /*event*/)
     CampHoldPoint(bot, hx, hy, hz);
 
     return RazorgoreTravel(bot, botAI, hx, hy, hz);
+}
+
+// --- hold fire -------------------------------------------------------------
+//
+// Not Blackwing Lair's, though Razorgore is what it was written for: the rung is
+// keyed on DcTargetExclusionRegistry, so it serves every row the table ever grows.
+// See DungeonClearHoldFireTrigger / DungeonClearHoldFireAction in their headers
+// for why the exclusion pool alone could not carry this.
+
+namespace
+{
+    // Is `u` a creature this bot is barred from damaging right now?
+    bool BarredRightNow(Player* bot, Unit* u)
+    {
+        return u && u->IsAlive() &&
+               DcTargetExclusionRegistry::IsExcluded(bot, bot->GetMapId(), u->GetEntry());
+    }
+}
+
+bool DungeonClearHoldFireTrigger::IsActive()
+{
+    if (!bot || bot->isDead() || !botAI)
+        return false;
+
+    // Map first. One scan of a one-row table on every other map, and the answer
+    // there is a flat no.
+    if (!DcTargetExclusionRegistry::HasRowsFor(bot->GetMapId()))
+        return false;
+
+    // The off-tank has to keep holding whatever everyone else is barred from — see
+    // the Tank carve-out in DungeonClearCombatStrategy::AppendTargetExclusions.
+    if (PlayerbotAI::IsTank(bot))
+        return false;
+
+    return BarredRightNow(bot, bot->GetVictim()) ||
+           BarredRightNow(bot, AI_VALUE(Unit*, DcKey::Stock::CurrentTarget));
+}
+
+bool DungeonClearHoldFireAction::Execute(Event /*event*/)
+{
+    if (!bot || !botAI)
+        return false;
+
+    Unit* const victim = bot->GetVictim();
+    Unit* const current = AI_VALUE(Unit*, DcKey::Stock::CurrentTarget);
+
+    bool const barredVictim = BarredRightNow(bot, victim);
+    bool const barredCurrent = BarredRightNow(bot, current);
+    if (!barredVictim && !barredCurrent)
+        return false;  // raced away between the trigger and here — nothing to do
+
+    Unit* const barred = barredVictim ? victim : current;
+
+    // A cast already flying at it still lands, so it goes too. Only when the cast
+    // is actually aimed at the barred creature: a heal, a self-buff or a shot at
+    // an add is none of this rung's business.
+    for (uint32 slot : { uint32(CURRENT_GENERIC_SPELL), uint32(CURRENT_CHANNELED_SPELL) })
+    {
+        Spell* spell = bot->GetCurrentSpell(CurrentSpellTypes(slot));
+        if (spell && spell->m_targets.GetUnitTarget() == barred)
+        {
+            bot->InterruptNonMeleeSpells(false);
+            break;
+        }
+    }
+
+    if (barredVictim)
+        bot->AttackStop();
+    if (barredCurrent)
+        botAI->GetAiObjectContext()->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Set(nullptr);
+
+    LOG_DEBUG("playerbots.dungeonclear",
+              "DungeonClear: hold fire — {} lets go of {} (barred while the run needs it alive)",
+              bot->GetName(), barred->GetName());
+    return true;
 }

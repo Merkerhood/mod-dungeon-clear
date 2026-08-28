@@ -11,6 +11,7 @@
 #include "GameObject.h"
 #include "InstanceScript.h"
 #include "Map.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "Playerbots.h"
 
@@ -41,11 +42,14 @@
 //     (DungeonClearRazorgoreOrbAction). The leader's driver never pokes another
 //     bot's movement — that tug-of-war is a solved-and-relearned lesson here.
 //   * KILLING THE BOSS IS A WIPE. Razorgore dying in phase 1 casts 20038 and
-//     instakills the raid. DC cannot prevent that (target selection during a
-//     stand-down is the strategy's); the guard is
-//     RaidBwlStrategy::AppendTargetExclusions upstream, which drops him from
-//     every DPS pick while eggs remain. This event's job is to make phase 1 END,
-//     which is the real fix.
+//     instakills the raid, and DC owns that guard itself, in three layers because
+//     one was not enough: DcTargetExclusionRegistry bars him from the DPS pool
+//     while an egg stands, DungeonClearDpsTargetValue re-runs the pick when the
+//     moon raid icon short-circuits that pool (which is what actually happened —
+//     tr-20260827-233058-1, boss dead eight seconds after the pull, seventeen of
+//     twenty-five bots dead with him), and DungeonClearHoldFireTrigger takes him
+//     back off a bot that had already acquired him. This event's job is still to
+//     make phase 1 END, which is the real fix; the guards buy it the time.
 //
 // The other seven BWL bosses need nothing here: all eight carry kill-credit rows
 // (instance_encounters 610-617) so BossSpawnIndex derives the roster by itself.
@@ -161,6 +165,28 @@ bool DcBlackwingLair::EggRunHoldsTheRaid(Player* bot)
 {
     return bot && bot->GetMapId() == MAP_ID &&
            DcLeaderSignal::IsLeaderRazorgoreDriving(bot);
+}
+
+// See the header for why this asks the bot's own charm field rather than the
+// leader's stamp. Order: the map compare first (one integer, and it is the answer
+// on every map but one), then the charm guid (a field read on the bot itself),
+// and only then a unit lookup — so the common case costs a compare and the
+// possession case costs one ObjectAccessor hit per action-relevance pass.
+//
+// The entry check matters: UNIT_FIELD_CHARM is set for an enslaved demon and for
+// any other charm a bot might hold, and muting a warlock for the duration of
+// Enslave Demon would be a bug of exactly the shape this is here to prevent.
+bool DcBlackwingLair::HoldsThePossession(Player* bot)
+{
+    if (!bot || bot->GetMapId() != MAP_ID)
+        return false;
+
+    ObjectGuid const charm = bot->GetCharmGUID();
+    if (charm.IsEmpty())
+        return false;
+
+    Unit* held = ObjectAccessor::GetUnit(*bot, charm);
+    return held && held->IsAlive() && held->GetEntry() == NPC_RAZORGORE;
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)

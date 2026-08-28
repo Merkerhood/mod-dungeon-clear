@@ -742,6 +742,41 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    recomputed on every strategy add/remove and ApplyInstanceStrategies does
 #    both on every map change. Tanks are never excluded — somebody still has to
 #    HOLD the thing nobody may kill.)
+# Value/DungeonClearDpsTargetValue.{h,cpp}
+#   (decorators over the stock `dps target` / `dps aoe target` values, registered
+#    under the STOCK names so they front them — the same last-wins seam
+#    DungeonClearPartyMemberToHealValue uses. They exist because
+#    DcTargetExclusionRegistry alone was NOT a complete guard: both stock pickers
+#    return RtiTargetValue's answer BEFORE the exclusion pass runs, and
+#    `bwl razorgore mark boss` paints the moon icon on Razorgore for as long as an
+#    egg stands — so every DPS in the raid was handed the one creature whose
+#    phase-1 death casts 20038 on all of them. Measured, tr-20260827-233058-1:
+#    pull 23:31:36, boss dead 23:31:44, 17 of 25 bots dead with him. The mark is
+#    deliberate and untouched (the off-tank needs it); what changes is that a
+#    barred pick is re-run through the SAME stock picker with the icon disarmed
+#    (a second instance constructed against DcKey::NoRti, a string value that
+#    always reads "" so GetRtiIndex resolves -1), which lands the DPS on the adds
+#    with the exclusion pass applied. Off a map with rows the stock answer is
+#    returned verbatim, for one map-keyed table scan per pick.)
+# Trigger/DungeonClearHoldFireTrigger + Action/DungeonClearHoldFireAction
+#   (in DungeonClearTriggers.h / DungeonClearActions.h, implemented in
+#    Action/DcRazorgoreActions.cpp; relevance DcRel::HoldFire 61.25, registered in
+#    BOTH engines and exempted from the raid stand-down. The case no target picker
+#    can reach: a bot that acquired the barred creature a tick before the bar came
+#    up keeps auto-attacking it off GetVictim() with no further pick involved. The
+#    rung drops the victim, clears `current target`, and interrupts a cast already
+#    aimed at it — then goes inert. Tanks are exempt, as in the registry: somebody
+#    must still HOLD the thing nobody may kill.)
+# DcBlackwingLair::HoldsThePossession (DungeonEventTables.h / BlackwingLairEvents.cpp)
+#   (the orb runner's channel guard, read off the bot's OWN UNIT_FIELD_CHARM rather
+#    than the leader's razorDrivingMs stamp — because every reason that stamp goes
+#    stale (dead leader, leader out of EVENT_DUE_RANGE, one not-due tick, `dc
+#    pause`) is a reason the possession is STILL UP and still needs guarding. It
+#    gates both the orb rung's trigger and a clamp in BOTH DC multipliers that
+#    zeroes every action except the rung itself: 19832 is a channel the runner's
+#    own rotation ends, and the rung's relevance band (62) does not outrank
+#    ACTION_EMERGENCY (90) or stock `drop target` (99), which is what a rooted bot
+#    with adds on it reaches for.)
 # t/TestBlackwingLair.cpp
 #   (the map-469 authored-data lints plus the kernel: the event's exact flag set
 #    (encounterActive is the one that must never be dropped), hook 20's
