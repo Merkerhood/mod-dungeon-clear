@@ -202,6 +202,10 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
         // orchestration keeps running inside the fight. Its own trigger is gated on
         // being the one elected member of map 469, so this exemption is inert
         // everywhere else. See DungeonClearRazorgoreOrbTrigger.
+        //
+        // The camp rung rides the same exemption: the raid has to hold the floor
+        // below the ledge for the whole egg run, and the egg run happens entirely
+        // inside the stand-down.
         if (name == "dungeon clear razorgore orb" || name == "dungeon clear razorgore camp")
             return 1.0f;
         return isDcAction ? 0.0f : 1.0f;  // DC inert; "drop target" back to stock

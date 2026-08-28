@@ -4,6 +4,7 @@
  */
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 
 #include "Creature.h"
 #include "GameObject.h"
@@ -109,6 +110,48 @@ namespace
     }
 }
 
+// Grethok the Controller and the two Blackwing Guardsmen who hold the orb
+// platform from map load: are any of them still up, and has anybody pulled them?
+// Scanned from the ORB rather than from the bot so the answer does not change
+// with where the asker happens to be standing.
+//
+// ONE scan for both facts, because both callers want both and a second sweep of
+// the ledge every tick buys nothing. `engaged` is deliberately the PACK's combat
+// flag rather than the tank's target: the tag may land on a Guardsman, the pull
+// may be a body pull that aggroed all three at once, and by the time anyone asks
+// the question the raid is what matters, not who opened.
+//
+// A world spawn is present before anything is engaged, so `alive` reads true on
+// an untouched instance — which is exactly right: the tank has to pull them, and
+// nothing on the platform may move before he does.
+DcBlackwingLair::OrbGuardState DcBlackwingLair::OrbGuards(Player* bot)
+{
+    OrbGuardState st;
+    if (!bot)
+        return st;
+
+    GameObject* orb = bot->FindNearestGameObject(GO_ORB_OF_DOMINATION, ROOM_SCAN);
+    WorldObject const* origin = orb ? static_cast<WorldObject*>(orb)
+                                    : static_cast<WorldObject*>(bot);
+
+    static std::vector<uint32> const kGuards = { NPC_GRETHOK_THE_CONTROLLER,
+                                                 NPC_BLACKWING_GUARDSMAN };
+    std::list<Creature*> found;
+    origin->GetCreatureListWithEntryInGrid(found, kGuards, ORB_GUARD_RADIUS);
+    for (Creature* c : found)
+    {
+        if (!c || !c->IsAlive())
+            continue;
+        st.alive = true;
+        if (c->IsInCombat())
+        {
+            st.engaged = true;
+            break;  // both flags are set; nothing left to learn from the rest
+        }
+    }
+    return st;
+}
+
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
 {
     // ONE Custom step, for the same reason the Violet Hold's wave driver is one:
@@ -147,4 +190,60 @@ void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
             .Custom(HOOK_RAZORGORE_ORB)
                 .Timeout(RAZORGORE_TIMEOUT_MS)
             .Build());
+}
+
+
+// --- the roster ------------------------------------------------------------
+//
+// GRETHOK THE CONTROLLER IS BOSS #0 of this map. He carries no DungeonEncounter
+// row and no kill credit — by the DBC he is trash — but he is what a human raid
+// pulls to start Razorgore, and until this patch existed nothing in DC pulled him
+// at all: a bespoke rung glided every bot to a staging point on the ledge the
+// moment the leader came within 100yd, which is a footrace up a ramp with the
+// tank at the front and the stragglers wherever the last trash pack left them.
+//
+// As a boss anchor he gets the whole ordinary pipeline for free — the advance
+// walks the raid to him as one body, the raid muster (Boss anchors only) tops it
+// off and rebuffs it, the boss standoff parks the tank just outside his aggro
+// bubble, and the engage does the pull. That is the entire fix: no new movement
+// code, and the pull that starts the encounter is the same pull every other boss
+// in the module gets.
+//
+// COMPLETION borrows Razorgore's kill-bit (inheritCompletionFrom). Grethok has no
+// bit of his own, and while he stands the candidate list holds him; his corpse
+// drops him out on its own (present-but-dead), and Razorgore's kill covers the
+// window after the corpse decays. The driver also latches the anchor cleared the
+// moment the platform reads empty (BlackwingLairDriver) — that is the wipe path,
+// where the corpse is long gone and the bit will not be set for another attempt.
+//
+// ORDER: the eight real bosses shift to 1..8 so Grethok can hold 0. Their DBC
+// kill-bits are untouched (orderOverride reorders, encounterIndex completes), so
+// this is pure sequencing.
+void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
+{
+    using namespace DcRoster;
+
+    BossRosterPatch p;
+    p.mapId = DcBlackwingLair::MAP_ID;
+
+    p.add.push_back(MakeBoss(DcBlackwingLair::NPC_GRETHOK_THE_CONTROLLER,
+                             DcBlackwingLair::MAP_ID, "Grethok the Controller",
+                             DcBlackwingLair::GRETHOK_X, DcBlackwingLair::GRETHOK_Y,
+                             DcBlackwingLair::GRETHOK_Z,
+                             /*completionFrom*/ DcBlackwingLair::NPC_RAZORGORE,
+                             /*orderOverride*/ 0));
+
+    // instance_encounters 610-617, in their own order — the classic clear path.
+    p.reorder = {
+        { 12435, 1 },  // Razorgore the Untamed
+        { 13020, 2 },  // Vaelastrasz the Corrupt
+        { 12017, 3 },  // Broodlord Lashlayer
+        { 11983, 4 },  // Firemaw
+        { 14601, 5 },  // Ebonroc
+        { 11981, 6 },  // Flamegor
+        { 14020, 7 },  // Chromaggus
+        { 11583, 8 },  // Nefarian
+    };
+
+    t.push_back(std::move(p));
 }

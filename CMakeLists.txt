@@ -633,7 +633,11 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    (RaidBwlStrategy::AppendTargetExclusions) lives upstream in mod-playerbots
 #    where phase and target selection actually are. The other seven BWL bosses
 #    need nothing: all eight carry kill-credit rows (instance_encounters
-#    610-617) so BossSpawnIndex derives them.)
+#    610-617) so BossSpawnIndex derives them. The file also owns the map's ROSTER
+#    PATCH (RegisterBlackwingLairRoster): Grethok the Controller as boss #0 —
+#    trash by the DBC, but the mob a human raid pulls to start this fight, and
+#    therefore the anchor the pull pipeline needs — with the eight real bosses
+#    shifted to order 1..8 and their kill-bits untouched.)
 # Overrides/BlackwingLairDriver.cpp
 #   (the imperative half, hook 20. Unlike every other controller in this module
 #    it NEVER MOVES THE BOT THAT RUNS IT — the leader is the raid's main tank
@@ -660,8 +664,38 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    ledge goes through LongRangePathfinder + one escort spline because the
 #    engine PathGenerator truncates a >74-poly path silently. Yields the tick the
 #    moment the runner is parked, so a possessing DPS still runs its rotation.
+#    While the possession is up it does the OPPOSITE of yielding: 19832 is a
+#    channel and any cast, swing or step from the runner's own body ends it, so
+#    the rung owns every tick of the window, drops the bot's victim (autoattack
+#    runs off Unit::Update, not the action engine) and spends 90s mute. Handing
+#    the tick back "so the rotation runs" was the first shape and it broke its own
+#    channel mid-run. The click interrupts any cast in flight first, because
+#    go_orb_of_domination's own CastSpell is non-triggered and a cast in progress
+#    refuses it silently.
 #    Exempted by name from the stand-down zero in DungeonClearCombatMultiplier,
 #    alongside the combat event driver.
+#    The PULL is no longer a rung at all. Grethok the Controller (12557) and two
+#    Blackwing Guardsmen (14456) are world spawns 6-10yd from the orb, on the
+#    ledge, belonging to no encounter, and the runner's 78yd walk ENDS inside
+#    them: the first live run sent one elected DPS up alone and it died without
+#    reaching the orb. The fix that followed — a rung that glided the WHOLE raid
+#    to a staging point on the platform the moment the leader came within 100yd —
+#    delivered bodies but was not a pull: no muster, no formation, no standoff,
+#    forty bots racing up a ramp with the tank in front and the stragglers
+#    wherever the last trash pack left them. Grethok is now a BOSS ANCHOR
+#    (RegisterBlackwingLairRoster, order 0, borrowing Razorgore's kill-bit), so
+#    the ordinary pipeline does it: advance walks the raid to (-7618.29,
+#    -1021.42, 413.56) as one body, the raid muster tops it off and rebuffs it,
+#    the boss standoff parks the tank just outside Grethok's aggro bubble, and the
+#    engage makes the pull. `creature_formations` puts Razorgore in Grethok's
+#    formation with groupAI 7, so that pull IS the boss pull — which is exactly
+#    why the kernel's FIRST test is now "has anybody pulled the platform": before
+#    the tag nothing on the ledge moves (no election, no staging, no click), and
+#    from the tag onward the runner takes over immediately, because every second
+#    without the mind control is a second the raid spends damaging a boss whose
+#    phase-1 death wipes it. The driver latches Grethok's anchor cleared once the
+#    platform reads empty — the wipe path, where his corpse has decayed and
+#    Razorgore's bit will not be set for another attempt.
 #    The RAID's half — DungeonClearRazorgoreCamp{Trigger,Action}, DcRel::
 #    RazorgoreCamp 61.5, COMBAT ENGINE ONLY — is the fix from the first live run,
 #    where the orb and the egg run worked and the raid simply fought wherever the
@@ -674,12 +708,19 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    path everything takes to reach the ledge. Combat-only because out of combat
 #    the walk-in and the pre-boss muster own the raid's position and a 61.5 rung
 #    in the non-combat engine would hijack the approach. It goes INERT inside the
-#    leash (12yd, 20 for the tank, which has to be able to step onto an add that
-#    reached the healers) rather than owning the tick and yielding, so a bot in
+#    leash (30yd for the whole raid, wide enough that anyone can step onto an add
+#    that reached the healers) rather than owning the tick and yielding, so a bot in
 #    position never contends with its own rotation and the fine positioning stays
 #    the raid strategy's. Armed by DcRunState::razorDrivingMs, which the driver
-#    stamps on every step but completion — so the camp arms with phase 1 and
-#    releases with it, with no latch to reset after a wipe.)
+#    stamps on every step but completion AND the pre-pull wait — so the camp arms
+#    with the tank's pull on Grethok, releases with the thirtieth egg, and leaves
+#    the approach to the ordinary walk-in and muster, with no latch to reset after
+#    a wipe. That same stamp now
+#    also gates IsLeaderRazorgoreRunner: the election is only cleared on a tick
+#    that reaches Step::Done, and after the thirtieth egg the event stops being
+#    DUE, so no such tick ever arrives — read as a bare GUID compare the runner
+#    stayed elected for the rest of the raid and held its station at the orb while
+#    the party walked to Vaelastrasz.)
 # Data/DcTargetExclusionRegistry.{h,cpp}
 #   (the third and last member of the "do not attack that" family, and the only
 #    one that reaches the STOCK combat engine's target selection. FightInPlace /

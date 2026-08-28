@@ -317,19 +317,34 @@ public:
     // fights both the runner's own AI and the `bwl` raid strategy's repositioning,
     // every tick, and loses.
     //
-    // False for everyone else, for a real player (no AI to drive), and whenever
-    // the leader's run is off or paused.
+    // False for everyone else, for a real player (no AI to drive), whenever the
+    // leader's run is off or paused, AND whenever the driver has gone quiet.
+    //
+    // That last clause is not decoration. The election is a plain GUID in the
+    // leader's run state and the driver only clears it on a tick that reaches
+    // Step::Done — but the tick after the thirtieth egg the event stops being
+    // DUE, so the hook is never called again and no such tick ever happens. Read
+    // as a bare GUID compare, the runner stayed elected for the rest of the raid:
+    // it held its station at the orb while the party walked to Vaelastrasz.
+    // Pairing the compare with the driver's own liveness stamp releases it within
+    // a tick or two of phase 1 ending, from every exit the encounter has.
+    //
+    // The driver's liveness stamp covers the whole of the runner's life: there is
+    // no election at all until the tank's pull on Grethok has landed, and from
+    // that tick the driver stamps on every step it has work for.
     static bool IsLeaderRazorgoreRunner(Player* bot);
 
     // BLACKWING LAIR, Razorgore: is the leader's egg run live right now?
     //
     // True while the driver has had work to do within the last few seconds — it
-    // stamps DcRunState::razorDrivingMs on every step but completion, so this
-    // arms when phase 1 starts and releases within a tick or two of the last egg
-    // breaking, with no latch to reset on a wipe. The raid's camp rung is its
+    // stamps DcRunState::razorDrivingMs on every step but completion and the
+    // pre-pull wait, so this arms with the tank's pull on Grethok and releases
+    // within a tick or two of the last egg breaking, with no latch to reset on a
+    // wipe. The raid's camp rung is its
     // only consumer: while it holds, everyone but the orb runner fights at the
     // authored camp instead of wherever the pull left them.
     static bool IsLeaderRazorgoreDriving(Player* bot);
+
 
 };
 

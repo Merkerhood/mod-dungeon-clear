@@ -7,6 +7,7 @@
 
 #include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Creature.h"
@@ -25,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
 // The Blackwing Lair driver — Razorgore's orb and egg run.
 //
@@ -59,6 +61,13 @@
 // 1 instakills everyone (20038), but target selection during a raid stand-down
 // belongs to mod-playerbots — the guard is RaidBwlStrategy::AppendTargetExclusions
 // upstream. The best thing this driver can do about that risk is finish quickly.
+//
+// AND WHAT WE NO LONGER DO: walk the raid to the orb platform. Grethok the
+// Controller is a boss anchor now (RegisterBlackwingLairRoster), so the ordinary
+// pipeline — advance, raid muster, boss standoff, engage — brings the raid up as
+// one body and the tank makes the pull. This driver waits for that pull and then
+// works the orb; it publishes ONE stamp (razorDrivingMs) which arms the raid's
+// egg-run camp from the pull onward, and nothing before it.
 
 namespace
 {
@@ -142,10 +151,15 @@ namespace
     // Build the candidate pool and hand it to the pure elector. The pool is the
     // whole raid on this map, not a sub-group: the orb is one object and the
     // rotation has to draw from everybody who can legally take it.
-    Player* BwlElectRunner(Player* leader, DcRunState& st)
+    // `force` skips the throttle. The throttle exists so a comp with nobody
+    // eligible logs once every few seconds instead of once a tick; it must NOT
+    // stand between a runner whose possession just broke and its replacement,
+    // because those three seconds are three seconds of a freed Razorgore beating
+    // on a DPS the raid is forbidden to help by killing him.
+    Player* BwlElectRunner(Player* leader, DcRunState& st, bool force = false)
     {
         uint32 const now = getMSTime();
-        if (st.razorRunnerPickedMs && now - st.razorRunnerPickedMs < RUNNER_PICK_MS)
+        if (!force && st.razorRunnerPickedMs && now - st.razorRunnerPickedMs < RUNNER_PICK_MS)
             return BwlResolveRunner(leader, st);
         st.razorRunnerPickedMs = now;
 
@@ -325,14 +339,83 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
     v.bossAlive      = razor != nullptr;
     v.eggsRemaining  = static_cast<uint32>(eggs.size());
 
+    // ADOPT WHOEVER ACTUALLY HOLDS HIM. The driver's election is a preference;
+    // the charm is a fact. They come apart in the one case that matters — a
+    // possession that broke early, an election that has since moved on, and a
+    // second bot about to click an orb on a boss somebody else is already
+    // driving — and every time they do, the world is right and the election is
+    // wrong. So the charmer is re-published as the runner before anything is
+    // decided, and the two can never disagree for more than a tick.
+    if (razor && razor->IsCharmed())
+    {
+        ObjectGuid const charmer = razor->GetCharmerGUID();
+        if (charmer.IsPlayer() && charmer != st.razorRunnerGuid)
+        {
+            Player* holder = ObjectAccessor::FindPlayer(charmer);
+            if (holder && GET_PLAYERBOT_AI(holder) && holder->GetMapId() == bot->GetMapId())
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "DungeonClear: Razorgore — adopting {} as the orb runner "
+                         "(it holds the possession)", holder->GetName());
+                st.razorRunnerGuid = holder->GetGUID();
+            }
+        }
+    }
+
     Player* runner = BwlResolveRunner(bot, st);
     v.bossCharmed = razor && runner && razor->IsCharmed() &&
                     razor->GetCharmerGUID() == runner->GetGUID();
     v.bossCasting = razor && razor->HasUnitState(UNIT_STATE_CASTING);
+    // Pulling the guard pack pulls the boss: creature_formations makes Razorgore
+    // a member of Grethok's formation with groupAI 7 (full mutual assist), so the
+    // tank's tag on Grethok aggros him from 77yd on the next tick. Either flag is
+    // "the pull has landed" as far as the kernel is concerned.
+    v.bossEngaged = razor && razor->IsInCombat();
+
+    // The platform. Only asked while the boss is NOT charmed — mid-possession the
+    // guards are long dead and the scan is pure cost, and a stray respawn must
+    // never abort a live egg run.
+    //
+    // Out of the chamber the answer is "held and unpulled", not "clear". The event
+    // is due from 200yd out (the leader may still be on the approach) and the SAFE
+    // reading of an unscanned platform is the one that moves nobody: everything
+    // the kernel does with a live body starts on the far side of that answer.
+    bool const nearChamber = bot->GetExactDist2d(ORB_X, ORB_Y) <= GUARD_CLEAR_RANGE;
+    OrbGuardState const guards =
+        (!v.bossCharmed && nearChamber) ? DcBlackwingLair::OrbGuards(bot) : OrbGuardState{};
+    v.orbGuardsAlive   = !v.bossCharmed && (!nearChamber || guards.alive);
+    v.orbGuardsEngaged = guards.engaged;
+
+    // THE ANCHOR LATCH, and the one thing here that talks to the clear rather than
+    // to the encounter. Grethok's roster row borrows Razorgore's kill-bit, which
+    // covers everything up to the moment the raid actually kills the boss — but a
+    // phase-1 wipe leaves a Grethok who is dead, decayed, and will never respawn,
+    // and a candidate row for a creature that is not on the map stalls the clear
+    // ("not spawned. Use 'dc skip'"). An empty platform IS his completion, so say
+    // so once and let the roster advance to Razorgore on its own.
+    //
+    // Only on a tick that actually SCANNED the platform: mid-possession the scan
+    // is skipped (it is pure cost with a charm up) and `guards` reads its default
+    // all-false, which is not the same fact.
+    if (nearChamber && !v.bossCharmed && !guards.alive && !v.eventDone)
+    {
+        auto& cleared =
+            context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
+        if (cleared.insert(NPC_GRETHOK_THE_CONTROLLER).second)
+            LOG_INFO("playerbots.dungeonclear",
+                     "DungeonClear: Razorgore — the orb platform is clear; "
+                     "Grethok's anchor is done");
+    }
 
     v.haveRunner     = runner && runner->IsAlive() && GET_PLAYERBOT_AI(runner);
     v.runnerAtOrb    = runner && runner->GetExactDist2d(ORB_X, ORB_Y) <= ORB_STATION_RADIUS;
-    v.runnerCanClick = BwlRunnerUsable(runner) && !runner->IsNonMeleeSpellCast(false);
+    // The orb script's own refusals ONLY. "Mid-cast" used to be in here and was a
+    // bug with a signature: a DPS bot is casting most ticks, so the elected runner
+    // read unusable, the FSM asked for another, and the rotation cycled a new
+    // runner every three seconds for the whole window without a single click
+    // landing. A cast in flight is interrupted at the orb instead — see
+    // DungeonClearRazorgoreOrbAction.
+    v.runnerCanClick = BwlRunnerUsable(runner);
 
     GameObject* egg = nullptr;
     if (v.bossCharmed)
@@ -355,19 +438,31 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
         {
             prev = getMSTime();
             LOG_DEBUG("playerbots.dungeonclear",
-                      "DungeonClear: Razorgore — step {}, eggs {}/{}, charmed {}, runner {} "
-                      "(atOrb {}, canClick {}), egg {:.1f}yd, skipped {}",
-                      uint32(step), v.eggsRemaining, EGG_COUNT, v.bossCharmed,
+                      "DungeonClear: Razorgore — step {}, eggs {}/{}, guards {}, charmed {}, "
+                      "runner {} (atOrb {}, canClick {}), egg {:.1f}yd, skipped {}",
+                      uint32(step), v.eggsRemaining, EGG_COUNT,
+                      v.orbGuardsAlive
+                          ? ((v.orbGuardsEngaged || v.bossEngaged) ? "true/pulled" : "true/unpulled")
+                          : "false",
+                      v.bossCharmed,
                       runner ? runner->GetName() : "none", v.runnerAtOrb, v.runnerCanClick,
                       v.haveEgg ? v.bossToEgg : -1.0f, uint32(st.razorEggSkipped.size()));
         }
     }
 
-    // Publish "the egg run is live" for the raid's camp rung, which reads it
-    // cross-bot. Stamped for every step that still has work — never for Done, so
-    // the camp releases the instant phase 1 ends rather than needing its own
-    // completion test.
-    if (step != DcRazorgore::Step::Done)
+    // Publish the ONE stamp the raid's positioning reads cross-bot: "the egg run
+    // owns this fight". It arms the camp rung (the raid holds the floor below the
+    // ledge, between the adds and the rooted runner) and keeps the elected
+    // runner's own rung alive.
+    //
+    // Stamped from the PULL onward — never before it. Up to the tag, positioning
+    // belongs to the clear: the advance is walking the raid to Grethok's anchor
+    // and the muster is topping it off, and a camp rung armed underneath that
+    // would fight the pipeline for every bot. WaitPull is exactly "the tank has
+    // not pulled yet", so it is the one step that publishes nothing; Done is the
+    // other, so the camp releases the instant phase 1 ends without a completion
+    // test of its own.
+    if (step != DcRazorgore::Step::Done && step != DcRazorgore::Step::WaitPull)
         st.razorDrivingMs = getMSTime();
 
     switch (step)
@@ -395,8 +490,22 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
             }
             return ObjectiveArriveResult::Done;
 
+        case DcRazorgore::Step::WaitPull:
+            // The platform is held and nobody has pulled it. This is the tank's
+            // tick, not ours: Grethok is boss anchor #0 and the ordinary pipeline
+            // is walking the raid to him, mustering it and taking the standoff.
+            // Deliberately NOTHING here — not even an election, whose only effect
+            // before the pull would be to arm a runner's rung and send one DPS bot
+            // up the ramp ahead of its raid.
+            return ObjectiveArriveResult::Done;
+
         case DcRazorgore::Step::NeedRunner:
-            BwlElectRunner(bot, st);
+            // FORCE the election whenever a runner exists but can no longer take
+            // the orb. That is the broken-possession path — its Mind Exhaustion is
+            // up for the next sixty seconds and Razorgore is on it — and the
+            // three-second throttle is a debounce for an empty candidate pool, not
+            // a reason to leave the raid without a runner while that plays out.
+            BwlElectRunner(bot, st, /*force*/ v.haveRunner && !v.runnerCanClick);
             return ObjectiveArriveResult::Done;
 
         case DcRazorgore::Step::StageRunner:

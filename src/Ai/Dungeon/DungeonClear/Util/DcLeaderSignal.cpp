@@ -1426,7 +1426,23 @@ bool DcLeaderSignal::IsLeaderRazorgoreRunner(Player* bot)
     if (!st.enabled || st.paused)
         return false;
 
-    return st.razorRunnerGuid == bot->GetGUID();
+    if (st.razorRunnerGuid != bot->GetGUID())
+        return false;
+
+    // ...and the driver has to still be running. razorRunnerGuid is only cleared
+    // on a tick that reaches Step::Done, and after the last egg the event stops
+    // being due, so that tick never comes: the GUID alone kept a bot elected —
+    // and parked at the orb — for the rest of the raid. The same freshness window
+    // the camp rung uses, for the same reason and with the same effect: the rung
+    // releases within two AI ticks of the driver going quiet, by any route,
+    // including a leader that died or a run that was switched off.
+    //
+    // The driving stamp is the whole window: the driver publishes it from the
+    // moment the tank's pull lands (before that there is no elected runner to
+    // ask), and stops on the tick phase 1 ends.
+    // GetMSTimeDiffToNow rather than a plain subtraction: getMSTime() wraps, and
+    // this is the only comparison that survives the wrap.
+    return st.razorDrivingMs && GetMSTimeDiffToNow(st.razorDrivingMs) <= 3000;
 }
 
 bool DcLeaderSignal::IsLeaderRazorgoreDriving(Player* bot)
@@ -1451,3 +1467,4 @@ bool DcLeaderSignal::IsLeaderRazorgoreDriving(Player* bot)
     // and the camp must release rather than pin the raid in place.
     return GetMSTimeDiffToNow(st.razorDrivingMs) <= 3000;
 }
+

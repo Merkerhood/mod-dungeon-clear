@@ -752,7 +752,7 @@ private:
 // BLACKWING LAIR ONLY, one member, both engines. The orb runner's half of
 // Razorgore's egg run: walk to the Orb of Domination and take it.
 //
-// Three states, and only the first two own the tick:
+// Three states, and every one of them owns the tick:
 //
 //   TRAVELLING — the orb is on the upper ledge 78yd from the boss's spawn, which
 //   is a LONG HAUL: the engine PathGenerator caps a generated path at 74 polys
@@ -761,16 +761,31 @@ private:
 //   LongRangePathfinder + one escort spline, exactly like the Violet Hold
 //   driver's portal hops, with a bare MovePoint only for the last short leg.
 //
-//   CLICKING — standing at the orb, no pet, no Mind Exhaustion, not mid-cast:
-//   GameObject::Use(bot). That call reaches go_orb_of_domination::GossipHello
-//   before the goober type is ever considered, so it IS the player's click — the
-//   script sets the boss's charmer, has it attack the runner, and casts 19832.
+//   HOLDING — standing at the orb with the platform's three elites still up and
+//   NOBODY HAVING PULLED THEM: own the tick, click nothing. In practice the
+//   runner is never elected in that window (the leader's FSM does not elect one
+//   until the pull lands), so this is the belt to the FSM's braces — same gate,
+//   by construction, because the runner arrives on its own tick and must not
+//   click an orb the leader believes is still being held back.
 //
-//   POSSESSING (or waiting) — YIELD. The bot is rooted by the possession anyway
-//   (SetCharmedBy flags the charmer UNIT_FLAG_DISABLE_MOVE) and it has a rotation
-//   to run against the add wave; claiming ticks it does not need would take a DPS
-//   out of the fight for 90 seconds at a time. The only thing that reclaims the
-//   tick here is drift off the station.
+//   CLICKING — standing at the orb, no pet, no Mind Exhaustion: any cast in
+//   flight is interrupted, then GameObject::Use(bot). That call reaches
+//   go_orb_of_domination::GossipHello before the goober type is ever considered,
+//   so it IS the player's click — the script sets the boss's charmer, has it
+//   attack the runner, and casts 19832. The interrupt is load-bearing: the
+//   script's own cast is non-triggered and a cast already in progress refuses it
+//   silently, which is a click that looks like it happened and did not.
+//
+//   POSSESSING — OWN THE TICK AND DO NOTHING. 19832 is a channel, and the egg run
+//   lives or dies by it: a cast, a swing or a step from the runner's own body ends
+//   the possession, frees a boss the raid may not kill, and costs the bot a 60s
+//   lockout. So the rung takes the tick, drops the victim (autoattack runs off
+//   Unit::Update, not off the action engine) and spends the rest of the window
+//   mute. That is the mechanic's price, not an inefficiency — the earlier shape
+//   handed the tick back "so the rotation runs" and the rotation broke the channel.
+//
+// It never yields, in other words, because there is no state in which something
+// else running is better than this bot standing still.
 //
 // Driven by DungeonClearRazorgoreOrbTrigger; the election that names the runner
 // is the leader's (BlackwingLairDriver.cpp).
@@ -805,8 +820,14 @@ public:
 //
 // Goes INERT once inside the leash rather than owning the tick and yielding, so
 // the combat engine never contends with it for a bot that is already in position.
-// The leader gets a longer leash — it is the main tank and has to be able to step
-// onto an add that reached the healers. Driven by DungeonClearRazorgoreCampTrigger.
+// One leash for the whole raid (CAMP_LEASH, 30yd) — loose enough that anyone can
+// step onto an add that reached the healers without being yanked off it every
+// tick. Driven by DungeonClearRazorgoreCampTrigger.
+//
+// The walk-back aims at the camp's near EDGE, not its centre (CAMP_HOLD_MARGIN):
+// a bot the fight pushed out takes one step back inside the boundary and holds
+// there. Aiming at the centre is what the first live run looked like — every bot
+// crossing the whole camp inward, getting pushed out, and crossing again.
 class DungeonClearRazorgoreCampAction : public DcMovementAction
 {
 public:

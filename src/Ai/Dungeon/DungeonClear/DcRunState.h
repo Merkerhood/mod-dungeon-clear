@@ -202,10 +202,17 @@ struct DcRunState
     // lockout. Both are auras on live units and are read straight off them, which
     // stays correct through a wipe, a despawn and the phase flip — a mirrored timer
     // would not.
-    // getMSTime() of the last tick the Razorgore driver had work to do. Read
-    // cross-bot (DcLeaderSignal::IsLeaderRazorgoreDriving) by the raid's camp
-    // rung, so the camp arms and releases with the encounter and needs no latch
-    // of its own: the driver simply stops stamping when phase 1 ends.
+    // getMSTime() of the last tick the Razorgore driver had work to do — which
+    // starts at the tank's pull on Grethok and ends with the thirtieth egg.
+    // Read cross-bot (DcLeaderSignal::IsLeaderRazorgoreDriving / …Runner) by the
+    // raid's camp rung and the elected runner's own rung, so both arm and release
+    // with the encounter and need no latch of their own: the driver simply stops
+    // stamping when phase 1 ends.
+    //
+    // Nothing is stamped BEFORE the pull (Step::WaitPull). Up to then the raid's
+    // position belongs to the ordinary clear — the advance is walking it to
+    // Grethok's boss anchor and the muster is topping it off — and a camp rung
+    // armed underneath that would fight the pipeline for every bot.
     uint32     razorDrivingMs = 0;
     ObjectGuid razorRunnerGuid;            // elected orb runner (empty = none yet)
     uint32     razorRunnerPickedMs = 0;    // getMSTime() of the last election (throttle)

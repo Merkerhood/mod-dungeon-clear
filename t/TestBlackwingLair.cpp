@@ -6,13 +6,16 @@
 #include "gtest/gtest.h"
 
 #include <cmath>
+#include <vector>
 
 #include "Position.h"
 
 #include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcDifficulty.h"
 #include "Ai/Dungeon/DungeonClear/Strategy/DcRelevance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
 
@@ -37,6 +40,8 @@ namespace
         v.eggsRemaining = 17;
         v.bossCharmed   = true;
         v.bossCasting   = false;
+        v.orbGuardsAlive = false;
+        v.orbGuardsEngaged = false;
         v.haveRunner    = true;
         v.runnerAtOrb   = true;
         v.runnerCanClick = true;
@@ -147,12 +152,45 @@ TEST(DungeonEventBlackwingLairTest, TheRaidCampsOffTheLedgeAndInHealRangeOfTheRu
             << "add spawn (" << p.GetPositionX() << ", " << p.GetPositionY()
             << ") is close enough to the camp that its wave arrives on top of the raid";
 
-    // The tank needs more room than the raid — it has to be able to step onto an
-    // add that reached the healers — but it is still a leash, not a free rein.
-    EXPECT_GT(CAMP_LEASH_TANK, CAMP_LEASH);
-    EXPECT_LT(CAMP_LEASH_TANK, toOrb + 20.0f)
-        << "the tank's leash must not let it wander further from the runner than "
-           "the fight's own geometry";
+    // ONE leash for the whole raid (the tank's separate tier is gone — 30 is
+    // loose enough for anyone to step onto an add that reached the healers). It
+    // is still a leash and not a free rein, and the bound that decides the number
+    // is the RUNNER: it is rooted on the ledge and cannot come to a healer, so a
+    // bot at the far edge of the camp must not be hopelessly out of range of it.
+    EXPECT_GT(CAMP_LEASH, 0.0f);
+    EXPECT_LT(CAMP_LEASH + toOrb, 45.0f)
+        << "a bot at the far edge of the camp is out of any reach of the runner — "
+           "the leash has stopped being a camp";
+
+    // WHAT A LEASH THIS WIDE DECIDES: GRETHOK'S OWN SPAWN is inside it, so the
+    // guard fight the tank pulls happens within the camp and the raid is not
+    // walked off the pack it is killing on the first tick of the egg run. The
+    // camp arms with that pull (razorDrivingMs), so this is not a nicety — a
+    // leash that excluded the platform would fight the pull for every melee bot
+    // in the raid. Re-read DungeonClearRazorgoreCampTrigger before "fixing" the
+    // number.
+    float const sdx = GRETHOK_X - CAMP_X, sdy = GRETHOK_Y - CAMP_Y,
+                sdz = GRETHOK_Z - CAMP_Z;
+    EXPECT_LT(std::sqrt(sdx * sdx + sdy * sdy + sdz * sdz), CAMP_LEASH)
+        << "the camp yanks the raid off the guard pull it was just sent to make";
+
+    // THE PING-PONG THIS ENCODES: the walk-back aims at the camp's near edge,
+    // CAMP_HOLD_MARGIN inside the leash, so a bot the fight pushes out takes one
+    // step back and holds. A margin of zero puts the hold point ON the boundary
+    // and the next yard of drift re-arms the rung; a margin that reached the
+    // leash puts it back at the centre and every correction is a lap across the
+    // whole camp again. Both ends are the same bug, so both are asserted.
+    EXPECT_GT(CAMP_HOLD_MARGIN, 0.0f)
+        << "no margin is no hysteresis — the rung re-arms the moment it releases";
+    EXPECT_LT(CAMP_HOLD_MARGIN, CAMP_LEASH)
+        << "the margin has swallowed the tightest leash, so the walk-back aims at "
+           "the camp centre again and the ping-pong is back";
+
+    // And the step itself has to be a step: at the tightest leash the correction
+    // is CAMP_HOLD_MARGIN yards, which must stay small next to the camp's own
+    // radius or "hold at the edge" is indistinguishable from "walk to the middle".
+    EXPECT_LT(CAMP_HOLD_MARGIN, CAMP_LEASH * 0.5f)
+        << "the walk-back crosses more than half the camp — that is a lap, not a step";
 }
 
 TEST(DungeonEventBlackwingLairTest, OrbRungOutranksTheRaidStrategy)
@@ -304,6 +342,182 @@ TEST(DungeonEventBlackwingLairTest, RunnerElectionIsStableAcrossContexts)
 }
 
 // --- the phase-1 damage guard --------------------------------------------
+
+TEST(DungeonEventBlackwingLairTest, NothingTouchesThePlatformBeforeTheTankPullsIt)
+{
+    // THE ORDERING THIS FILE EXISTS TO PIN. Grethok is a boss anchor, so the pull
+    // is the tank's and the whole raid comes with it (advance, muster, standoff,
+    // engage). Until that pull lands, the kernel must not elect anybody, must not
+    // stage anybody, and must not click: each of those puts one DPS bot on a
+    // ledge 78yd ahead of its raid, next to three level-62 elites. The shape that
+    // staged "with the raid" needed a rung that glided forty bots at the ledge to
+    // make it true — which is the footrace this replaced.
+    DcRazorgore::View v = Driving();
+    v.bossCharmed = false;
+    v.orbGuardsAlive = true;
+    v.orbGuardsEngaged = false;
+    v.bossEngaged = false;
+
+    v.haveRunner = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::WaitPull)
+        << "an election before the pull arms a runner's rung and sends it up alone";
+
+    v.haveRunner = true;
+    v.runnerAtOrb = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::WaitPull)
+        << "the staging walk ends on top of three elites nobody is fighting";
+
+    v.runnerAtOrb = true;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::WaitPull);
+
+    // An empty platform is the other way out of the wait — a re-entry, or a raid
+    // that killed the guards on some earlier attempt.
+    v.orbGuardsAlive = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::ClickOrb);
+}
+
+TEST(DungeonEventBlackwingLairTest, TheRunnerTakesOverTheMomentGrethokIsEngaged)
+{
+    // The other half of the same contract, and the reason the wait is a wait and
+    // not a "clear the platform first": from the tag onward, Razorgore is already
+    // in the fight (creature_formations, groupAI 7), the add pump is already
+    // running (the instance promotes NOT_STARTED on the pull, not on the orb), and
+    // the raid is already damaging a boss whose phase-1 death casts 20038 on all
+    // forty of them. Waiting for the guards to die on top of that is pure loss.
+    DcRazorgore::View v = Driving();
+    v.bossCharmed = false;
+    v.orbGuardsAlive = true;
+    v.orbGuardsEngaged = true;   // the tank has Grethok
+    v.bossEngaged = false;       // ...and the formation has not dragged him in YET
+
+    v.haveRunner = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::NeedRunner);
+
+    v.haveRunner = true;
+    v.runnerAtOrb = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::StageRunner);
+
+    v.runnerAtOrb = true;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::ClickOrb);
+
+    // A runner that cannot legally click is replaced immediately — the 60s
+    // lockout does not pause for the guard fight.
+    v.runnerCanClick = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::NeedRunner);
+
+    // And a boss already in combat is just as good an answer, whatever pulled
+    // him: a stray add, a wipe recovery, or the formation link a tick after the
+    // tag. Either flag releases the wait.
+    v.runnerCanClick = true;
+    v.orbGuardsEngaged = false;
+    v.bossEngaged = true;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::ClickOrb);
+}
+
+TEST(DungeonEventBlackwingLairTest, AGuardRespawnNeverAbortsALivePossession)
+{
+    // The guard gate is BEHIND the possessed branch, and behind completion. Once
+    // the mind control is up the run has 90 seconds of egg to break and nothing
+    // about the platform can be worth spending them on — the driver must keep
+    // driving.
+    DcRazorgore::View v = Driving();
+    v.orbGuardsAlive = true;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::MoveBoss);
+
+    v.bossToEgg = 1.0f;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::CastEgg);
+
+    // ...and a guard standing after the last egg is still Done, not a new job.
+    v.eggsRemaining = 0;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::Done);
+}
+
+TEST(DungeonEventBlackwingLairTest, GrethokIsBossZeroAndTheRealBossesShiftBehindHim)
+{
+    // The roster patch IS the fix for "the tank runs in and leaves the raid
+    // behind": with no anchor of his own, Grethok was pulled by a bespoke rung
+    // that glided every bot at the ledge; as boss #0 he is pulled by the ordinary
+    // pipeline, which musters the raid and stages it first.
+    std::vector<DungeonBossInfo> base;
+    uint32 const entries[] = {12435, 13020, 12017, 11983, 14601, 11981, 14020, 11583};
+    for (uint32 i = 0; i < 8; ++i)
+    {
+        DungeonBossInfo b;
+        b.entry = entries[i];
+        b.encounterIndex = i;   // instance_encounters 610-617, bits 0-7
+        b.mapId = MAP_ID;
+        base.push_back(b);
+    }
+
+    auto const out = BossRosterRegistry::Apply(MAP_ID, DcDiffKey::Raid(0), base);
+    ASSERT_EQ(out.size(), 9u);
+
+    // Grethok leads, and he is a BOSS anchor — an objective would complete on
+    // arrival and never pull anything.
+    ASSERT_EQ(out.front().entry, NPC_GRETHOK_THE_CONTROLLER);
+    EXPECT_EQ(out.front().kind, DungeonAnchorKind::Boss);
+    EXPECT_EQ(BossOrderKey(out.front()), 0u);
+    // His anchor is his spawn: the pull pipeline measures its standoff from the
+    // live creature, but the advance walks the raid to this point to find him.
+    EXPECT_FLOAT_EQ(out.front().x, GRETHOK_X);
+    EXPECT_FLOAT_EQ(out.front().y, GRETHOK_Y);
+    EXPECT_FLOAT_EQ(out.front().z, GRETHOK_Z);
+
+    // COMPLETION is borrowed from Razorgore. Grethok has no DungeonEncounter row
+    // of his own, so without this his row would carry bit 0 by default anyway —
+    // the inheritance says so on purpose, and it must resolve to a REAL bit
+    // rather than being left as a dangling "inherit from" marker.
+    EXPECT_EQ(out.front().encounterIndex, 0u);
+    EXPECT_EQ(out.front().inheritCompletionFrom, 0u)
+        << "the inheritance must be resolved by Apply, not carried into the run";
+
+    // ...and the eight real bosses keep their DBC kill-bits while shifting to
+    // 1..8, so nothing about their completion detection changes.
+    for (uint32 i = 0; i < 8; ++i)
+    {
+        EXPECT_EQ(out[i + 1].entry, entries[i]) << i;
+        EXPECT_EQ(out[i + 1].encounterIndex, i) << i;
+        EXPECT_EQ(BossOrderKey(out[i + 1]), i + 1) << i;
+    }
+
+    // Razorgore specifically must sort AFTER Grethok — a tie would leave the
+    // order to the list's own sort and the raid would walk to the boss it is
+    // forbidden to kill.
+    EXPECT_LT(BossOrderKey(out.front()), BossOrderKey(out[1]));
+}
+
+TEST(DungeonEventBlackwingLairTest, TheCampRungSitsBetweenTheRaidStrategyAndTheRunner)
+{
+    // Two rungs left on this map, and the ordering between them and the raid
+    // strategy is the whole statement of who owns a bot's tick during the egg
+    // run. Above ACTION_RAID+1 (61): `bwl razorgore avoid aoe` would walk bots
+    // out of the camp. Below the runner (62): a bot that is somehow both has the
+    // more urgent job at the orb.
+    EXPECT_GT(DcRel::RazorgoreCamp, 61.0f);
+    EXPECT_LT(DcRel::RazorgoreCamp, DcRel::RazorgoreOrb);
+}
+
+TEST(DungeonEventBlackwingLairTest, ACastingRunnerIsNotDisqualified)
+{
+    // A DPS bot is casting most ticks. When "not mid-cast" was one of the
+    // election's gates, the elected runner read unusable almost every tick, the
+    // FSM asked for another, and the rotation cycled a fresh runner every three
+    // seconds for the whole window without a single click landing. The cast is
+    // interrupted at the orb instead, where it is one call.
+    //
+    // What runnerCanClick means now is the orb script's own three refusals, and
+    // those still send the job to somebody else...
+    DcRazorgore::View v = Driving();
+    v.bossCharmed = false;
+    v.runnerAtOrb = true;
+    v.runnerCanClick = false;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::NeedRunner);
+
+    // ...and a runner that merely has a spell in flight is not one of them: it is
+    // still the runner, and it still clicks.
+    v.runnerCanClick = true;
+    EXPECT_EQ(DcRazorgore::Decide(v), DcRazorgore::Step::ClickOrb);
+}
 
 TEST(DungeonEventBlackwingLairTest, RazorgoreIsATargetExclusionRowOnHisOwnMap)
 {

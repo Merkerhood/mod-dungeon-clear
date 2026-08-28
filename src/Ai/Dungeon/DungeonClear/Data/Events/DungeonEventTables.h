@@ -322,6 +322,49 @@ namespace DcBlackwingLair
     // from being walked off before the click).
     constexpr float ORB_STATION_RADIUS = 4.0f;
 
+    // THE THREE MOBS ON THE ORB PLATFORM. Grethok the Controller (a level 62
+    // elite caster) and two Blackwing Guardsmen stand 6-10yd from the orb, on the
+    // ledge, from map load — they are not part of the encounter and nothing in
+    // the instance script removes them.
+    //
+    // They are the reason this block exists. The runner's walk is 78yd and ends
+    // ON TOP of them; the first live run sent one DPS up alone into three elites
+    // and it died on the ramp without ever reaching the orb.
+    //
+    // GRETHOK IS THE PULL. He is not an encounter and carries no kill credit, but
+    // he is what a human raid pulls to start this fight, and DC now treats him
+    // that way: the roster patch makes him boss #0 of the map, so the tank brings
+    // the raid to him with the ordinary pipeline (advance, muster, standoff,
+    // engage) instead of forty bots racing each other up the ramp. Nothing on the
+    // platform — no election, no staging, no click — happens before that pull.
+    constexpr uint32 NPC_GRETHOK_THE_CONTROLLER = 12557;
+    constexpr uint32 NPC_BLACKWING_GUARDSMAN    = 14456;
+
+    // How far from the orb to look for them. The furthest of the three spawns
+    // 10.0yd out; 25 covers that with room for the pull dragging one a few yards
+    // without the scan reaching down to the floor pack (the nearest floor spawn
+    // is 33yd out and a tier below).
+    constexpr float ORB_GUARD_RADIUS = 25.0f;
+
+    // GRETHOK'S SPAWN — and the roster anchor DC pulls him from.
+    //
+    // He is not a DungeonEncounter and the DBC has never heard of him, but for a
+    // clear he is the boss of this room: he is what the tank pulls, and pulling
+    // him starts the encounter (his formation holds Razorgore). So the roster
+    // patch adds him as boss #0 of map 469 and the ORDINARY pull pipeline —
+    // advance, raid muster, boss standoff, engage — brings the whole raid up to
+    // him as one body. See RegisterBlackwingLairRoster.
+    //
+    // Read straight off `creature` (guid 84389): the two Blackwing Guardsmen
+    // (84390 / 84391) stand 5-7yd either side of him at the same height.
+    constexpr float GRETHOK_X = -7618.29f;
+    constexpr float GRETHOK_Y = -1021.42f;
+    constexpr float GRETHOK_Z = 413.56f;
+
+    // The leader has to be in the chamber before the raid is sent up the ramp.
+    // The event's own due range (200yd) is the whole approach; this is the room.
+    constexpr float GUARD_CLEAR_RANGE = 100.0f;
+
     // WHERE THE REST OF THE RAID FIGHTS — at the foot of the orb platform, one
     // step toward the middle of the room, on the floor at z 408.87.
     //
@@ -345,16 +388,45 @@ namespace DcBlackwingLair
     constexpr float CAMP_Y = -1036.00f;
     constexpr float CAMP_Z = 408.87f;
 
-    // How far off the camp a member may drift before it is walked back. Loose
-    // enough that a bot in melee with something that reached the camp is not
-    // dragged off it mid-swing; tight enough that the raid stays one body.
-    constexpr float CAMP_LEASH = 12.0f;
+    // How far off the camp anyone may drift before they are walked back. ONE
+    // number for the whole raid — the tank used to get a longer tier of its own
+    // (12 for members, 20 for the leader) and both were too tight live: bots
+    // were being walked off adds they had legitimately stepped onto, which is
+    // the one thing this rung must never do.
+    //
+    // 30 still keeps the raid in the runner's half of the chamber — the camp is
+    // 12.3yd from the orb and the nearest add spawn is 46yd from the camp, so a
+    // bot at the end of its leash is still between the room and the ledge — and
+    // it is still a leash: "do not chase across the room" is the whole point of
+    // a camp in a fight whose adds all come to you.
+    //
+    // A leash this wide COVERS THE ORB LEDGE (Grethok's own spawn is 18yd from
+    // the camp centre), so a raid that fought the guard pull up there reads as in
+    // position and is left alone. That is intended: the first add wave pulls it
+    // down anyway, and nothing HOLDS it up there.
+    //
+    // THE COST, deliberately accepted: a bot at the FAR edge is 42yd from the
+    // runner, past a healer's 40yd range, and the runner is rooted and cannot
+    // come to it. The raid is one body in practice — it fights what walks in,
+    // near the camp centre — so this is the far corner of the leash, not where
+    // the fight happens. If runner deaths come back with the healers alive and
+    // out of range, this number is the first suspect.
+    constexpr float CAMP_LEASH = 30.0f;
 
-    // The leader's leash. It is the main tank: it has to be able to step out and
-    // take an add that came in on the healers without being yanked back off it
-    // every tick. Still bounded — "do not chase across the room" is the whole
-    // point of a camp in a fight whose adds all come to you.
-    constexpr float CAMP_LEASH_TANK = 20.0f;
+    // How far INSIDE the leash a drifted bot is walked back to.
+    //
+    // The camp is a LEASH, not a point: the walk-back aims at the near EDGE of
+    // it, never at the centre. Aiming at the centre is what the first live run
+    // looked like — a bot crosses the whole camp inward, the fight pushes it
+    // back out, and it crosses again, forever, every bot out of phase with the
+    // others. Landing just inside the boundary makes the correction a step
+    // instead of a lap.
+    //
+    // The margin IS the hysteresis, so it is neither zero nor a hair: land
+    // exactly on the boundary and the next yard of drift re-arms the rung. It
+    // must stay well under CAMP_LEASH — a margin that reached the leash would
+    // put the hold point back at the centre and bring the lap back with it.
+    constexpr float CAMP_HOLD_MARGIN = 4.0f;
 
     // Covers the whole chamber from anywhere in it: the eggs span ~80yd of x by
     // ~93yd of y across two tiers, and the orb sits 78yd from the boss's spawn.
@@ -369,6 +441,31 @@ namespace DcBlackwingLair
     // Violet Hold's.
     constexpr uint32 EVENT_RAZORGORE_ORB = 1;
     constexpr uint32 HOOK_RAZORGORE_ORB  = 20;
+
+    // The orb platform, as the two facts both halves of the encounter ask about:
+    // is any of Grethok / the two Blackwing Guardsmen still standing, and has the
+    // tank PULLED them yet.
+    //
+    // `engaged` is what releases the orb runner. The click used to wait on the
+    // platform being empty; it now waits on the pull, because the pull is the
+    // only thing that has to happen first — Grethok's formation drags Razorgore
+    // into the fight on first contact (groupAI 7), so from the tag onward every
+    // second without the mind control is a second the raid spends damaging a boss
+    // whose phase-1 death wipes it.
+    //
+    // Scanned from the ORB rather than from `bot`, so the answer does not change
+    // with where the asker happens to be. Shared rather than duplicated because
+    // TWO rungs act on it and a disagreement between them is a runner that clicks
+    // an orb the leader thinks it is holding: the leader's driver
+    // (Overrides/BlackwingLairDriver.cpp) uses it to decide the step, and the
+    // runner's own rung (Action/DcRazorgoreActions.cpp) uses it to decide whether
+    // to click on arrival or hold station.
+    struct OrbGuardState
+    {
+        bool alive{false};    // at least one of the three is still up
+        bool engaged{false};  // ...and somebody has it in combat
+    };
+    OrbGuardState OrbGuards(Player* bot);
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);
@@ -408,6 +505,7 @@ void RegisterSunkenTempleRoster(std::vector<BossRosterPatch>& t);
 void RegisterRazorfenDownsRoster(std::vector<BossRosterPatch>& t);
 void RegisterZulFarrakRoster(std::vector<BossRosterPatch>& t);
 void RegisterBlackrockDepthsRoster(std::vector<BossRosterPatch>& t);
+void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t);
 void RegisterDeadminesRoster(std::vector<BossRosterPatch>& t);
 void RegisterWailingCavernsRoster(std::vector<BossRosterPatch>& t);
 void RegisterStratholmeRoster(std::vector<BossRosterPatch>& t);

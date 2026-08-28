@@ -29,6 +29,37 @@
 //   mind-control windows and needs a rotation of runners, exactly like a human
 //   raid. Everything else in the room (an add every ~4s, forever, until the last
 //   egg pops) belongs to the playerbots raid strategy.
+//
+//   AND BEFORE ANY OF THAT: the orb platform is held by three level-62 elites
+//   that are there from map load and belong to no encounter — Grethok the
+//   Controller and two Blackwing Guardsmen, 6-10yd from the orb. The runner's
+//   walk ENDS inside them.
+//
+//   WHAT IS NOT TRUE, and cost this encounter its first three live runs: that
+//   the platform can be cleared in a quiet room. `creature_formations` puts
+//   RAZORGORE HIMSELF in Grethok's formation (leader guid 84389, member 84388,
+//   groupAI 7 — full mutual assist), so first contact with the guard pack
+//   aggros the boss from 77yd across the chamber, one tick later. Measured, on
+//   an untouched instance: 22:12:42 a Blackwing Guardsman opens the fight,
+//   22:12:43 all twenty-five members log "JOINED AN ONGOING FIGHT: Razorgore
+//   the Untamed ... 0.0yd from its spawn".
+//
+//   SO GRETHOK IS THE BOSS PULL, and DC treats him as the boss: he is roster
+//   anchor #0 of map 469 and the ORDINARY pipeline brings the raid to him —
+//   advance as one body, raid muster, boss standoff, engage. Nothing in this
+//   kernel moves anybody onto the platform before that: no election, no staging,
+//   no click. The version that staged the runner "with the raid" had a bespoke
+//   rung glide forty bots at the ledge the moment the leader came in range,
+//   which is the tank running in and leaving the raid behind, with the runner in
+//   the first rank of it.
+//
+//   AND THE MOMENT HE IS ENGAGED, THE RUNNER TAKES OVER. Not when the platform
+//   is empty — from the tag onward the boss is already loose on the raid, the
+//   add pump is already running (the instance promotes NOT_STARTED on the pull,
+//   not on the orb), and the raid cannot help itself by damaging a boss whose
+//   phase-1 death casts 20038 on all forty of them. Every second between the
+//   pull and the mind control is pure loss, so the click goes in as soon as the
+//   pull has landed and the runner is standing on the orb.
 namespace DcRazorgore
 {
     // The commit band for a cast. The spell's own range is 10yd; stopping at 6
@@ -64,6 +95,8 @@ namespace DcRazorgore
     enum class Step : uint8
     {
         Idle,        // event not live here — yield, drive nothing
+        WaitPull,    // the platform is still held and nobody has pulled it — the
+                     // tank owns this; touch nothing on the ledge
         NeedRunner,  // no usable designated runner — elect one
         StageRunner, // runner elected but not at the orb yet — it walks itself
         ClickOrb,    // runner is standing at the orb and may take it
@@ -83,9 +116,32 @@ namespace DcRazorgore
         bool   bossCharmed{false};    // ...by OUR designated runner, specifically
         bool   bossCasting{false};
 
+        // Grethok the Controller and the two Blackwing Guardsmen who stand on the
+        // orb platform from map load. Not part of the encounter, and fatal to a
+        // lone runner: the walk to the orb ENDS on top of them.
+        bool   orbGuardsAlive{false};
+
+        // ...and has anybody pulled them? This is the gate the whole staging
+        // half hangs off: until the tank has Grethok in combat the ledge belongs
+        // to the pull pipeline and nothing here may put a body on it.
+        bool   orbGuardsEngaged{false};
+
+        // Is Razorgore already in the fight? Grethok's formation drags him in on
+        // the guard pull (groupAI 7), so this is true from a tick after the tag —
+        // and it is also the answer when the raid pulled him some other way
+        // entirely (a stray add, a wipe recovery), which is just as good a reason
+        // to stop waiting.
+        bool   bossEngaged{false};
+
         bool   haveRunner{false};     // a designated runner exists and is alive
         bool   runnerAtOrb{false};
-        bool   runnerCanClick{false}; // no pet, no Mind Exhaustion, not casting
+        // The orb script's OWN three refusals and nothing else: alive, no pet, no
+        // Mind Exhaustion. Deliberately NOT "and not mid-cast" — a DPS bot is
+        // casting most ticks, and disqualifying it for that re-elected a fresh
+        // runner every three seconds and never clicked anything. A cast in flight
+        // is interrupted at the orb by the runner's own rung, where it is one
+        // call; here it would be a rotation.
+        bool   runnerCanClick{false};
 
         bool   haveEgg{false};        // an egg is elected (not all blacklisted)
         float  bossToEgg{0.0f};       // distance from the boss to that egg
@@ -115,12 +171,29 @@ namespace DcRazorgore
 
         // Not (or no longer) possessed: 90s expired, the runner died, or we have
         // not started. Everything here is about getting a live body onto the orb.
+        //
+        // AND NOTHING GOES UP BEFORE THE TANK DOES. This is the first test rather
+        // than the last, and that ordering is the whole point: an election or a
+        // staging walk taken while the platform is quiet is one DPS bot strolling
+        // into three level-62 elites 78yd ahead of its raid, which is how the
+        // first live run died and — through a rung that glided the WHOLE raid up
+        // to "escort" it — how the pull became a footrace. Grethok is a boss
+        // anchor now; until the pull pipeline has him in combat this kernel has
+        // no business on the ledge.
+        if (v.orbGuardsAlive && !v.orbGuardsEngaged && !v.bossEngaged)
+            return Step::WaitPull;
+
+        // The pull has landed (or the platform is already empty). From here the
+        // runner is elected, staged and clicks with no further reference to the
+        // guards: they are the raid's problem now, and every tick spent waiting
+        // on them is a tick of a freed Razorgore the raid must not kill.
         if (!v.haveRunner)
             return Step::NeedRunner;
         if (!v.runnerAtOrb)
             return Step::StageRunner;
         if (!v.runnerCanClick)
-            return Step::NeedRunner;  // exhausted / pet / casting -> someone else
+            return Step::NeedRunner;  // exhausted / pet / dead -> someone else
+
         return Step::ClickOrb;
     }
 
