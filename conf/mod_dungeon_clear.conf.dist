@@ -1473,8 +1473,14 @@ DungeonClear.SpectateSpeed = 2.5
 #    Pre-boss muster budgets: how long the raid may spend topping off at the
 #    staging point, and how long a ForceRebuff round may run, before the muster
 #    advances with what it has (it announces the shortfall; it never deadlocks).
-# DungeonClear.RaidMusterRestTimeoutSecs = 120
-# DungeonClear.RaidMusterRebuffTimeoutSecs = 45
+# DungeonClear.RaidMusterRestTimeoutSecs = 35
+# DungeonClear.RaidMusterRebuffTimeoutSecs = 25
+#
+#    Hard ceiling on the WHOLE muster, measured from the tick it arms for a
+#    boss. When it expires the muster releases the pull from whatever phase it
+#    is in and cancels the open rebuff windows, so buffing never bleeds into
+#    the walk-in or the fight. The two budgets above are authored to sum to it.
+# DungeonClear.RaidMusterTotalTimeoutSecs = 60
 
 #    Many more corpses to walk between and drink for after a bad fight — the
 #    5-man budget ends winnable raid recoveries early.

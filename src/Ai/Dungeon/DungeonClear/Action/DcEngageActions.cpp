@@ -883,6 +883,28 @@ namespace
         }
     }
 
+    // Close every rebuff window this muster opened. ForceRebuffState::Begin is
+    // its own 2-minute window, and while it is pending stock buff triggers
+    // bypass their check intervals and the buff-first multiplier zeroes healing
+    // out of combat — a window left open outlives the muster and keeps the raid
+    // buffing into the walk-in and the pull. End() is the off-switch; the
+    // always-on "force rebuff" strategy stays installed (AiFactory gives it to
+    // every bot), it simply has nothing pending to drive.
+    void CancelRebuffRound(Player* bot)
+    {
+        Group* group = bot->GetGroup();
+        if (!group)
+            return;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member->GetMapId() != bot->GetMapId())
+                continue;
+            if (PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member))
+                memberAI->forceRebuff.End();
+        }
+    }
+
     // Full-stop muster gate: stage the raid at the standoff, top off to full,
     // run the rebuff round, THEN release. True while the engage must hold this
     // tick. 5-man dungeons never enter (raid maps only) — their pre-pull flow
@@ -904,6 +926,7 @@ namespace
             run.musterBossEntry = next.entry;
             run.musterPhase = static_cast<uint8>(DcRaidMusterDecision::Phase::Idle);
             run.musterPhaseSinceMs = 0;
+            run.musterArmedMs = 0;
             run.musterRebuffIssuedMs = 0;
         }
 
@@ -945,8 +968,10 @@ namespace
         in.rebuffDone = run.musterRebuffIssuedMs != 0 && !rebuffPending;
         in.nowMs = now;
         in.phaseSinceMs = run.musterPhaseSinceMs;
+        in.armedSinceMs = run.musterArmedMs;
         in.restTimeoutMs = DcSettings::GetUInt(bot, "RaidMusterRestTimeoutSecs") * 1000;
         in.rebuffTimeoutMs = DcSettings::GetUInt(bot, "RaidMusterRebuffTimeoutSecs") * 1000;
+        in.totalTimeoutMs = DcSettings::GetUInt(bot, "RaidMusterTotalTimeoutSecs") * 1000;
 
         auto const before = static_cast<DcRaidMusterDecision::Phase>(run.musterPhase);
         DcRaidMusterDecision::Verdict const v = DcRaidMusterDecision::Decide(before, in);
@@ -958,6 +983,9 @@ namespace
             switch (v.phase)
             {
                 case DcRaidMusterDecision::Phase::Resting:
+                    // Only reachable as Idle -> Resting: the muster arming for
+                    // this boss. Stamp the whole-muster budget here.
+                    run.musterArmedMs = now;
                     ApplyMusterRestOverride(bot, run);
                     LOG_INFO("playerbots.dungeonclear",
                              "[DC:{}] raid muster: staging at {} — topping the raid "
@@ -977,8 +1005,12 @@ namespace
                     LOG_INFO("playerbots.dungeonclear",
                              "[DC:{}] raid muster: {} for {} — releasing the pull",
                              bot->GetName(),
-                             v.timedOut ? "rebuff timed out; going with what we have"
-                                        : "raid staged, topped and buffed",
+                             !v.timedOut ? "raid staged, topped and buffed"
+                             : DcRaidMusterDecision::Expired(now, run.musterArmedMs,
+                                                             in.totalTimeoutMs)
+                                 ? "muster budget spent; buffs cancelled, going with "
+                                   "what we have"
+                                 : "rebuff timed out; going with what we have",
                              next.name);
                     break;
                 default:
@@ -990,6 +1022,8 @@ namespace
             IssueRebuffRound(bot);
             run.musterRebuffIssuedMs = now;
         }
+        if (v.cancelRebuff)
+            CancelRebuffRound(bot);
         return v.hold;
     }
 }

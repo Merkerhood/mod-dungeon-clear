@@ -199,10 +199,15 @@ inline constexpr DcSettingDef kDcSettings[] =
     // Pre-boss muster budgets (Plan C). Resting is parallel — 25 bots eat at
     // once — so the bound covers the slowest drinker plus the stragglers still
     // walking in; Rebuffing covers a full ForceRebuff round of group buffs.
-    // Both are never-deadlock bounds, not targets: on expiry the muster
-    // advances with what it has and says so.
-    { "RaidMusterRestTimeoutSecs",   DcType::UInt, 120,  10, 900,  true  },
-    { "RaidMusterRebuffTimeoutSecs", DcType::UInt,  45,   5, 300,  true  },
+    // None of them are targets: on expiry the muster advances with what it has
+    // and says so. Total is the HARD ceiling on the whole stand-around — it
+    // fires from any phase, cancels the open rebuff windows and releases the
+    // pull, so the raid can never spend longer buffing than fighting. The two
+    // phase bounds are authored to sum to it; raise Total first if you widen
+    // either.
+    { "RaidMusterRestTimeoutSecs",   DcType::UInt,  35,  10, 900,  true  },
+    { "RaidMusterRebuffTimeoutSecs", DcType::UInt,  25,   5, 300,  true  },
+    { "RaidMusterTotalTimeoutSecs",  DcType::UInt,  60,  15, 1200, true  },
 
     // Raid form of the wipe verdict: the fraction of the raid that must be dead
     // (with nobody left engaged) before the run treats the fight as a WIPE. A

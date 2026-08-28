@@ -18,13 +18,20 @@
 // The kernel is the phase machine only; the glue (DungeonClearEngageBossAction)
 // owns the snapshots (staged/topped/rebuff-pending walks), the clocks in
 // DcRunState (musterPhase / musterPhaseSinceMs / musterBossEntry /
-// musterRebuffIssuedMs), the rebuff drive (ForceRebuffState::Begin on every
-// member) and the announcements. Wait-at-Boss, when enabled, sits AFTER this
-// gate — the human gets a raid that is already staged and buffed.
+// musterArmedMs / musterRebuffIssuedMs), the rebuff drive (ForceRebuffState::
+// Begin on every member) and the announcements. Wait-at-Boss, when enabled,
+// sits AFTER this gate — the human gets a raid that is already staged and
+// buffed.
 //
-// Every phase is timeout-bounded: a muster must never deadlock a run on a bot
-// that cannot eat or a buff that cannot land. On timeout the phase advances
-// with what it has and the verdict says so (announce, never hang).
+// Every phase is timeout-bounded AND the muster as a whole is bounded: a muster
+// must never deadlock a run on a bot that cannot eat or a buff that cannot
+// land, and it must never spend more wall-clock standing around than the raid
+// would spend fighting. The per-phase bounds (restTimeoutMs, rebuffTimeoutMs)
+// hand the phase forward; the WHOLE-muster bound (totalTimeoutMs, measured from
+// the tick the muster armed for this boss) is the hard ceiling that fires from
+// any phase and goes straight to Ready. On expiry the muster advances with what
+// it has, cancels any rebuff window still open (verdict.cancelRebuff — buffing
+// must not bleed into the pull), and the verdict says so (announce, never hang).
 namespace DcRaidMusterDecision
 {
     enum class Phase : std::uint8_t
@@ -42,8 +49,10 @@ namespace DcRaidMusterDecision
         bool          rebuffDone = false;  // rebuff round issued and no member still pending
         std::uint32_t nowMs = 0;
         std::uint32_t phaseSinceMs = 0;    // DcRunState::musterPhaseSinceMs (0 = fresh)
+        std::uint32_t armedSinceMs = 0;    // DcRunState::musterArmedMs (0 = fresh)
         std::uint32_t restTimeoutMs = 0;   // bound on Resting (0 = none)
         std::uint32_t rebuffTimeoutMs = 0; // bound on Rebuffing (0 = none)
+        std::uint32_t totalTimeoutMs = 0;  // bound on the whole muster (0 = none)
     };
 
     struct Verdict
@@ -51,13 +60,18 @@ namespace DcRaidMusterDecision
         Phase phase = Phase::Idle;   // the (possibly advanced) phase to store
         bool  hold = false;          // engage must not fire this tick
         bool  beginRebuff = false;   // glue should issue the rebuff round NOW
+        bool  cancelRebuff = false;  // glue should CLOSE every open rebuff window NOW
         bool  timedOut = false;      // this advance was a timeout, not success
     };
 
+    inline bool Expired(std::uint32_t nowMs, std::uint32_t sinceMs, std::uint32_t budgetMs)
+    {
+        return budgetMs != 0 && sinceMs != 0 && nowMs - sinceMs >= budgetMs;
+    }
+
     inline bool TimedOut(Inputs const& in, std::uint32_t budgetMs)
     {
-        return budgetMs != 0 && in.phaseSinceMs != 0 &&
-               in.nowMs - in.phaseSinceMs >= budgetMs;
+        return Expired(in.nowMs, in.phaseSinceMs, budgetMs);
     }
 
     // One evaluation. The glue calls this only while a raid BOSS engage is
@@ -66,6 +80,19 @@ namespace DcRaidMusterDecision
     inline Verdict Decide(Phase current, Inputs const& in)
     {
         Verdict v;
+
+        // Whole-muster ceiling: from any pre-Ready phase this releases the pull
+        // outright — no "one more phase" — and cancels the buff round with it.
+        if (current != Phase::Idle && current != Phase::Ready &&
+            Expired(in.nowMs, in.armedSinceMs, in.totalTimeoutMs))
+        {
+            v.phase = Phase::Ready;
+            v.hold = false;
+            v.cancelRebuff = true;
+            v.timedOut = true;
+            return v;
+        }
+
         switch (current)
         {
             case Phase::Idle:
@@ -96,6 +123,7 @@ namespace DcRaidMusterDecision
                 else if (TimedOut(in, in.rebuffTimeoutMs))
                 {
                     v.phase = Phase::Ready;
+                    v.cancelRebuff = true;  // a window still open: close it, pull
                     v.timedOut = true;
                 }
                 else
