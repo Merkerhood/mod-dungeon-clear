@@ -6,6 +6,8 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRaidMusterDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Creature.h"
 #include "GameObject.h"
@@ -51,7 +53,22 @@
 //     back off a bot that had already acquired him. This event's job is still to
 //     make phase 1 END, which is the real fix; the guards buy it the time.
 //
-// The other seven BWL bosses need nothing here: all eight carry kill-credit rows
+// VAELASTRASZ THE CORRUPT (boss 2) is the map's OTHER exception, and a much
+// smaller one. He is a real boss with a real kill-bit, so the roster derives him
+// for free and the playerbots `bwl` strategy already fights him (fire resistance,
+// positioning, Burning Adrenaline step-outs). The single thing DC owes him is the
+// OPENING: he lies friendly and passive at 30% health offering a gossip, and the
+// raid starts the encounter by talking to him rather than by pulling him. So one
+// conditional event does the talking, gated on the raid muster having finished —
+// "when the raid is ready", which for a fight whose enrage timer starts the
+// instant he turns is the whole point — and the boss-engage rung holds the raid
+// where it stands from the muster through the ~63s of scripted intro, because
+// everything it would otherwise do to him is either impossible (he cannot be
+// attacked) or actively wrong (EngageDirect force-engages a non-hostile creature,
+// which here would start the encounter with the boss still friendly and the intro
+// never played).
+//
+// The other six BWL bosses need nothing here: all eight carry kill-credit rows
 // (instance_encounters 610-617) so BossSpawnIndex derives the roster by itself.
 
 namespace
@@ -112,6 +129,54 @@ namespace
                 return true;
 
         return false;
+    }
+
+    // DUE while Vaelastrasz is still waiting to be talked to AND the raid is
+    // ready to fight him.
+    //
+    // Three gates, cheapest first, because this runs on every out-of-combat tick
+    // of the DC leader on map 469:
+    //
+    //   1. the map, and the leader's proximity to his room;
+    //   2. Vaelastrasz himself, alive and still bearing the gossip flag. That
+    //      flag is the ONE safe "nobody has started him" latch — BeginSpeech
+    //      strips it before anything else, so it cannot double-fire, and it
+    //      survives a re-entered instance (a Vaelastrasz already roused and
+    //      killed is simply not there);
+    //   3. THE MUSTER. DcRunState::musterPhase is the raid pre-boss gate the
+    //      boss-engage rung runs for every raid boss — stage the raid at the
+    //      standoff, top everyone to full, run one ForceRebuff round — and
+    //      Ready is its verdict. This event asks for nothing of its own: it
+    //      reads the same gate every other raid boss opens behind.
+    //
+    // Reading the muster rather than re-deriving readiness is what makes the
+    // ordering work. The gate is FALSE while the muster runs, so the engage rung
+    // (which owns the muster and sits one rung below this one) keeps the tick and
+    // keeps advancing it; the tick it reaches Ready this flips true, this rung
+    // takes over, and the gossip lands with the raid staged, topped and buffed.
+    // The muster is timeout-bounded from every phase, so it always reaches Ready
+    // and this can never deadlock a run on a bot that will not eat.
+    //
+    // NOT gated on the encounter or on combat: there is neither. He is friendly
+    // and passive until the intro ends, so this is an ordinary between-pulls
+    // event that happens to open a boss.
+    bool VaelastraszRouseDue(Player* bot, AiObjectContext* context)
+    {
+        if (!bot || bot->GetMapId() != MAP_ID)
+            return false;
+        if (bot->GetExactDist2d(VAEL_X, VAEL_Y) > VAEL_DUE_RANGE)
+            return false;
+
+        VaelastraszState const vael = DcBlackwingLair::Vaelastrasz(bot);
+        if (!vael.present || !vael.offersRouse)
+            return false;
+
+        if (!context)
+            return false;
+        DcRunState const& run = DcRun::Of(context);
+        return run.musterBossEntry == NPC_VAELASTRASZ &&
+               run.musterPhase ==
+                   static_cast<uint8>(DcRaidMusterDecision::Phase::Ready);
     }
 }
 
@@ -189,6 +254,26 @@ bool DcBlackwingLair::HoldsThePossession(Player* bot)
     return held && held->IsAlive() && held->GetEntry() == NPC_RAZORGORE;
 }
 
+// See the header for what the two flags mean and why they are read together.
+// One grid scan; the map compare in front of it is the answer on every other
+// map, so the two callers that ask this every tick (the event's activation
+// predicate and the boss-engage hold) pay nothing off 469.
+DcBlackwingLair::VaelastraszState DcBlackwingLair::Vaelastrasz(Player* bot)
+{
+    VaelastraszState st;
+    if (!bot || bot->GetMapId() != MAP_ID)
+        return st;
+
+    Creature* vael = bot->FindNearestCreature(NPC_VAELASTRASZ, VAEL_SCAN, /*alive*/ true);
+    if (!vael)
+        return st;
+
+    st.present = true;
+    st.offersRouse = vael->IsGossip();
+    st.dormant = !bot->IsHostileTo(vael);
+    return st;
+}
+
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
 {
     // ONE Custom step, for the same reason the Violet Hold's wave driver is one:
@@ -226,6 +311,52 @@ void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
             .StepsOwnMovement()
             .Custom(HOOK_RAZORGORE_ORB)
                 .Timeout(RAZORGORE_TIMEOUT_MS)
+            .Build());
+
+    // ROUSE VAELASTRASZ — one gossip, and nothing else.
+    //
+    // Everything that makes the Razorgore row exotic is absent here. The party is
+    // out of combat (he is friendly and passive until the intro ends), no
+    // encounter is in progress (the instance only flips IN_PROGRESS when he
+    // engages), and the tank does the talking, so this is the plainest shape the
+    // framework has: a Conditional event with a single Gossip step, driven by the
+    // ordinary out-of-combat rung.
+    //
+    // ONE STEP, not "gossip then wait out the intro". The RP hold belongs to the
+    // boss-engage rung (DcBlackwingLair::VaelastraszState::dormant), not to a
+    // Wait step here, for a mechanical reason: a conditional event's activation
+    // predicate is re-evaluated every tick, and the gossip flag this one keys on
+    // is stripped by BeginSpeech — so the tick after the click the event stops
+    // being due and could not have driven a Wait anyway. Letting it complete on
+    // the click also means the panel's folded note flips to (done) the moment the
+    // raid has actually done its part.
+    //
+    // NOT Repeatable, and it does not need to be. The step list completes on the
+    // click, which latches it; and were the click ever to be missed, the predicate
+    // simply reads true again next tick (the gossip flag is still there), because
+    // an unfinished step list is not latched.
+    //
+    // REQUIRED. If the gossip genuinely cannot be driven — the menu never
+    // populates, the tank cannot reach him — the run is stuck whatever we do
+    // here, and a stall names the problem for the human instead of leaving forty
+    // bots standing silently in front of a sleeping dragon.
+    //
+    // PANEL: sorted AFTER Razorgore rather than folded into Vaelastrasz's own
+    // row, which is what it visually wants, because PanelBeforeBoss is not purely
+    // cosmetic despite its name. DcTargeting::HasPendingSummonEvent keys the
+    // "boss the party must SUMMON" hold off panelGatesBossEntry, and setting it
+    // here would stand the whole pull pipeline down within 80yd of Vaelastrasz
+    // (IsHoldingForSummonEvent) — which on this map is the entire Razorgore ->
+    // Vaelastrasz corridor: four Death Talon packs and seven Blackwing Warlocks
+    // spawn 25-51yd from him. Vaelastrasz is a WORLD SPAWN that is already
+    // standing there; nothing here summons anything, so the hold would be pure
+    // regression. PanelAfterBoss carries no such second meaning, and Razorgore is
+    // the anchor immediately before him, so the row lands in the same place.
+    out.push_back(
+        EventBuilder(MAP_ID, EVENT_VAELASTRASZ_ROUSE, "Vaelastrasz — start the encounter")
+            .Conditional(&VaelastraszRouseDue)
+            .PanelAfterBoss(NPC_RAZORGORE)
+            .Gossip(NPC_VAELASTRASZ, VAEL_GOSSIP_OPTION)
             .Build());
 }
 

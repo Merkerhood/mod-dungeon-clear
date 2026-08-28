@@ -5,6 +5,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -645,4 +646,131 @@ TEST(DungeonEventBlackwingLairTest, TheElectionBreaksTiesOnTheWalkToTheOrb)
     DcRazorgore::RunnerCandidate b = Bot(12); b.isRanged = true; b.distToOrb = 9.0f;
     EXPECT_EQ(DcRazorgore::SelectRunner({a, b}), 1);
     EXPECT_EQ(DcRazorgore::SelectRunner({b, a}), 0);
+}
+
+
+// --- Vaelastrasz the Corrupt: the raid starts the encounter ----------------
+
+TEST(DungeonEventBlackwingLairTest, VaelastraszRouseIsAPlainOutOfCombatGossip)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(MAP_ID, EVENT_VAELASTRASZ_ROUSE);
+    ASSERT_NE(ev, nullptr) << "Blackwing Lair (469) event 2 (rouse Vaelastrasz) is missing";
+
+    EXPECT_EQ(ev->activation, EventActivation::Conditional);
+    EXPECT_TRUE(static_cast<bool>(ev->condition))
+        << "the muster gate predicate must be bound, or the raid never talks to him";
+
+    // NONE of the Razorgore flags. This event runs BETWEEN fights, on the
+    // ordinary out-of-combat rung: Vaelastrasz is friendly and passive until his
+    // intro ends, and the instance only flips his encounter to IN_PROGRESS when
+    // he engages — so there is no combat to drive in, no stand-down to be exempt
+    // from, and no movement of our own to protect.
+    EXPECT_FALSE(ev->drivesInCombat)
+        << "nothing is fighting: taking combat ticks here would only starve the "
+           "combat engine during the ~63s intro";
+    EXPECT_FALSE(ev->encounterActive)
+        << "EncounterActive is the stand-down exemption; there is no live encounter "
+           "before the gossip, and after it the fight belongs to the raid strategy";
+    EXPECT_FALSE(ev->stepsOwnMovement)
+        << "the Gossip step's own walk-in is a plain MoveTo the at-objective hold "
+           "does not cancel";
+
+    // REQUIRED: an undrivable gossip is a dead run, and the human should be told
+    // rather than left watching forty bots stand in front of a sleeping dragon.
+    EXPECT_TRUE(ev->required);
+    EXPECT_FALSE(ev->repeatable)
+        << "an unfinished step list is never latched, so a missed click simply "
+           "re-fires next tick — repeatability would buy nothing and could re-run "
+           "a gossip that has already been answered";
+
+    // ONE step, and it is the arrival step that keeps this off the Stratholme #5
+    // "latched complete from across the map" lint.
+    ASSERT_EQ(ev->steps.size(), 1u);
+    EXPECT_EQ(ev->steps[0].kind, EventStepKind::Gossip);
+    EXPECT_EQ(ev->steps[0].creatureEntry, NPC_VAELASTRASZ);
+    EXPECT_EQ(ev->steps[0].gossipOption, VAEL_GOSSIP_OPTION);
+    EXPECT_FALSE(ev->steps[0].skipIfMissing)
+        << "a missing Vaelastrasz is not an optional NPC to walk past — it is the "
+           "boss, and the predicate already refuses to fire without him";
+}
+
+TEST(DungeonEventBlackwingLairTest, VaelastraszRouseNeverClaimsToSummonHim)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(MAP_ID, EVENT_VAELASTRASZ_ROUSE);
+    ASSERT_NE(ev, nullptr);
+
+    // panelGatesBossEntry reads like panel cosmetics and is not:
+    // DcTargeting::HasPendingSummonEvent keys the "the party must SUMMON this
+    // boss" hold off it, and IsHoldingForSummonEvent then stands the whole pull
+    // pipeline down within 80yd of the anchor. On map 469 that radius is the
+    // entire Razorgore -> Vaelastrasz corridor (four Death Talon packs and seven
+    // Blackwing Warlocks spawn 25-51yd from him), and Vaelastrasz is a world
+    // spawn nobody summons — so the hold would be pure regression. The sort hint
+    // must be the cosmetic-only one.
+    EXPECT_EQ(ev->panelGatesBossEntry, 0u)
+        << "setting this would suppress the dynamic pull for the whole approach";
+    EXPECT_EQ(ev->panelSortAfterBossEntry, NPC_RAZORGORE)
+        << "the rouse belongs between Razorgore and Vaelastrasz in the panel";
+}
+
+TEST(DungeonEventBlackwingLairTest, VaelastraszAuthoredIdsMatchTheWorldData)
+{
+    // creature_template 13020 / creature guid 84512, read off the live world DB.
+    EXPECT_EQ(NPC_VAELASTRASZ, 13020u);
+    EXPECT_FLOAT_EQ(VAEL_X, -7483.79f);
+    EXPECT_FLOAT_EQ(VAEL_Y, -1015.99f);
+    EXPECT_FLOAT_EQ(VAEL_Z, 408.652f);
+
+    // The gossip chain is 21333 -> 21334 -> 21332, every level offering exactly
+    // one option at OptionID 0, and boss_vaelastrasz answers the 21334 one.
+    // SelectGossip drills submenus by selecting option 0 repeatedly, so a single
+    // authored 0 walks the whole chain.
+    EXPECT_EQ(VAEL_GOSSIP_OPTION, 0);
+
+    // The due range has to cover the boss standoff the approach parks the tank
+    // at (the Gossip step walks the last yards in itself) without reaching back
+    // into Razorgore's chamber, which is ~114yd away.
+    EXPECT_GT(VAEL_DUE_RANGE, 40.0f);
+    EXPECT_LT(VAEL_DUE_RANGE, 114.0f);
+    // ...and the grid scan must comfortably outreach the due range, or the
+    // predicate could be due at a distance the scan cannot resolve him from.
+    EXPECT_GT(VAEL_SCAN, VAEL_DUE_RANGE);
+
+    // Per-map event ids: Razorgore's orb is 1, the rouse is 2.
+    EXPECT_EQ(EVENT_RAZORGORE_ORB, 1u);
+    EXPECT_EQ(EVENT_VAELASTRASZ_ROUSE, 2u);
+    EXPECT_NE(EVENT_VAELASTRASZ_ROUSE, EVENT_RAZORGORE_ORB);
+}
+
+TEST(DungeonEventBlackwingLairTest, VaelastraszStaysWhereHeIsInTheRoster)
+{
+    // The rouse deliberately adds NO anchor. Vaelastrasz carries a real
+    // kill-credit row, so BossSpawnIndex derives him and the ordinary pipeline
+    // already walks the raid to him, stands it off and MUSTERS it — and the
+    // muster is exactly what the rouse waits on. A separate objective anchor
+    // would have gained the walk and LOST the muster (the raid pre-boss gate
+    // arms at Boss anchors only), which is the one thing this feature is for.
+    std::vector<DungeonBossInfo> base;
+    uint32 const entries[] = {12435, 13020, 12017, 11983, 14601, 11981, 14020, 11583};
+    for (uint32 i = 0; i < 8; ++i)
+    {
+        DungeonBossInfo b;
+        b.entry = entries[i];
+        b.encounterIndex = i;
+        b.mapId = MAP_ID;
+        base.push_back(b);
+    }
+
+    auto const out = BossRosterRegistry::Apply(MAP_ID, DcDiffKey::Raid(0), base);
+    // Grethok plus the eight statics — the rouse adds nothing.
+    ASSERT_EQ(out.size(), 9u);
+
+    auto const vael = std::find_if(out.begin(), out.end(), [](DungeonBossInfo const& b)
+                                   { return b.entry == NPC_VAELASTRASZ; });
+    ASSERT_NE(vael, out.end());
+    EXPECT_EQ(vael->kind, DungeonAnchorKind::Boss)
+        << "he must stay a BOSS anchor: that is what arms the raid muster";
+    EXPECT_EQ(vael->eventId, 0u)
+        << "the rouse is Conditional, not anchored to him";
+    EXPECT_EQ(BossOrderKey(*vael), 2u) << "Grethok 0, Razorgore 1, Vaelastrasz 2";
 }

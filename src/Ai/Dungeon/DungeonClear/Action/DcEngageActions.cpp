@@ -1117,6 +1117,33 @@ bool DungeonClearEngageBossAction::Execute(Event event)
         }
     }
 
+    // VAELASTRASZ THE CORRUPT is opened by a GOSSIP, not by a pull, and until he
+    // has answered it there is nothing here for this rung to do but hold.
+    //
+    // Falling through would be actively destructive, not merely useless.
+    // EngageDirect's non-hostile branch force-engages a neutral boss
+    // (creature->EngageWithTarget) precisely so a yellow-name that will not aggro
+    // on proximity still gets pulled — and firing that on a dormant Vaelastrasz
+    // would flip the encounter to IN_PROGRESS with the boss still faction 35, his
+    // scripted intro never played and the raid unable to damage him: a wedged
+    // encounter with no way out but a reset.
+    //
+    // So hold, and hold through BOTH halves of the opening. `dormant` stays true
+    // from the muster right through the ~63s of RP, and it drops on the same tick
+    // he turns and attacks — which is the tick the fight starts and the tick this
+    // rung's ordinary engage becomes correct again. Placed AFTER the raid muster
+    // (which must still run — it is what the rouse waits on) and after
+    // Wait-at-Boss (a human holding at the boss should hold before the gossip,
+    // not after it). See DcBlackwingLair::Vaelastrasz.
+    if (next->entry == DcBlackwingLair::NPC_VAELASTRASZ &&
+        DcBlackwingLair::Vaelastrasz(bot).dormant)
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+        ClearStall(context);
+        SetPhase(context, "waiting on the raid to rouse " + next->name);
+        return true;
+    }
+
     // PULL-BACK boss (BossPullbackRegistry): NEVER walk in. The whole registry
     // exists because the boss's own ground is lethal — EngageDirect would bee-line
     // the tank at Ghaz'an's live position, i.e. out into the Underbog lake, which

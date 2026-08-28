@@ -523,6 +523,83 @@ namespace DcBlackwingLair
     //
     // Free everywhere else — the map compare rejects before the field is read.
     bool HoldsThePossession(Player* bot);
+
+    // --- Vaelastrasz the Corrupt (boss 2) ---------------------------------
+    //
+    // The only boss on this map — and one of the very few anywhere — that a raid
+    // does not PULL. He lies at 30% health, faction 35 (friendly to everyone),
+    // REACT_PASSIVE and stand-state DEAD, offering a gossip; the raid starts the
+    // encounter by TALKING to him, sits through ~63s of scripted RP, and is then
+    // attacked by him. Nothing DC does to a hostile boss applies: he cannot be
+    // tagged, he cannot be pulled, and walking the tank into melee does nothing.
+    constexpr uint32 NPC_VAELASTRASZ = 13020;
+
+    // His spawn (creature guid 84512, map 469). Also the roster anchor the
+    // auto-derived boss list already carries — repeated here only as the
+    // proximity gate for the rouse predicate, so a leader corpse-running the
+    // entrance never reads as "at Vaelastrasz".
+    constexpr float VAEL_X = -7483.79f;
+    constexpr float VAEL_Y = -1015.99f;
+    constexpr float VAEL_Z = 408.652f;
+
+    // THE GOSSIP CHAIN, and why the option index is 0 at every level.
+    //
+    // creature_template.gossip_menu_id is 21333; its lone option opens 21334,
+    // whose lone option is the one boss_vaelastrasz::sGossipSelect answers
+    // (`sender == 21334 && action == 0`, where the core hands sGossipSelect the
+    // MENU id as `sender` and the selected list index as `action` — see
+    // WorldSession::HandleGossipSelectOptionOpcode). 21334's option in turn opens
+    // 21332, which is pure flavour and closes.
+    //
+    // DungeonEventExecutor::SelectGossip walks exactly that shape by itself: it
+    // selects the authored option on the first menu and then keeps selecting
+    // option 0 of whatever submenu opens until the menu closes. So ONE Gossip
+    // step with option 0 fires BeginSpeech, and there is nothing here to author
+    // per level.
+    constexpr int32 VAEL_GOSSIP_OPTION = 0;
+
+    // How far out the leader may be and still have the rouse read due. Generous
+    // enough to cover the boss standoff the approach parks the tank at (the
+    // gossip step walks the last yards in itself), tight enough that the event is
+    // never due from the Razorgore chamber ~140yd back.
+    constexpr float VAEL_DUE_RANGE = 80.0f;
+
+    // Grid-scan radius for Vaelastrasz himself. He never moves before the pull,
+    // so this only has to cover his own room from the standoff.
+    constexpr float VAEL_SCAN = 100.0f;
+
+    // The event row. Ids are per-map, so this is 2 alongside Razorgore's 1.
+    constexpr uint32 EVENT_VAELASTRASZ_ROUSE = 2;
+
+    // WHERE VAELASTRASZ IS IN HIS OWN OPENING, as the two facts both halves of
+    // the rouse ask about. ONE scan for both, for the same reason OrbGuards does
+    // it: the engage rung and the event predicate must never disagree about
+    // whether he has turned, and a second sweep of the room every tick buys
+    // nothing.
+    //
+    //   * `offersRouse` — he still bears UNIT_NPC_FLAG_GOSSIP, i.e. nobody has
+    //     talked to him yet. BeginSpeech strips the flag as its first act, so
+    //     this is a one-way latch and the ONLY safe gate on "may I gossip him":
+    //     a second select after the RP has started reaches no script and simply
+    //     drops.
+    //   * `dormant` — he is not hostile to us. The faction flip
+    //     (FACTION_FRIENDLY -> FACTION_DRAGONFLIGHT_BLACK) is the last act of the
+    //     intro, on the same tick he AttackStarts the bot that talked to him, so
+    //     this is exactly "the fight has not begun" and it covers BOTH the wait
+    //     before the gossip and the ~63s of RP after it. Deliberately a pure
+    //     faction reaction rather than IsValidAttackTarget: he is also
+    //     NOT_SELECTABLE for most of the intro and briefly selectable again at
+    //     the end of it, and a gate that flickers would hand the engage rung a
+    //     tick in the middle of the speech.
+    //
+    // Free everywhere else — the map compare rejects before anything is scanned.
+    struct VaelastraszState
+    {
+        bool present{false};     // alive, in his room
+        bool offersRouse{false}; // ...and still waiting to be talked to
+        bool dormant{false};     // ...and has not turned on the raid yet
+    };
+    VaelastraszState Vaelastrasz(Player* bot);
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);
