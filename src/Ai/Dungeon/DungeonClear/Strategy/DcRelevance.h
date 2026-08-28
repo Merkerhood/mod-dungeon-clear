@@ -136,6 +136,18 @@ namespace DcRel
     // encounter, and it YIELDS (returns false) the moment the runner is parked, so
     // it owns the tick only while actually travelling or clicking.
     inline constexpr float RazorgoreOrb           = 62.0f; // runner: take the orb
+    // The same encounter's other half: every member EXCEPT the runner, walking to
+    // the camp at the foot of the orb platform. COMBAT engine only.
+    //
+    // 61.5 sits between the raid strategy's nodes (ACTION_RAID 60 / +1 61) and the
+    // runner's rung (62), and both boundaries are deliberate. ABOVE 61 because
+    // `bwl razorgore avoid aoe` exists to walk bots out of the boss's frontal cone
+    // and would happily walk them out of the camp; BELOW the runner because if one
+    // bot is somehow both, going for the orb is the more urgent job. The rung goes
+    // INERT inside the leash rather than yielding, so a bot in position never
+    // contends with its own rotation at all — the fine positioning inside the camp
+    // stays the strategy's.
+    inline constexpr float RazorgoreCamp          = 61.5f; // raid: hold the orb camp
 
     // Registered in BOTH engines (like BreakStuckCombat / HazardVacate). The combat
     // registration is the working one; the NON-combat registration is a liveness net.

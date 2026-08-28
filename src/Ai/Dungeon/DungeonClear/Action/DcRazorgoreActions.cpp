@@ -24,9 +24,10 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 
-// The orb runner's rung — see DungeonClearRazorgoreOrbAction in
-// DungeonClearActions.h for what it is and why it is the runner's own tick
-// rather than something the leader does to it.
+// Blackwing Lair's two member-side rungs: the orb runner's walk to the ledge,
+// and the rest of the raid's camp at the foot of it. See their classes in
+// DungeonClearActions.h for what each is and why it acts on its own tick rather
+// than being driven by the leader.
 
 namespace
 {
@@ -49,35 +50,51 @@ namespace
     // requested point and where the route actually ends.
     constexpr float ORB_REPATH_EPSILON = 3.0f;
 
-    // Walk the runner to the orb. Returns true when it issued movement (own the
-    // tick), false when it is already there or a glide is riding correctly.
-    bool OrbTravel(Player* bot, PlayerbotAI* botAI)
+    // Walk a bot to a fixed point in the chamber. Returns true when it issued (or
+    // is riding) movement, so the caller can own the tick.
+    //
+    // Shared by both rungs because both have the same problem: a destination tens
+    // of yards away across a room the raid is fighting in. The re-issue floor and
+    // the glide-in-flight test are keyed to the DESTINATION, not just to the bot,
+    // so the camp rung cannot swallow the orb rung's issuance (or the reverse) for
+    // a bot that changes jobs mid-fight — which the elected runner does every
+    // time the rotation moves on.
+    bool RazorgoreTravel(Player* bot, PlayerbotAI* botAI, float tx, float ty, float tz)
     {
-        float const dist = bot->GetExactDist(ORB_X, ORB_Y, ORB_Z);
+        float const dist = bot->GetExactDist(tx, ty, tz);
 
         MotionMaster* mm = bot->GetMotionMaster();
         float dx, dy, dz;
         if (mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE &&
             mm->GetDestination(dx, dy, dz))
         {
-            float const ex = dx - ORB_X, ey = dy - ORB_Y, ez = dz - ORB_Z;
+            float const ex = dx - tx, ey = dy - ty, ez = dz - tz;
             if (std::sqrt(ex * ex + ey * ey + ez * ez) <= ORB_REPATH_EPSILON)
                 return true;  // already gliding here — let it ride, keep the tick
             DcMovement::ResolveEscortConflict(bot);
         }
 
         {
-            thread_local std::unordered_map<uint32, uint32> lastIssueMs;
-            uint32& prev = lastIssueMs[bot->GetGUID().GetCounter()];
-            if (prev && GetMSTimeDiffToNow(prev) < ORB_REISSUE_MS)
-                return true;
-            prev = getMSTime();
+            struct LastIssue { float x, y, z; uint32 ms; };
+            thread_local std::unordered_map<uint32, LastIssue> lastIssue;
+            uint32 const guid = bot->GetGUID().GetCounter();
+            auto it = lastIssue.find(guid);
+            if (it != lastIssue.end())
+            {
+                LastIssue const& li = it->second;
+                float const ddx = li.x - tx, ddy = li.y - ty, ddz = li.z - tz;
+                bool const sameDest =
+                    std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz) <= ORB_REPATH_EPSILON;
+                if (sameDest && GetMSTimeDiffToNow(li.ms) < ORB_REISSUE_MS)
+                    return true;
+            }
+            lastIssue[guid] = { tx, ty, tz, getMSTime() };
         }
 
         if (dist > ORB_LONG_HAUL)
         {
             ChunkedPathfinder::Result const path =
-                LongRangePathfinder::Build(bot, ORB_X, ORB_Y, ORB_Z);
+                LongRangePathfinder::Build(bot, tx, ty, tz);
             if (path.reachable && !path.segments.empty())
             {
                 // Element 0 is the live position — the escort path[0]=start
@@ -101,18 +118,19 @@ namespace
                 if (DcMovement::SplinePath(botAI, points))
                 {
                     LOG_DEBUG("playerbots.dungeonclear",
-                              "DungeonClear: Razorgore — {} gliding to the orb ({:.1f}yd, {} pts)",
-                              bot->GetName(), dist, uint32(points.size()));
+                              "DungeonClear: Razorgore — {} gliding to ({:.0f}, {:.0f}) "
+                              "({:.1f}yd, {} pts)",
+                              bot->GetName(), tx, ty, dist, uint32(points.size()));
                     return true;
                 }
             }
             LOG_DEBUG("playerbots.dungeonclear",
-                      "DungeonClear: Razorgore — {} has no long route to the orb ({:.1f}yd, {}) "
-                      "-> falling back to a point move",
-                      bot->GetName(), dist, path.failureReason);
+                      "DungeonClear: Razorgore — {} has no long route to ({:.0f}, {:.0f}) "
+                      "({:.1f}yd, {}) -> falling back to a point move",
+                      bot->GetName(), tx, ty, dist, path.failureReason);
         }
 
-        bot->GetMotionMaster()->MovePoint(0, ORB_X, ORB_Y, ORB_Z, FORCED_MOVEMENT_NONE,
+        bot->GetMotionMaster()->MovePoint(0, tx, ty, tz, FORCED_MOVEMENT_NONE,
                                           /*speed*/ 0.0f, /*orientation*/ 0.0f,
                                           /*generatePath*/ true, /*forceDestination*/ false);
         return true;
@@ -145,12 +163,12 @@ bool DungeonClearRazorgoreOrbAction::Execute(Event /*event*/)
     if (razor && razor->IsCharmed() && razor->GetCharmerGUID() == bot->GetGUID())
     {
         if (bot->GetExactDist2d(ORB_X, ORB_Y) > ORB_STATION_RADIUS * 2.0f)
-            return OrbTravel(bot, botAI);
+            return RazorgoreTravel(bot, botAI, ORB_X, ORB_Y, ORB_Z);
         return false;
     }
 
     if (bot->GetExactDist2d(ORB_X, ORB_Y) > ORB_STATION_RADIUS)
-        return OrbTravel(bot, botAI);
+        return RazorgoreTravel(bot, botAI, ORB_X, ORB_Y, ORB_Z);
 
     // Standing at the orb. Settle before clicking — a bot still coasting out of a
     // spline is moving, and the script's mind-control cast is an ordinary cast
@@ -175,4 +193,39 @@ bool DungeonClearRazorgoreOrbAction::Execute(Event /*event*/)
              "DungeonClear: Razorgore — {} clicks the Orb of Domination", bot->GetName());
     orb->Use(bot);
     return true;
+}
+
+bool DungeonClearRazorgoreCampTrigger::IsActive()
+{
+    // Map first: registered on every bot's combat engine, and everywhere outside
+    // Blackwing Lair it must cost one integer compare.
+    if (!bot || bot->isDead() || bot->GetMapId() != DcBlackwingLair::MAP_ID)
+        return false;
+
+    // Only while the egg run is actually being driven. The leader stamps that on
+    // every tick it has work, so this arms with phase 1 and releases within a
+    // tick or two of the last egg — no latch, nothing to reset after a wipe.
+    if (!DcLeaderSignal::IsLeaderRazorgoreDriving(bot))
+        return false;
+
+    // The orb runner is exempt: its whole job is to be somewhere else.
+    if (DcLeaderSignal::IsLeaderRazorgoreRunner(bot))
+        return false;
+
+    // In position — the rung goes inert entirely rather than owning the tick and
+    // returning false, so the combat engine is never even in contention for it.
+    float const leash = DcLeaderSignal::IsDungeonClearLeader(bot)
+                            ? DcBlackwingLair::CAMP_LEASH_TANK
+                            : DcBlackwingLair::CAMP_LEASH;
+    return bot->GetExactDist(DcBlackwingLair::CAMP_X, DcBlackwingLair::CAMP_Y,
+                             DcBlackwingLair::CAMP_Z) > leash;
+}
+
+bool DungeonClearRazorgoreCampAction::Execute(Event /*event*/)
+{
+    if (!bot || !botAI)
+        return false;
+
+    return RazorgoreTravel(bot, botAI, DcBlackwingLair::CAMP_X, DcBlackwingLair::CAMP_Y,
+                           DcBlackwingLair::CAMP_Z);
 }

@@ -202,6 +202,11 @@ struct DcRunState
     // lockout. Both are auras on live units and are read straight off them, which
     // stays correct through a wipe, a despawn and the phase flip — a mirrored timer
     // would not.
+    // getMSTime() of the last tick the Razorgore driver had work to do. Read
+    // cross-bot (DcLeaderSignal::IsLeaderRazorgoreDriving) by the raid's camp
+    // rung, so the camp arms and releases with the encounter and needs no latch
+    // of its own: the driver simply stops stamping when phase 1 ends.
+    uint32     razorDrivingMs = 0;
     ObjectGuid razorRunnerGuid;            // elected orb runner (empty = none yet)
     uint32     razorRunnerPickedMs = 0;    // getMSTime() of the last election (throttle)
     ObjectGuid razorEggGuid;               // the egg currently being driven at
@@ -220,6 +225,7 @@ struct DcRunState
     // back holding a stale runner or skip list is the one way this state can lie.
     void ClearRazorgore()
     {
+        razorDrivingMs = 0;
         razorRunnerGuid.Clear();
         razorRunnerPickedMs = 0;
         razorEggGuid.Clear();

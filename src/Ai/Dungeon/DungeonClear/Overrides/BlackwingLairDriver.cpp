@@ -363,6 +363,13 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
         }
     }
 
+    // Publish "the egg run is live" for the raid's camp rung, which reads it
+    // cross-bot. Stamped for every step that still has work — never for Done, so
+    // the camp releases the instant phase 1 ends rather than needing its own
+    // completion test.
+    if (step != DcRazorgore::Step::Done)
+        st.razorDrivingMs = getMSTime();
+
     switch (step)
     {
         case DcRazorgore::Step::Done:

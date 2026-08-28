@@ -604,4 +604,22 @@ public:
     bool IsActive() override;
 };
 
+// The other half of the same encounter: every member EXCEPT the orb runner, while
+// the egg run is being driven and that member is off the camp. Fires only while
+// the leader is stamping "the driver has work" (DcLeaderSignal::
+// IsLeaderRazorgoreDriving), so it arms with phase 1 and releases with it.
+//
+// Free everywhere else — the map compare rejects first. See
+// DungeonClearRazorgoreCampAction for what the camp is for and why it is on the
+// floor rather than the ledge.
+class DungeonClearRazorgoreCampTrigger : public Trigger
+{
+public:
+    DungeonClearRazorgoreCampTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear razorgore camp", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 #endif

@@ -1428,3 +1428,26 @@ bool DcLeaderSignal::IsLeaderRazorgoreRunner(Player* bot)
 
     return st.razorRunnerGuid == bot->GetGUID();
 }
+
+bool DcLeaderSignal::IsLeaderRazorgoreDriving(Player* bot)
+{
+    if (!bot)
+        return false;
+
+    Player* leader = FindLeaderTank(bot);
+    if (!leader)
+        return false;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    DcRunState const& st = DcRun::Of(leaderAI->GetAiObjectContext());
+    if (!st.enabled || st.paused || !st.razorDrivingMs)
+        return false;
+
+    // Two AI ticks of slack. The driver stamps on every tick it has work, so a
+    // stamp older than this means phase 1 ended (or the leader stopped driving),
+    // and the camp must release rather than pin the raid in place.
+    return GetMSTimeDiffToNow(st.razorDrivingMs) <= 3000;
+}

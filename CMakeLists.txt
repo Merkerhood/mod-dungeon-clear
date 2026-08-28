@@ -651,8 +651,9 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (the pure kernel behind both: Decide() over a snapshot View, and the runner
 #    election. No world state, so t/TestBlackwingLair.cpp exercises the whole FSM
 #    — completion, the possessed branch, the runner rotation — without a map.)
-# Action/DcRazorgoreOrbAction.cpp
-#   (the runner's half: DungeonClearRazorgoreOrb{Trigger,Action}, both engines,
+# Action/DcRazorgoreActions.cpp
+#   (the two member-side rungs. The RUNNER's half — DungeonClearRazorgoreOrb
+#    {Trigger,Action}, both engines,
 #    DcRel::RazorgoreOrb 62 — it has to outrank mod-playerbots' `bwl` nodes at
 #    ACTION_RAID 60/61, one of which walks bots out of Razorgore's frontal cone
 #    and would walk the runner off the orb ledge every tick. The 78yd walk to the
@@ -660,7 +661,25 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    engine PathGenerator truncates a >74-poly path silently. Yields the tick the
 #    moment the runner is parked, so a possessing DPS still runs its rotation.
 #    Exempted by name from the stand-down zero in DungeonClearCombatMultiplier,
-#    alongside the combat event driver.)
+#    alongside the combat event driver.
+#    The RAID's half — DungeonClearRazorgoreCamp{Trigger,Action}, DcRel::
+#    RazorgoreCamp 61.5, COMBAT ENGINE ONLY — is the fix from the first live run,
+#    where the orb and the egg run worked and the raid simply fought wherever the
+#    pull had left it: the runner is ROOTED on the ledge for 90s at a time and
+#    cannot defend itself, so every add that picked it arrived unopposed. This
+#    walks everyone but the runner to a camp at the FOOT of the platform —
+#    (-7608.30, -1036.00, 408.87), column-probed to one walkable surface, 12.3yd
+#    from the orb (inside every healer's range of the runner) and 46-81yd from all
+#    eight add-spawn positions — so the tank, the heals and the AoE sit on the
+#    path everything takes to reach the ledge. Combat-only because out of combat
+#    the walk-in and the pre-boss muster own the raid's position and a 61.5 rung
+#    in the non-combat engine would hijack the approach. It goes INERT inside the
+#    leash (12yd, 20 for the tank, which has to be able to step onto an add that
+#    reached the healers) rather than owning the tick and yielding, so a bot in
+#    position never contends with its own rotation and the fine positioning stays
+#    the raid strategy's. Armed by DcRunState::razorDrivingMs, which the driver
+#    stamps on every step but completion — so the camp arms with phase 1 and
+#    releases with it, with no latch to reset after a wipe.)
 # Data/DcTargetExclusionRegistry.{h,cpp}
 #   (the third and last member of the "do not attack that" family, and the only
 #    one that reaches the STOCK combat engine's target selection. FightInPlace /

@@ -202,7 +202,7 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
         // orchestration keeps running inside the fight. Its own trigger is gated on
         // being the one elected member of map 469, so this exemption is inert
         // everywhere else. See DungeonClearRazorgoreOrbTrigger.
-        if (name == "dungeon clear razorgore orb")
+        if (name == "dungeon clear razorgore orb" || name == "dungeon clear razorgore camp")
             return 1.0f;
         return isDcAction ? 0.0f : 1.0f;  // DC inert; "drop target" back to stock
     }

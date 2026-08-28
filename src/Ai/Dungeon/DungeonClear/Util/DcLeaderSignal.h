@@ -321,6 +321,16 @@ public:
     // the leader's run is off or paused.
     static bool IsLeaderRazorgoreRunner(Player* bot);
 
+    // BLACKWING LAIR, Razorgore: is the leader's egg run live right now?
+    //
+    // True while the driver has had work to do within the last few seconds — it
+    // stamps DcRunState::razorDrivingMs on every step but completion, so this
+    // arms when phase 1 starts and releases within a tick or two of the last egg
+    // breaking, with no latch to reset on a wipe. The raid's camp rung is its
+    // only consumer: while it holds, everyone but the orb runner fights at the
+    // authored camp instead of wherever the pull left them.
+    static bool IsLeaderRazorgoreDriving(Player* bot);
+
 };
 
 #endif  // _DC_LEADER_SIGNAL_H

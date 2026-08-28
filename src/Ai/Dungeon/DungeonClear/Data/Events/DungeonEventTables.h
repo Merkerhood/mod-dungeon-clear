@@ -322,6 +322,40 @@ namespace DcBlackwingLair
     // from being walked off before the click).
     constexpr float ORB_STATION_RADIUS = 4.0f;
 
+    // WHERE THE REST OF THE RAID FIGHTS — at the foot of the orb platform, one
+    // step toward the middle of the room, on the floor at z 408.87.
+    //
+    // The runner is rooted on the ledge for ninety seconds at a time and cannot
+    // defend itself; if the raid fights wherever the pull left it, the adds that
+    // pick the runner arrive unopposed and the mind control ends with its death.
+    // So the raid camps between the room and the ledge.
+    //
+    // NOT on the ledge itself, which is the shape the first live run had and the
+    // reason this exists: the platform is small (the navmesh column 5yd out from
+    // the orb already has no 413 surface over it), so a raid standing on it has
+    // nowhere to spread and nothing between it and the floor the adds cross.
+    //
+    // Column-probed against the live 469 mmtile: exactly one walkable surface
+    // under it, z 408.87. It is 11.4yd (2D) / 12.3yd (3D) from the orb — inside
+    // every healer's range of the runner, a couple of steps for a melee bot that
+    // has to peel something off the ledge — and 46-81yd from all eight of the
+    // instance's add-spawn positions, so every wave has to cross the room to
+    // reach it rather than arriving on top of it.
+    constexpr float CAMP_X = -7608.30f;
+    constexpr float CAMP_Y = -1036.00f;
+    constexpr float CAMP_Z = 408.87f;
+
+    // How far off the camp a member may drift before it is walked back. Loose
+    // enough that a bot in melee with something that reached the camp is not
+    // dragged off it mid-swing; tight enough that the raid stays one body.
+    constexpr float CAMP_LEASH = 12.0f;
+
+    // The leader's leash. It is the main tank: it has to be able to step out and
+    // take an add that came in on the healers without being yanked back off it
+    // every tick. Still bounded — "do not chase across the room" is the whole
+    // point of a camp in a fight whose adds all come to you.
+    constexpr float CAMP_LEASH_TANK = 20.0f;
+
     // Covers the whole chamber from anywhere in it: the eggs span ~80yd of x by
     // ~93yd of y across two tiers, and the orb sits 78yd from the boss's spawn.
     constexpr float ROOM_SCAN = 150.0f;

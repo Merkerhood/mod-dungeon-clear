@@ -784,6 +784,39 @@ public:
     bool Execute(Event event) override;
 };
 
+// BLACKWING LAIR ONLY, everyone except the orb runner, COMBAT engine only. Walks
+// the raid to the camp at the foot of the orb platform and holds it there for the
+// egg run.
+//
+// The reason it exists, from the first live run: the orb and the egg run worked,
+// and the raid fought wherever the pull had left it. The runner is ROOTED on the
+// ledge for ninety seconds at a time and cannot defend itself, so every add that
+// picked it arrived unopposed. Camping the raid between the room and the ledge
+// puts the tank, the heals and the AoE on the path everything takes to reach it.
+//
+// The camp is on the FLOOR beside the platform, not on it (see CAMP_X/Y/Z for the
+// column probe and the distances): a raid on a small ledge has nowhere to spread
+// and nothing between it and the floor the adds cross.
+//
+// COMBAT ENGINE ONLY, deliberately. Out of combat the walk-in and the pre-boss
+// muster own the raid's position, and a rung at this relevance in the non-combat
+// engine would hijack the approach to the boss. The camp's job starts when the
+// fight does.
+//
+// Goes INERT once inside the leash rather than owning the tick and yielding, so
+// the combat engine never contends with it for a bot that is already in position.
+// The leader gets a longer leash — it is the main tank and has to be able to step
+// onto an add that reached the healers. Driven by DungeonClearRazorgoreCampTrigger.
+class DungeonClearRazorgoreCampAction : public DcMovementAction
+{
+public:
+    DungeonClearRazorgoreCampAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear razorgore camp")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

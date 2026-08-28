@@ -5,6 +5,10 @@
 
 #include "gtest/gtest.h"
 
+#include <cmath>
+
+#include "Position.h"
+
 #include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
@@ -111,6 +115,46 @@ TEST(DungeonEventBlackwingLairTest, AuthoredIdsMatchTheWorldData)
     EXPECT_GT(DcRazorgore::kCastBand, DcRazorgore::kRepathEpsilon);
 }
 
+TEST(DungeonEventBlackwingLairTest, TheRaidCampsOffTheLedgeAndInHealRangeOfTheRunner)
+{
+    // The fix from the first live run: the orb and the egg run worked, and the
+    // raid fought wherever the pull had left it, so every add that picked the
+    // rooted runner arrived unopposed.
+    //
+    // The camp is on the FLOOR (column-probed: one walkable surface at 408.87),
+    // not on the orb platform at 413 — a raid on a small ledge has nowhere to
+    // spread and nothing between it and the floor the adds cross.
+    EXPECT_LT(CAMP_Z, ORB_Z - 3.0f) << "the camp must be BELOW the orb platform";
+
+    // Close enough that every healer covers the runner (heal range is 40yd) and a
+    // melee bot can peel something off the ledge in a couple of steps...
+    float const dx = CAMP_X - ORB_X, dy = CAMP_Y - ORB_Y, dz = CAMP_Z - ORB_Z;
+    float const toOrb = std::sqrt(dx * dx + dy * dy + dz * dz);
+    EXPECT_LT(toOrb, 20.0f) << "camp is too far from the orb to protect the runner";
+    // ...and far enough out that the raid is not standing on the platform itself.
+    EXPECT_GT(toOrb, 8.0f) << "camp has crept back onto the ledge";
+
+    // Every add-spawn position the instance uses is a room's width away, so a wave
+    // has to cross to the raid rather than landing on top of it.
+    Position const spawns[] = {
+        {-7661.207520f, -1043.268188f, 407.199554f}, {-7644.145020f, -1065.628052f, 407.204956f},
+        {-7624.260742f, -1095.196899f, 407.205017f}, {-7608.501953f, -1116.077271f, 407.199921f},
+        {-7531.841797f, -1063.765381f, 407.199615f}, {-7547.319336f, -1040.971924f, 407.205078f},
+        {-7568.547852f, -1013.112488f, 407.204926f}, {-7584.175781f, -989.669128f, 407.199585f},
+    };
+    for (Position const& p : spawns)
+        EXPECT_GT(p.GetExactDist(CAMP_X, CAMP_Y, CAMP_Z), 40.0f)
+            << "add spawn (" << p.GetPositionX() << ", " << p.GetPositionY()
+            << ") is close enough to the camp that its wave arrives on top of the raid";
+
+    // The tank needs more room than the raid — it has to be able to step onto an
+    // add that reached the healers — but it is still a leash, not a free rein.
+    EXPECT_GT(CAMP_LEASH_TANK, CAMP_LEASH);
+    EXPECT_LT(CAMP_LEASH_TANK, toOrb + 20.0f)
+        << "the tank's leash must not let it wander further from the runner than "
+           "the fight's own geometry";
+}
+
 TEST(DungeonEventBlackwingLairTest, OrbRungOutranksTheRaidStrategy)
 {
     // mod-playerbots' `bwl` strategy nodes sit at ACTION_RAID (60) and
@@ -121,6 +165,13 @@ TEST(DungeonEventBlackwingLairTest, OrbRungOutranksTheRaidStrategy)
     // Below the phantom-combat hatch, which must always win when it legitimately
     // fires.
     EXPECT_LT(DcRel::RazorgoreOrb, DcRel::BreakStuckCombat);
+
+    // The raid's camp sits between the two: above the strategy nodes it has to
+    // beat (`bwl razorgore avoid aoe` would walk bots straight out of the camp),
+    // below the runner, because a bot that is somehow both has the more urgent job
+    // at the orb.
+    EXPECT_GT(DcRel::RazorgoreCamp, 61.0f);
+    EXPECT_LT(DcRel::RazorgoreCamp, DcRel::RazorgoreOrb);
 }
 
 // --- the kernel: what the driver does this tick ---------------------------

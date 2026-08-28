@@ -498,6 +498,15 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
         "dungeon clear razorgore orb",
         { NextAction("dungeon clear razorgore orb", DcRel::RazorgoreOrb) }));
 
+    // The raid's half of Razorgore's egg run: everyone but the orb runner holds the
+    // camp at the foot of the ledge so the rooted runner is not left to the adds.
+    // COMBAT ONLY — out of combat the walk-in and the pre-boss muster own the
+    // raid's position, and a 61.5 rung in the non-combat engine would hijack the
+    // approach. See DungeonClearRazorgoreCampTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear razorgore camp",
+        { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));
+
     // Conditional-event driver, COMBAT side. Fires only for an event that opted in
     // with DrivesInCombat() — a continuous WAVE encounter where the party is in
     // combat from the first pull to the last, so the non-combat copy (relevance 31)
