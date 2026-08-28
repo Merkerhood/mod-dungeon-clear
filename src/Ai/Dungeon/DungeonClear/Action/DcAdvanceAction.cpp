@@ -42,6 +42,7 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
@@ -1675,6 +1676,26 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // the pull is dragging out of. See DcActionShared::PullOwnsTheTank.
     if (PullOwnsTheTank(bot, context, "advance"))
         return false;
+
+    // ENCOUNTER-HOLD guard. Blackwing Lair, phase 1: the moment Grethok's anchor
+    // clears, the next boss is Razorgore — and Razorgore is being walked egg to
+    // egg by our own runner. Everything below treats a live boss as a thing to
+    // close on (DoPursue re-paths at his current position; TryEngageHold parks at
+    // the engage range), which turns the raid into a conga line behind the boss
+    // it is forbidden to touch, forty yards from the ledge the runner is rooted
+    // on. HOLD instead and let the camp rung (61.5, both engines) own where the
+    // raid stands for the rest of phase 1. Self-releasing within ~3s of the last
+    // egg — see DcBlackwingLair::EggRunHoldsTheRaid.
+    if (DcBlackwingLair::EggRunHoldsTheRaid(bot))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] advance stood down: the Razorgore egg run holds the raid "
+                  "— the camp owns our position", bot->GetName());
+        DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        ClearStall(context);
+        SetPhase(context, "");
+        return true;
+    }
 
     // Breadcrumb trail + camp upkeep (seed when unset, trail it forward while
     // scouting). Body lives in DcPullPlanner::MaintainScoutCamp so every rung that

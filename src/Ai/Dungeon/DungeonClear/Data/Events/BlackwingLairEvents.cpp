@@ -5,6 +5,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 
 #include "Creature.h"
 #include "GameObject.h"
@@ -150,6 +151,16 @@ DcBlackwingLair::OrbGuardState DcBlackwingLair::OrbGuards(Player* bot)
         }
     }
     return st;
+}
+
+// See the header for what this answers and why the approach family has to ask
+// it. One map compare on every other map; on 469 it is the camp rung's own gate,
+// read through the leader (a follower asking gets the leader's answer, not its
+// own default-constructed run state).
+bool DcBlackwingLair::EggRunHoldsTheRaid(Player* bot)
+{
+    return bot && bot->GetMapId() == MAP_ID &&
+           DcLeaderSignal::IsLeaderRazorgoreDriving(bot);
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)

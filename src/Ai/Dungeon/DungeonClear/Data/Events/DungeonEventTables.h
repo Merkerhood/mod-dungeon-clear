@@ -466,6 +466,38 @@ namespace DcBlackwingLair
         bool engaged{false};  // ...and somebody has it in combat
     };
     OrbGuardState OrbGuards(Player* bot);
+
+    // IS THE EGG RUN HOLDING THE RAID WHERE IT STANDS?
+    //
+    // True on map 469 for every member (leader included) from the tick the pull
+    // on Grethok lands until a tick or two after the last egg breaks — the same
+    // window the camp rung arms on, asked by the rungs that would otherwise WALK
+    // the raid somewhere else.
+    //
+    // It exists because of what the ordinary pipeline does the moment Grethok's
+    // anchor clears: the next boss becomes Razorgore, and Razorgore — possessed,
+    // being driven egg to egg by our own runner — is a MOVING anchor. The advance
+    // then does exactly what it does for any wandering boss: it re-paths at his
+    // live position every few seconds and holds at the engage range, and the
+    // followers, who follow the tank, come with it. Measured on the first live
+    // run of the egg phase (23:14:41 and 23:15:47, 45yd and 42yd splines issued
+    // at the possessed boss, interleaved with "within engage range of Razorgore
+    // the Untamed (25yd/27yd/11yd/23yd/17yd) -> holding for at-boss"): the raid
+    // toured the chamber behind the boss at a fixed standoff instead of holding
+    // the camp at the foot of the ledge, which is the one thing phase 1 asks of
+    // it — the runner is rooted on that ledge for ninety seconds at a time.
+    //
+    // So during phase 1 nothing in the approach family may drive: not the route,
+    // not the boss standoff, not the muster, not the engage. The raid's position
+    // for the whole egg run belongs to the camp rung
+    // (DungeonClearRazorgoreCampTrigger), which holds inside the leash and walks
+    // a drifted bot back to its near edge.
+    //
+    // Bounded by construction, so it can never wedge a run: the stamp behind it
+    // goes stale within ~3s of the driver stopping, by every exit the encounter
+    // has — the last egg, a wipe, the event's own 10-minute timeout (it is
+    // Optional and skips), `dc pause`, a dead leader.
+    bool EggRunHoldsTheRaid(Player* bot);
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);

@@ -26,6 +26,7 @@
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
@@ -137,6 +138,14 @@ bool DungeonClearIdleTrigger::IsActive()
     if (!map || !map->IsDungeon())
         return false;
 
+    // Blackwing Lair's egg run holds the raid where it stands: the next boss is
+    // the POSSESSED Razorgore, walking egg to egg, and a route to him is a lap of
+    // the chamber with the whole raid trailing the tank. The action carries the
+    // same guard (a trigger cannot un-queue a basket); this is the half that
+    // keeps the rung from firing at all. See DcBlackwingLair::EggRunHoldsTheRaid.
+    if (DcBlackwingLair::EggRunHoldsTheRaid(bot))
+        return false;
+
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
         return false;
@@ -225,6 +234,18 @@ bool DungeonClearAtBossTrigger::IsActive()
     // Travel objectives are not combat targets — the at-objective trigger owns
     // arrival. Stand down so engage-boss never fires on a non-creature anchor.
     if (next->kind != DungeonAnchorKind::Boss)
+        return false;
+
+    // Blackwing Lair, phase 1: the anchor behind us (Grethok) has cleared and
+    // the next boss is a POSSESSED Razorgore our own runner is walking egg to
+    // egg. Everything this rung leads to is wrong for that boss: the raid
+    // muster it hosts would sit the raid down to eat and rebuff mid-egg-run
+    // (live: "raid muster: (rest timed out) rebuff round for Razorgore the
+    // Untamed", 23:15:32), and the engage behind it would pull the one boss in
+    // the game whose death here casts 20038 on all forty of them. Stand down for
+    // the whole egg run; the camp rung holds the raid meanwhile, and this reopens
+    // within ~3s of the last egg. See DcBlackwingLair::EggRunHoldsTheRaid.
+    if (DcBlackwingLair::EggRunHoldsTheRaid(bot))
         return false;
 
     // Mid-maneuver the pull owns the tank — same window, same bound, same reason as
@@ -539,6 +560,13 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
 
     // Wait between pulls for loot, party catch-up, and rest.
     if (!IsBetweenPullsReady(bot, context))
+        return false;
+
+    // Razorgore's egg run: the corridor this rung scans is the route to a boss
+    // the raid must never walk to, so every pack it finds is a reason to leave
+    // the camp. The adds come to the raid on their own — that is what the camp
+    // is for. See DcBlackwingLair::EggRunHoldsTheRaid.
+    if (DcBlackwingLair::EggRunHoldsTheRaid(bot))
         return false;
 
     // Scripted-stage muster: the pull trigger is deliberately standing down while
@@ -1108,6 +1136,25 @@ bool DungeonClearPullTrigger::IsActive()
     // camp gates — consults the same value, so whichever runs first updates it.
     // No-op for Off/On, where DcPullAction owns the bool.
     bool const pullModeCurrent = AI_VALUE(bool, DcKey::PullModeCurrent);
+
+    // Razorgore's egg run stands this rung down too, and it matters most here: a
+    // maneuver walks the tank OUT to a pack and drags it back, which during the
+    // egg run means leaving the runner's ledge unguarded for the whole round
+    // trip. Read AFTER the governor above so the pull verdict still gets its
+    // per-tick refresh — a rung that stands down BEFORE it can leave a stale code
+    // latched, which is the Shattered Halls failure the comment above describes.
+    //
+    // Only an IDLE FSM is stood down. Cutting the rung mid-maneuver would latch a
+    // live drag in a phase with nothing left to advance it; a maneuver already in
+    // flight finishes and comes home, and nothing new starts until phase 1 is
+    // over. See DcBlackwingLair::EggRunHoldsTheRaid.
+    {
+        DcPullContext const& pullNow = AI_VALUE(DcPullContext&, DcKey::PullContext);
+        if (pullNow.phase == DcPullPhase::Idle && pullNow.scriptedStage < 0 &&
+            DcBlackwingLair::EggRunHoldsTheRaid(bot))
+            return false;
+    }
+
     // decision == 3 is the patrol-wait HOLD: pull mode is off-but-held, so the
     // behavioural bool reads false, but the pull action must still run to halt the
     // tank at commit range while it waits the patrol out. Keep the trigger live in

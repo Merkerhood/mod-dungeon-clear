@@ -137,7 +137,10 @@ namespace DcRel
     // it owns the tick only while actually travelling or clicking.
     inline constexpr float RazorgoreOrb           = 62.0f; // runner: take the orb
     // The same encounter's other half: every member EXCEPT the runner, walking to
-    // the camp at the foot of the orb platform. COMBAT engine only.
+    // the camp at the foot of the orb platform. BOTH engines — the egg run has
+    // out-of-combat ticks (the wave dies, the possessed boss attacks nobody), and
+    // on those the non-combat driving ladder used to walk the tank at the boss
+    // and the raid after it.
     //
     // 61.5 sits between the raid strategy's nodes (ACTION_RAID 60 / +1 61) and the
     // runner's rung (62), and both boundaries are deliberate. ABOVE 61 because

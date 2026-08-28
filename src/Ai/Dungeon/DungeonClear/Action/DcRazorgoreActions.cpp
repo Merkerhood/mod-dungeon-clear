@@ -302,8 +302,8 @@ bool DungeonClearRazorgoreOrbAction::Execute(Event /*event*/)
 
 bool DungeonClearRazorgoreCampTrigger::IsActive()
 {
-    // Map first: registered on every bot's combat engine, and everywhere outside
-    // Blackwing Lair it must cost one integer compare.
+    // Map first: registered on every bot's engines, both of them, and everywhere
+    // outside Blackwing Lair it must cost one integer compare.
     if (!bot || bot->isDead() || bot->GetMapId() != DcBlackwingLair::MAP_ID)
         return false;
 

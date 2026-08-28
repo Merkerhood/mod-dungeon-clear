@@ -312,6 +312,25 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear razorgore orb",
         { NextAction("dungeon clear razorgore orb", DcRel::RazorgoreOrb) }));
 
+    // The raid's half of the same encounter, NON-combat side. It used to be
+    // combat-only, on the reasoning that out of combat the walk-in and the raid
+    // muster own the raid's position — true before the pull, and the trigger is
+    // inert then (it arms on the leader's pull stamp). What it missed is that the
+    // egg run has plenty of out-of-combat ticks — the adds die, the possessed
+    // boss is not attacking anybody, and combat drops — and on those ticks the
+    // NON-combat driving ladder had the raid: the advance walked the tank at the
+    // possessed boss (45yd and 42yd splines, live) and the followers followed it.
+    // The camp has to own both engines or it only owns half the fight.
+    //
+    // 61.5 is above the whole non-combat ladder including the rez rung (31.5),
+    // which is intended and cheap: the raid fights at the camp, so its corpses
+    // are inside the leash and the rezzer never sees this rung. A corpse the
+    // other side of the chamber is one the raid must not walk to mid-egg-run
+    // anyway. See DungeonClearRazorgoreCampTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear razorgore camp",
+        { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));
+
     // Rest-target override: top up to the run's chosen HP/mana before pulling.
     // Relevance 26.5 (DcRel::NeedsRest) — above advance (15) and follow-tank (25)
     // so a bot below target sits and rests instead of walking, and tie-broken just
@@ -500,9 +519,11 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
 
     // The raid's half of Razorgore's egg run: everyone but the orb runner holds the
     // camp at the foot of the ledge so the rooted runner is not left to the adds.
-    // COMBAT ONLY — out of combat the walk-in and the pre-boss muster own the
-    // raid's position, and a 61.5 rung in the non-combat engine would hijack the
-    // approach. See DungeonClearRazorgoreCampTrigger.
+    // Registered in BOTH engines (see the non-combat copy for why the combat-only
+    // shape left the raid touring the room behind the possessed boss); nothing is
+    // hijacked before the pull, because the trigger arms on the leader's pull
+    // stamp and is inert for the whole walk-in and muster.
+    // See DungeonClearRazorgoreCampTrigger.
     triggers.push_back(new TriggerNode(
         "dungeon clear razorgore camp",
         { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));

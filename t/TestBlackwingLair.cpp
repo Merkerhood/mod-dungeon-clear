@@ -497,6 +497,38 @@ TEST(DungeonEventBlackwingLairTest, TheCampRungSitsBetweenTheRaidStrategyAndTheR
     EXPECT_LT(DcRel::RazorgoreCamp, DcRel::RazorgoreOrb);
 }
 
+TEST(DungeonEventBlackwingLairTest, TheCampOutranksTheApproachLadderNotJustTheRaidStrategy)
+{
+    // The camp is registered in BOTH engines now, and the reason is the ladder it
+    // has to beat in the NON-combat one. The egg run has plenty of out-of-combat
+    // ticks — the wave dies, the possessed boss is attacking nobody — and on
+    // those the driving ladder had the raid: the next boss is Razorgore, our own
+    // runner is walking him egg to egg, and the advance chased that moving anchor
+    // and parked at the engage range with the followers in tow (live, 23:14:41
+    // and 23:15:47: 45yd and 42yd splines issued at the possessed boss, between
+    // "within engage range of Razorgore the Untamed ... -> holding for at-boss").
+    //
+    // Those rungs stand down for the whole egg run (DcBlackwingLair::
+    // EggRunHoldsTheRaid), and the camp outranks every one of them anyway, so a
+    // stand-down that ever misses a tick still cannot outvote the camp.
+    EXPECT_GT(DcRel::RazorgoreCamp, DcRel::Advance);
+    EXPECT_GT(DcRel::RazorgoreCamp, DcRel::AtBoss);
+    EXPECT_GT(DcRel::RazorgoreCamp, DcRel::Pull);
+    EXPECT_GT(DcRel::RazorgoreCamp, DcRel::BlockingTrash);
+    EXPECT_GT(DcRel::RazorgoreCamp, DcRel::FollowTank);
+
+    // Including the rez rung, which is the one genuine cost of putting it this
+    // high in the non-combat engine: a corpse outside the leash is not walked to
+    // until phase 1 ends. The raid fights AT the camp, so its corpses are inside
+    // it; a corpse across the chamber is one nobody may cross the room for while
+    // the runner is rooted on the ledge.
+    EXPECT_GT(DcRel::RazorgoreCamp, DcRel::RezParty);
+
+    // ...and it still yields to the runner, which is the older statement of the
+    // same rule: the orb is the more urgent job.
+    EXPECT_LT(DcRel::RazorgoreCamp, DcRel::RazorgoreOrb);
+}
+
 TEST(DungeonEventBlackwingLairTest, ACastingRunnerIsNotDisqualified)
 {
     // A DPS bot is casting most ticks. When "not mid-cast" was one of the

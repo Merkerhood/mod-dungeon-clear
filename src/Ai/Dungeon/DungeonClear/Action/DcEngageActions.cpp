@@ -47,6 +47,7 @@
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
@@ -1041,6 +1042,13 @@ bool DungeonClearEngageBossAction::Execute(Event event)
     // DungeonClearAtBossTrigger already stands down for the maneuver; this is the
     // action-side half it cannot enforce. See DcActionShared::PullOwnsTheTank.
     if (PullOwnsTheTank(bot, context, "engage boss"))
+        return false;
+
+    // Encounter-hold guard, the action-side half of the at-boss trigger's — same
+    // already-queued-basket race, and here the basket's job is to PULL. During
+    // Blackwing Lair's egg run that boss is the possessed Razorgore, and pulling
+    // him is a forty-man wipe. See DcBlackwingLair::EggRunHoldsTheRaid.
+    if (DcBlackwingLair::EggRunHoldsTheRaid(bot))
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
