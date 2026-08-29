@@ -11,7 +11,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "CombatManager.h"
 #include "Creature.h"
+#include "Group.h"
 #include "InstanceScript.h"
 #include "Log.h"
 #include "MotionMaster.h"
@@ -155,7 +157,7 @@ namespace
     constexpr float VH_DELIVERED_CAMP   = 20.0f;
 
     // Band for the two positions the driver PARKS on rather than fights at: the
-    // live portal (rule 5) and the staging point (rule 6). Much tighter than the
+    // live portal (rule 6) and the staging point (rule 7). Much tighter than the
     // two above because there is no fight in progress at either — the whole value
     // of standing on a portal is being inside the 2yd bubble its adds are summoned
     // into, and a 20yd "delivered" would leave the party watching the spawn from
@@ -163,6 +165,24 @@ namespace
     // wide bands exist to prevent, because rule 4 (below) outranks both of these
     // rungs the instant anything hostile is within reach.
     constexpr float VH_DELIVERED_PARK = 10.0f;
+
+    // How close the driver walks the tank when it is OUT OF COMBAT and has already
+    // decided to fight something.
+    //
+    // The delivery bands above hand the last stretch to the stock combat engine's
+    // MoveChase, and that is right while the tank is fighting. It is wrong when it
+    // is not: an unaggroed tank is on the NON-combat engine, where there is no
+    // MoveChase to hand anything to, and this driver's own hold claims the tick.
+    // "Delivered" at 25yd would then leave it standing at range swinging at
+    // nothing — the standing-still twin of the walking-home bug the hold exists to
+    // fix. So out of combat the driver closes to melee itself.
+    //
+    // The arrival band is deliberately WIDER than the re-issue leash it travels
+    // with: equal numbers would leave a ring in which the travel call declines to
+    // re-issue ("already there") while the arrival test still reads "too far", and
+    // the tank would hold the tick standing in it.
+    constexpr float VH_ENGAGE_CLOSE       = 4.0f;
+    constexpr float VH_ENGAGE_CLOSE_LEASH = 2.0f;
 
     // --- the wave rules ----------------------------------------------------
 
@@ -423,7 +443,7 @@ namespace
         VhTravelTo(bot, CAMP_X, CAMP_Y, CAMP_Z, VH_CAMP_LEASH);
     }
 
-    // The between-waves station: the middle of the arena floor. Used by rule 6 and
+    // The between-waves station: the middle of the arena floor. Used by rule 7 and
     // by the three defend objectives' garrison, which are the same act seen from
     // either side of the wave predicate — the 3s gap between one portal dying and
     // the next opening flips that predicate false, and if the two rungs disagreed
@@ -760,8 +780,101 @@ namespace
         return best;
     }
 
+    // Is this unit one of the encounter's live wave mobs?
+    //
+    // The membership half of VhNearestWaveHostile, split out because the assist
+    // rung and the retarget guard both need to ask it of a unit they are already
+    // holding rather than of everything inside a radius.
+    bool VhIsWaveHostile(Unit* u)
+    {
+        Creature* const c = u ? u->ToCreature() : nullptr;
+        if (!c || !c->IsAlive() || c->GetEntry() == NPC_CYANIGOSA)
+            return false;
+        for (uint32 const entry : VioletHoldWaveEntries())
+            if (c->GetEntry() == entry)
+                return true;
+        return false;
+    }
+
+    // The nearest wave hostile that SOMEBODY ELSE in the party is fighting.
+    //
+    // Every other probe in this file is measured from the TANK, and that is the
+    // hole the assist rung closes. A portal summons its adds within 2yd of itself
+    // and they pick their own first target, so the ordinary case is a mob that
+    // walks straight past the tank and onto the healer — and until the tank is
+    // itself in combat there is no rung that names that fight. It is not enough
+    // that rule 4 covers the tank's own 30yd band either: the fight drifts, the
+    // band empties, and the driver goes home while four bots are still swinging.
+    //
+    // The PvE COMBAT REFS are the authoritative "who has this member in combat"
+    // list — the same set DcCombatFlag::ScanCombatHolders and the teardown
+    // snapshot walk — and they are what a threatless door-channeller shows up in.
+    // The attacker set and the member's own victim are folded in as supersets for
+    // anything mid-swing that has not registered a reference yet. Deduping is
+    // unnecessary: the pick is a nearest-of, so seeing the same mob twice costs a
+    // comparison and changes nothing.
+    //
+    // Bounded to ARENA_SCAN and to the bot's own map, because a group member can
+    // be standing in another instance copy entirely.
+    Creature* VhPartyAssistTarget(Player* bot)
+    {
+        Group* const group = bot->GetGroup();
+        if (!group)
+            return nullptr;
+
+        Unit* const victim = bot->GetVictim();
+        Creature* best = nullptr;
+        float bestDist = 0.0f;
+        bool sticky = false;
+        auto const consider = [bot, victim, &best, &bestDist, &sticky](Unit* u)
+        {
+            if (sticky || !VhIsWaveHostile(u))
+                return;
+            Creature* const c = u->ToCreature();
+            if (!c->IsInWorld() || c->GetMap() != bot->GetMap())
+                return;
+            float const d = bot->GetExactDist2d(c);
+            if (d > ARENA_SCAN)
+                return;
+            // STICK TO WHAT WE ARE ALREADY FIGHTING, for the same reason
+            // VhLiveBoss does: this rung re-runs every tick and the tank is
+            // MOVING, so a plain nearest-of would re-point it at a different mob
+            // of the batch every few yards and it would build threat on none of
+            // them. Any candidate is a fine answer; the one already being hit is
+            // the stable one.
+            if (c == victim)
+            {
+                best = c;
+                bestDist = d;
+                sticky = true;
+                return;
+            }
+            if (!best || d < bestDist)
+            {
+                best = c;
+                bestDist = d;
+            }
+        };
+
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* const member = ref->GetSource();
+            if (!member || member == bot || !member->IsInWorld() || !member->IsAlive())
+                continue;
+            if (member->GetMap() != bot->GetMap())
+                continue;
+            for (auto const& kv : member->GetCombatManager().GetPvECombatRefs())
+                if (CombatReference* const cref = kv.second)
+                    consider(cref->GetOther(member));
+            for (Unit* const attacker : member->getAttackers())
+                consider(attacker);
+            consider(member->GetVictim());
+        }
+        return best;
+    }
+
     // The nearest live wave hostile within `radius` of the bot, or nullptr.
-    // Used by rule 4 and rule 6 to hand the tank a victim, so a door-channelling
+    // Used by rule 4 and rule 7 to hand the tank a victim, so a door-channelling
     // add the stock targeting will not pick still gets fought.
     Creature* VhNearestWaveHostile(Player* bot, float radius)
     {
@@ -904,7 +1017,7 @@ namespace
     // room; the wave event's rung (31, or DcRel::EventDueCombat 61 under fire)
     // preempts this garrison (30) exactly while anything is up, so this hook only
     // ever runs in the quiet. The quiet is short and frequent — a portal's death
-    // opens the next one 3 SECONDS later — which is why this and rule 6 of the
+    // opens the next one 3 SECONDS later — which is why this and rule 7 of the
     // wave driver must name the SAME waiting position: two different answers would
     // pull the party a few yards back and forth at every wave transition, on every
     // one of the eighteen waves.
@@ -1027,17 +1140,23 @@ namespace
     //      with that portal's last trash batch still swinging at its back — and
     //      those adds, no longer engaged, walk to the seal. It also covers the
     //      elite waves end to end: the portal goes invisible the moment it summons
-    //      them, so rule 5 stands down and this rung fights them wherever they are
+    //      them, so rule 6 stands down and this rung fights them wherever they are
     //      between the rim and the door.
     //
-    //   5. A LIVE, UNSPENT PORTAL -> travel to it and STAND ON IT. The station.
+    //   5. A GROUPMATE IS FIGHTING A WAVE HOSTILE -> travel to that mob and take
+    //      it. Every other probe here is measured from the tank, and the ordinary
+    //      case is a wave that aggroes somebody else: the mob is summoned at the
+    //      portal, picks the healer, and the tank — with an empty 30yd band and no
+    //      combat flag — used to read the room as quiet and go home.
+    //
+    //   6. A LIVE, UNSPENT PORTAL -> travel to it and STAND ON IT. The station.
     //      Adds are summoned within 2yd of the portal and the keeper spawns inside
     //      melee range, so a party that is already there meets the entire wave at
     //      the spawn point instead of chasing its output to the door. This is the
     //      rung that replaced "wait at the chokepoint": see the file header for
     //      why the tidy-looking chokepoint reading loses the run.
     //
-    //   6. Otherwise -> hold the staging point in the middle of the room, and give
+    //   7. Otherwise -> hold the staging point in the middle of the room, and give
     //      the tank a victim if something is standing next to it that stock
     //      targeting has not picked.
     //
@@ -1053,9 +1172,19 @@ namespace
     // combat movers in the COMBAT engine. Running means "I am steering the tank
     // right now" and claims the tick, which is what lets it take the tank off
     // whatever it is fighting and walk it across the room. Done means "nothing to
-    // steer" and YIELDS, so the stock combat engine can pick a target, swing,
-    // cast and hold threat. Getting that backwards wipes parties. Never Blocked:
+    // steer" and YIELDS. Getting that backwards wipes parties. Never Blocked:
     // the event is Optional + Repeatable so a timeout simply re-fires it fresh.
+    //
+    // AND "DONE" ONLY YIELDS TO THE COMBAT ENGINE WHEN THE BOT IS IN COMBAT.
+    // That was this driver's most expensive assumption. Out of combat the tick
+    // goes down the NON-combat ladder instead, where the rung below EventDue (31)
+    // is the defend objective's garrison (AtObjective 30) — VhDriveDefend, whose
+    // whole body is VhStage. So an unaggroed tank standing next to a fight that
+    // yielded its tick was not handing it to a rotation; it was handing it to a
+    // 40-50yd spline back to the staging point. Every rung that stands its ground
+    // therefore ends in VhHold (Done in combat, Running out of it), never in a
+    // bare Done. Only rule 7 may yield unconditionally, and only because the
+    // garrison it yields to agrees with it about where "wait" is.
     ObjectiveArriveResult VhDriveWave(Player* bot, AiObjectContext* context,
                                       DungeonBossInfo const& /*info*/)
     {
@@ -1089,6 +1218,7 @@ namespace
         Creature* boss = VhLiveBoss(bot);
         Creature* keeper = VhSelectKeeper(bot);
         Creature* portal = VhLivePortal(bot);
+        Creature* assist = VhPartyAssistTarget(bot);
         bool const atKeeper = keeper && bot->GetExactDist2d(keeper) <= VH_KEEPER_COMMIT;
 
         // One line per bot per 3s, carrying every number this hook decides on. A
@@ -1105,11 +1235,13 @@ namespace
                 prev = getMSTime();
                 LOG_DEBUG("playerbots.dungeonclear",
                          "DungeonClear: Violet Hold — {} wave {}/18: draining {}, pulled {}, "
-                         "portal {:.0f}yd, keeper {}, atKeeper {}, boss {}",
+                         "portal {:.0f}yd, keeper {}, atKeeper {}, boss {}, assist {} {:.0f}yd",
                          bot->GetName(), inst->GetData(DATA_WAVE_COUNT), draining, pulled,
                          portal ? bot->GetExactDist2d(portal) : -1.0f,
                          keeper ? keeper->GetName() : "none", atKeeper,
-                         boss ? boss->GetName() : "none");
+                         boss ? boss->GetName() : "none",
+                         assist ? assist->GetName() : "none",
+                         assist ? bot->GetExactDist2d(assist) : -1.0f);
             }
         }
 
@@ -1142,17 +1274,31 @@ namespace
                 VhTravelTo(bot, CAMP_X, CAMP_Y, CAMP_Z, VH_DELIVERED_CAMP);
                 return ObjectiveArriveResult::Running;
             }
-            VhArrive(bot);
             // Inside the band. The drainers were force-pulled above and are running
             // at us; name one explicitly so the tank commits to a mob stock
             // targeting would happily ignore, then hand the tick to combat.
+            Creature* target = nullptr;
             for (Creature* c : drainers)
                 if (c && c->IsAlive())
                 {
+                    target = c;
                     VhEngageTarget(bot, context, c);
                     break;
                 }
-            return ObjectiveArriveResult::Done;
+            // Out of combat, walk in — same reason as rule 4 below. A drainer that
+            // the force-pull did not reach is standing on the landing channelling
+            // at a trigger and will never come to the tank.
+            if (target && !bot->IsInCombat() &&
+                bot->GetExactDist2d(target) > VH_ENGAGE_CLOSE)
+            {
+                VhTravelToCreature(bot, target, VH_ENGAGE_CLOSE_LEASH);
+                return ObjectiveArriveResult::Running;
+            }
+            VhArrive(bot);
+            // VhHold, not a bare Done: the camp is 37yd from the staging point, so
+            // a tank that reaches the door without taking a hit yet would be walked
+            // straight back off it by the garrison. See the return contract above.
+            return VhHold(bot);
         }
 
         // --- 3. kill the portal keeper ------------------------------------
@@ -1175,17 +1321,69 @@ namespace
         // force-pulled at rung 0 and is fighting the party right now; walking away
         // from it does not disengage it, it just puts the party's back to a mob
         // that will break off, resume its waypoint list, and drain the seal. So
-        // stand still, make sure the tank has a victim, and yield the tick to the
-        // combat engine — there is no steering to do while the fight is here.
+        // stand still, make sure the tank has a victim, and hold: in combat that
+        // hands the tick to the rotation, and out of combat it keeps the garrison
+        // from walking the tank off a fight it has not been hit by yet.
         if (Creature* here = VhNearestWaveHostile(bot, VH_ENGAGE_BAND))
         {
-            VhArrive(bot);
-            if (!bot->GetVictim())
+            // Retarget unless we are ALREADY on a live wave mob inside the band.
+            // The old `if (!bot->GetVictim())` reads "has a victim" as "is
+            // fighting the right thing", and a tank holding a stale victim — one
+            // that died, or one it chased out of the band — then never commits to
+            // the mob in its face and never enters combat at all, which is the
+            // state the rung below used to walk it home in.
+            Unit* const victim = bot->GetVictim();
+            if (!victim || !VhIsWaveHostile(victim) ||
+                bot->GetExactDist2d(victim) > VH_ENGAGE_BAND)
                 VhEngageTarget(bot, context, here);
-            return ObjectiveArriveResult::Done;
+
+            // IN COMBAT this is a pure stand-and-fight: MoveChase owns the last
+            // few yards and the rotation needs the tick, so nothing is issued and
+            // the tick goes back. OUT OF COMBAT nothing else will close the gap —
+            // a mob that took aggro from the healer is not walking to the tank and
+            // there is no MoveChase on the non-combat engine — so the driver walks
+            // the tank into melee itself. Without this half the hold below just
+            // freezes it at range instead of sending it home, which is a different
+            // bug wearing the same fix.
+            if (!bot->IsInCombat() && bot->GetExactDist2d(here) > VH_ENGAGE_CLOSE)
+            {
+                VhTravelToCreature(bot, here, VH_ENGAGE_CLOSE_LEASH);
+                return ObjectiveArriveResult::Running;
+            }
+            VhArrive(bot);
+            return VhHold(bot);
         }
 
-        // --- 5. station on the live portal --------------------------------
+        // --- 5. assist a groupmate who is already fighting -----------------
+        //
+        // THE TANK'S JOB, and the rung this driver was missing. A portal's adds
+        // are summoned within 2yd of it and pick their own first target, so the
+        // normal case is a wave that aggroes the healer or a DPS and never touches
+        // the tank. Rules 0 and 4 both measure from the tank, so on those ticks
+        // the driver saw an empty room, fell through to the staging rung, and
+        // issued a 40-50yd spline home while the rest of the party fought the wave
+        // it had just walked to (tp-20260828-205158-2: 142 travels to the staging
+        // point across five runs, the tank 4th or 5th into combat in half its
+        // engagements and absent from whole waves).
+        //
+        // Sits BELOW rule 4 because a mob already on the tank beats one that is
+        // not, and ABOVE the portal station because the fight happening now beats
+        // pre-positioning for the one after it. It cannot fight rule 2 for the
+        // door-channellers: those hold nobody in combat, so they never appear here.
+        if (assist)
+        {
+            if (bot->GetExactDist2d(assist) > VH_DELIVERED_TARGET)
+            {
+                VhTravelToCreature(bot, assist, VH_ARRIVE_LEASH);
+                return ObjectiveArriveResult::Running;
+            }
+            VhArrive(bot);
+            VhForcePull(bot, assist);
+            VhEngageTarget(bot, context, assist);
+            return VhHold(bot);
+        }
+
+        // --- 6. station on the live portal --------------------------------
         //
         // THE DEFAULT POSITION, and the change that made this dungeon play the way
         // it is meant to. The portal's adds are summoned within 2yd of it and its
@@ -1197,7 +1395,7 @@ namespace
         // the party is already on top of the keeper when it appears (rule 3 then
         // takes over with a 3yd approach instead of an 80yd one), and on an elite
         // wave the portal goes invisible at the same instant, VhLivePortal stops
-        // returning it, and rules 4 and 6 fight the elites where they are.
+        // returning it, and rules 4, 5 and 7 fight the elites where they are.
         //
         // Held with a Running out of combat (see VhHold): the defend objectives'
         // garrison sits one rung below and would otherwise walk the party off the
@@ -1213,7 +1411,7 @@ namespace
             return VhHold(bot);
         }
 
-        // --- 6. hold the staging point ------------------------------------
+        // --- 7. hold the staging point ------------------------------------
         //
         // No portal, no keeper, no boss and nothing in reach: the 3s gap between
         // portals, the 35s after a released prisoner dies, and the tail of a wave
