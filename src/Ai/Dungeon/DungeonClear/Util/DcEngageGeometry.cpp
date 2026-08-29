@@ -1440,6 +1440,26 @@ bool DcEngageGeometry::IsLevelReachable(Player* bot, Unit* u)
     return IsEngageReachable(bot, u);
 }
 
+bool DcEngageGeometry::IsPointLevelReachable(Player* bot, float x, float y, float z)
+{
+    if (!bot)
+        return false;
+
+    PathGenerator gen(bot);
+    gen.CalculatePath(x, y, z, /*forceDest*/ false);
+    if (gen.GetPathType() != PATHFIND_NORMAL)
+        return false;
+
+    Movement::PointsArray const& path = gen.GetPath();
+    if (path.empty())
+        return false;
+
+    // See the header: PATHFIND_NORMAL is free for a Player, so the arrival height
+    // is the only thing that separates a real route from a straight line drawn
+    // through a floor.
+    return std::fabs(path.back().z - z) <= DC_Z_LEVEL_TOLERANCE;
+}
+
 bool DcEngageGeometry::IsEngageReachable(Player* bot, Unit* u, bool requireDirect)
 {
     if (!bot || !u)

@@ -75,6 +75,55 @@ namespace DungeonClearMath
         return StandoffCandidates(target, bot, standoffRadius, ringPoints);
     }
 
+    // The heal-reposition FALLBACK point: where to stand when no ring candidate
+    // validated and the honest answer is "walk at them and let pathing round the
+    // corner". A point on the bot->target line, `minGap` short of the target, or
+    // the target itself when already inside that gap.
+    //
+    // ALL THREE COORDINATES INTERPOLATE. The z used to be left at the target's,
+    // which names a point that exists nowhere: the target's floor above the bot's
+    // own x/y. Within one storey that is slop the caller's ground-snap absorbs;
+    // across two it is a destination through a ceiling, which is the Blackwing
+    // Lair clip (tp-20260828-171530-1). Keeping the point ON the line is both the
+    // thing the fallback means and what holds the residual error inside the snap's
+    // correction window on ramps and stairs.
+    //
+    // Deliberately does NOT reject a cross-level target. That is not this
+    // function's call: it returns the honest point on the line, which for a
+    // target a storey up is itself a storey up, and the movement layer's retry
+    // gate (MayRetryExactWaypoint plus the reachability probe behind it) is what
+    // declines to force it.
+    inline Position HealCloseFallbackPoint(Position const& bot, Position const& target,
+                                           float minGap)
+    {
+        float const dx = target.GetPositionX() - bot.GetPositionX();
+        float const dy = target.GetPositionY() - bot.GetPositionY();
+        float const dist2d = std::sqrt(dx * dx + dy * dy);
+        if (!(dist2d > minGap))
+            return target;
+
+        float const frac = (dist2d - minGap) / dist2d;
+        return Position(bot.GetPositionX() + dx * frac,
+                        bot.GetPositionY() + dy * frac,
+                        bot.GetPositionZ() +
+                            (target.GetPositionZ() - bot.GetPositionZ()) * frac,
+                        target.GetOrientation());
+    }
+
+    // May DcMoveTo override a refused move by re-issuing it as an exact waypoint?
+    //
+    // The override exists for one stock bug: SearchForBestPath seeds `min_length`
+    // from its first attempt even when that attempt FAILED, after which no genuine
+    // route can beat the seed and a perfectly good nearby destination is refused
+    // forever. Every case it was written for is a few yards away on the bot's own
+    // floor.
+    //
+    // It must not be spent on a destination the z-search refused because the
+    // destination is on another LEVEL. exact_waypoint routes to DoMovePoint, and a
+    // Player always gets PATHFIND_NORMAL — with no navmesh poly under the point,
+    // PathGenerator hands back a straight line and still calls it normal, so the
+    // bot walks through whatever is between. Same-level is therefore the whole
+    // precondition, and it costs one fabs.
     // A point `distFromAnchor` yards out from `anchor` along the 2D bearing to
     // `toward`, with z carried along the SAME fraction of the way.
     //
@@ -105,6 +154,21 @@ namespace DungeonClearMath
                             (toward.GetPositionZ() - anchor.GetPositionZ()) * frac,
                         anchor.GetOrientation());
     }
+
+    // The CHEAP HALF of DcMoveTo's exact-waypoint retry gate: is the destination
+    // on the bot's own level, so the retry is safe with no probe at all?
+    //
+    // A false answer is not a refusal — it only means "this one needs asking
+    // properly", and DcMoveTo follows it with DcEngageGeometry::IsPointLevel-
+    // Reachable. Gating on the band alone would deny the retry to every ramp,
+    // stair flight and walkway a tier up, which is not the defect: the defect is a
+    // destination with no route, and a Player is handed PATHFIND_NORMAL whether or
+    // not one exists.
+    inline bool MayRetryExactWaypoint(float destZ, float botZ, float zTolerance)
+    {
+        return std::fabs(destZ - botZ) <= zTolerance;
+    }
+
     // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
     // pre-resolved by the caller from game state: true only when this mob is
     // navmesh-reachable from the pull target with a clear line of sight and no

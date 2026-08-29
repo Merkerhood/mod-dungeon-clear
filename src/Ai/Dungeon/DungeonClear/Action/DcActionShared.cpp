@@ -45,6 +45,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproach.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -778,16 +779,72 @@ bool DcMovementAction::DcMoveTo(uint32 mapId, float x, float y, float z, bool id
     // (MovementActions.cpp:215), so one retry defeats the ratchet whatever seeded it.
     // Gated on "refused AND standing still" so healthy movement never reaches here: a
     // refusal mid-walk is the ordinary duplicate/last-move guard and must stay a no-op.
-    // Path generation is still on inside DoMovePoint — this trades stock's z-search for
-    // MotionMaster's own pathing, it does not straight-line the bot through geometry.
-    if (!moved && !bot->isMoving() && !exact_waypoint)
+    //
+    // AND GATED ON THE BOT'S OWN LEVEL, which is the difference between defeating a
+    // stock bug and defeating the geometry. The retry claims path generation is still
+    // on inside DoMovePoint, so this "does not straight-line the bot through geometry".
+    // That holds only where there IS a mesh: a Player always gets PATHFIND_NORMAL, and
+    // with no poly under the destination PathGenerator falls back to a straight line
+    // and still reports normal — so a destination one storey up is WALKED THERE,
+    // through the floor between. Live, that is the whole Blackwing Lair ceiling clip
+    // (tp-20260828-171530-1, 5 of 5 runs): the heal-reposition fallback asked for hall
+    // x/y at the drake hall's z, stock's z-search refused it — correctly — and this
+    // retry overrode the refusal. Healers arrived inside a 14-mob formation 24.8yd
+    // overhead, the tank followed, and the evading remnant held the raid in combat for
+    // the rest of the run.
+    //
+    // Nothing the retry was written for is lost. Every case it exists for is a
+    // legitimate destination on the bot's own floor a few yards away — Xomja refused
+    // 45x at 1.7yd, the Steamvault strand origins — and those clear the same-level
+    // test for one fabs, with no probe at all.
+    //
+    // BUT A Z BAND IS NOT THE PREDICATE, only a cheap sufficient case for it. The
+    // defect is "the destination has no route", and "the destination is more than
+    // DC_Z_LEVEL_TOLERANCE off my own z" is a different claim: a ramp, a stair
+    // flight, a walkway one tier up — Old Hillsbrad's keep ramp, BRD, the Steamvault
+    // walkways this file already cites as stacked geometry — clear five yards at
+    // ordinary range while being perfectly reachable. Gating on the band alone hands
+    // every one of those back to the ratchet the retry exists to defeat, and the
+    // failure is silent: a stationary bot and one WITHHELD line.
+    //
+    // So the band is the FAST PATH and the probe is the answer. Off-level, ask
+    // whether a complete route actually arrives at the height requested — the one
+    // thing PATHFIND_NORMAL cannot tell us, because a Player gets it for free even
+    // where the "route" is a straight line drawn through a floor. That is exactly
+    // the Blackwing Lair ceiling clip (tp-20260828-171530-1, 5 of 5 runs): the
+    // heal-reposition fallback asked for hall x/y at the drake hall's z, stock's
+    // z-search refused it — correctly — and this retry overrode the refusal, putting
+    // healers inside a 14-mob formation 24.8yd overhead. The probe answers no there
+    // and yes on every ramp.
+    //
+    // Cost is one Detour query, and only on the branch that has already refused AND
+    // left the bot standing still — never on a healthy move, and never per candidate.
+    bool const sameLevel = DungeonClearMath::MayRetryExactWaypoint(
+        destZ, bot->GetPositionZ(), DC_Z_LEVEL_TOLERANCE);
+    bool const stalled = !moved && !bot->isMoving() && !exact_waypoint;
+    bool const mayRetry =
+        stalled && (sameLevel || DcEngageGeometry::IsPointLevelReachable(bot, x, y, destZ));
+
+    if (mayRetry)
     {
         moved = MoveTo(mapId, x, y, destZ, idle, react, normal_only, /*exact_waypoint*/ true,
                        priority, lessDelay, backwards);
         if (moved)
             DC_PULL_TRACE("[DC:{}] move refused by the z-search -> exact-waypoint retry "
-                          "RESCUED it (dest {:.1f},{:.1f},{:.1f} at {:.1f}yd)",
-                          bot->GetName(), x, y, destZ, bot->GetExactDist(x, y, destZ));
+                          "RESCUED it (dest {:.1f},{:.1f},{:.1f} at {:.1f}yd, {})",
+                          bot->GetName(), x, y, destZ, bot->GetExactDist(x, y, destZ),
+                          sameLevel ? "same level" : "off-level but routable");
+    }
+    else if (stalled)
+    {
+        // Named, because a caller handing out unroutable destinations is a bug at the
+        // SOURCE and this line is the only place it is visible. The move is correctly
+        // refused either way; what this says is that DC declined to override it.
+        DC_PULL_TRACE("[DC:{}] move refused -> exact-waypoint retry WITHHELD, no route "
+                      "arrives at the dest ({:.1f}yd off this level; dest "
+                      "{:.1f},{:.1f},{:.1f}, bot z {:.1f})",
+                      bot->GetName(), std::fabs(destZ - bot->GetPositionZ()), x, y, destZ,
+                      bot->GetPositionZ());
     }
 
     // A refused move that leaves the bot STANDING STILL is the signature behind every

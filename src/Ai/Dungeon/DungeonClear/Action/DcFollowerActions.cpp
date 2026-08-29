@@ -1066,6 +1066,29 @@ namespace
     // Returns the nearest valid, reachable such hostile, or nullptr → the caller
     // STANDS DOWN (never orbits the leader). Members are gated within 1.5x
     // PartyMaxSpread of the tank so this stays "the tank's fight", not a far skirmish.
+    //
+    // "REACHABLE" was a promise this comment made and the code did not keep: there
+    // was no level test at all. While the party's own pack is alive that costs
+    // nothing, because it is nearer than anything else and wins the rank. The
+    // moment the pack DIES the rank re-resolves over whatever is still flagged in
+    // combat with the group — and if that is a mob on another floor, this returned
+    // it instead of returning nullptr. The caller then closes on it (the no-LOS
+    // branch of AssistCampActionBase drives straight at the mob) and, because a
+    // Player is handed PATHFIND_NORMAL even where no route exists, walks into the
+    // geometry.
+    //
+    // Live on map 469 (tp-20260828-142623-1, 4 of 5 runs, 0/5 killed Broodlord):
+    // the corridor pack died at 14:36:25, this picked a Blackwing Warlock standing
+    // on the drake-hall floor 24.5yd STRAIGHT UP two ticks later, and the raid
+    // crossed from the Broodlord approach hall at z 424.5 into Firemaw's room at
+    // z 449.3 in eleven seconds.
+    //
+    // Note the rank is deliberately left in 2D. Ranking in 3D does NOT separate
+    // these — the overhead Warlock is 29.8yd away against 49.5yd for the corridor
+    // pack on our own floor, so it wins either metric. Only reachability tells
+    // them apart, and this is the one place in the module that was missing it: the
+    // ledge fix (fix/ledge-target-path-distance) wired IsLevelReachable into all
+    // four DcTargeting pickers and none of the followers' own.
     Unit* PickPartyFightTarget(Player* bot, Player* leader)
     {
         Unit* best = nullptr;
@@ -1077,11 +1100,17 @@ namespace
             if (!bot->IsValidAttackTarget(u))
                 return;
             float const d = bot->GetExactDist2d(u);
-            if (!best || d < bestDist)
-            {
-                best = u;
-                bestDist = d;
-            }
+            if (best && d >= bestDist)
+                return;
+            // CHEAPEST LAST: only a candidate that would actually WIN the rank pays
+            // for the probe, and IsLevelReachable short-circuits on
+            // dz <= DC_Z_LEVEL_TOLERANCE before it touches PathGenerator — so a
+            // fight on one floor, which is nearly every fight in nearly every
+            // dungeon, costs one float compare and never probes at all.
+            if (!DcEngageGeometry::IsLevelReachable(bot, u))
+                return;
+            best = u;
+            bestDist = d;
         };
         auto considerFrom = [&](Unit* src)
         {
@@ -1133,10 +1162,16 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
     Unit* target = nullptr;
     if (Unit* cur = context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Get())
     {
+        // Same level gate as the fresh pick below. A target already in the slot —
+        // seeded by an instance strategy's focus value, or held over from before
+        // the party changed floors — must not keep its grip merely by being there;
+        // that is the one route left by which an unreachable mob could still reach
+        // the approach code.
         if (cur->IsAlive() && cur->GetMapId() == bot->GetMapId() &&
             bot->IsValidAttackTarget(cur) &&
             cur->GetExactDist2d(leader) <=
-                DcSettings::GetFloat(bot, "PartyMaxSpread") * 1.5f)
+                DcSettings::GetFloat(bot, "PartyMaxSpread") * 1.5f &&
+            DcEngageGeometry::IsLevelReachable(bot, cur))
             target = cur;
     }
 
@@ -1405,9 +1440,6 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
 
     float const healRange = botAI->GetRange("heal");
     Position const targetPos = target->GetPosition();
-    float const tx = targetPos.GetPositionX();
-    float const ty = targetPos.GetPositionY();
-    float const tz = targetPos.GetPositionZ();
 
     // Stand a little INSIDE heal range so a step of target movement doesn't drop us
     // straight back out. Floor at 5yd so we never try to stack on the target.
@@ -1421,18 +1453,26 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
     // Fallback: no sampled point validated (tight geometry, snap misses). Close
     // straight on the target with pathfinding — rounding corners is what regains
     // LOS — stopping 5yd short, exactly the old regroup behaviour.
+    //
+    // INTERPOLATE ALL THREE COORDINATES. x and y are walked back along the line to
+    // the target; z used to be left at the TARGET's height, which describes a point
+    // that exists nowhere — the target's floor over our own x/y. On one level that
+    // is a yard or two of slop DcMoveTo's ground-snap absorbs. Across two it is the
+    // Blackwing Lair ceiling clip: a healer standing in the hall at z 424 asking to
+    // move to hall x/y at z 449, 224 of 281 repositions in tr-20260828-171538-5
+    // taking this branch. Interpolating z keeps the destination ON the bot->target
+    // line, which is the thing the fallback actually means, and keeps the residual
+    // error inside the snap's 3yd correction window on ramps and stairs. A target
+    // genuinely a storey away now yields a destination a storey away — refused by
+    // the z-search and no longer overridden (see DcMoveTo's retry), so the healer
+    // stands still instead of walking through the floor.
     if (!haveDest)
     {
-        float const dist = bot->GetExactDist2d(target);
-        dx = tx;
-        dy = ty;
-        dz = tz;
-        if (dist > 5.0f)
-        {
-            float const frac = (dist - 5.0f) / dist;
-            dx = bot->GetPositionX() + (tx - bot->GetPositionX()) * frac;
-            dy = bot->GetPositionY() + (ty - bot->GetPositionY()) * frac;
-        }
+        Position const close = DungeonClearMath::HealCloseFallbackPoint(
+            bot->GetPosition(), targetPos, /*minGap*/ 5.0f);
+        dx = close.GetPositionX();
+        dy = close.GetPositionY();
+        dz = close.GetPositionZ();
     }
 
     // Band the priority like the assist/regroup actions: COMBAT only on the final
@@ -1678,6 +1718,10 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
 
         // Everything meleeing this groupmate, plus its own victim — the pack we
         // must peel onto the tank.
+        // Level-gated for the reason PickPartyFightTarget documents at length, and
+        // it matters more here: the LEADER walks at whatever this resolves, so one
+        // overhead pick takes the tank through the ceiling and the followers'
+        // tethers bring the rest of the raid with it.
         for (Unit* a : member->getAttackers())
         {
             if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
@@ -1685,17 +1729,19 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
             if (!bot->IsValidAttackTarget(a))
                 continue;
             float const d = bot->GetExactDist2d(a);
-            if (!target || d < bestTargetDist)
-            {
-                target = a;
-                bestTargetDist = d;
-            }
+            if (target && d >= bestTargetDist)
+                continue;
+            if (!DcEngageGeometry::IsLevelReachable(bot, a))
+                continue;
+            target = a;
+            bestTargetDist = d;
         }
         if (!target)
         {
             Unit* const victim = member->GetVictim();
             if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId() &&
-                bot->IsValidAttackTarget(victim))
+                bot->IsValidAttackTarget(victim) &&
+                DcEngageGeometry::IsLevelReachable(bot, victim))
             {
                 target = victim;
                 bestTargetDist = bot->GetExactDist2d(victim);

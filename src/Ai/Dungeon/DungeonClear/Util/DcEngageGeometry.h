@@ -566,6 +566,21 @@ public:
     // IsReachable.
     static bool IsLevelReachable(Player* bot, Unit* u);
 
+    // The same question about a bare POINT rather than a creature, with no
+    // same-level fast path and no detour bound: is there a complete
+    // PATHFIND_NORMAL route from the bot that actually ENDS on the destination's
+    // level?
+    //
+    // The endpoint test is the whole value. A Player is handed PATHFIND_NORMAL
+    // unconditionally, and PathGenerator clamps an off-mesh destination to the
+    // nearest walkable poly — which on layered geometry is the bot's OWN floor
+    // directly under the point — so "the call succeeded" says nothing at all.
+    // Only "the route arrives at the height that was asked for" does.
+    //
+    // One Detour query. Call it from refusal/verification paths, never from
+    // per-candidate ranking.
+    static bool IsPointLevelReachable(Player* bot, float x, float y, float z);
+
     // STRICT variant of IsLevelReachable with NO same-level fast path — always
     // runs the PathGenerator probe. Requires a complete PATHFIND_NORMAL route
     // that ends on the candidate's level; for callers that pick targets from a
