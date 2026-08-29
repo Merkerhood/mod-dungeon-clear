@@ -1463,7 +1463,8 @@ DungeonClear.SpectateSpeed = 2.5
 #
 #    Quorum for raid trash-flow readiness: the run advances when every tank and
 #    healer meets the readiness bars and at least this percentage of living
-#    members does. Boss pulls still gate at 100/100 with everyone staged.
+#    members does. Boss pulls still gate at 100/100 with everyone staged —
+#    that stricter bar lives in the pre-boss muster below, under its budgets.
 # DungeonClear.RaidReadyQuorumPct = 90
 #
 #    Fraction of the raid that must be dead (nobody still fighting) for the
@@ -1480,6 +1481,12 @@ DungeonClear.SpectateSpeed = 2.5
 #    boss. When it expires the muster releases the pull from whatever phase it
 #    is in and cancels the open rebuff windows, so buffing never bleeds into
 #    the walk-in or the fight. The two budgets above are authored to sum to it.
+#    This is the real answer to a lone priest single-target buffing thirty-nine
+#    people: the raid never waits out the buff round, it waits out the budget.
+#    At a raid boss the muster IS the pull-readiness gate (it replaces the
+#    between-pulls rest/spread check there), so this ceiling is the longest the
+#    raid can stand in front of a boss doing nothing. Lower it if that is still
+#    longer than you want to watch.
 # DungeonClear.RaidMusterTotalTimeoutSecs = 60
 
 #    Many more corpses to walk between and drink for after a bad fight — the

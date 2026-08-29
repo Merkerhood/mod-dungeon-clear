@@ -61,6 +61,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
@@ -303,6 +304,34 @@ DcPartyState::RestGate DcPartyState::GetRestGate(Player* bot, AiObjectContext* c
     // HP/mana is a deadlock. See the header.
     if (DcCombatFlag::IsPhantomFlag(bot, context))
         return gate;
+
+    // THE RAID MUSTER'S OWN OVERRIDE MUST NOT FEED THIS GATE.
+    //
+    // Plan C's pre-boss muster pushes RestHealthPct/RestManaPct to 100 for the
+    // run so bots actually eat and drink all the way to the bars. That is a REST
+    // DRIVE, not a readiness bar, and reading it back here closes a loop the
+    // muster cannot get out of:
+    //
+    //   IsBetweenPullsReady is the LAST gate in DungeonClearAtBossTrigger; the
+    //   muster's phase machine lives in DungeonClearEngageBossAction, i.e.
+    //   BEHIND that trigger. With the floors at 100/100 the gate is effectively
+    //   unsatisfiable in a raid — IsPartyReady is strict on every tank and
+    //   healer, and one priest single-target buffing thirty-nine people is a
+    //   healer who is never at full mana. So the trigger stays down, the engage
+    //   action never runs, the muster's clocks are never SAMPLED, and every one
+    //   of its budgets (rest / rebuff / whole-muster) silently cannot fire.
+    //
+    // Live at Vaelastrasz, 2026-08-28, five concurrent 40-mans on a 60s ceiling:
+    // the kernel was evaluated three times in 126s (13:28:40, 13:29:32,
+    // 13:30:46) and released 66s late; the other four ran 77s, 89s, 116s and
+    // 218s. Nothing was wrong with DcRaidMusterDecision — it was never asked.
+    //
+    // The top-off is not lost by waiving the floors here: the muster's own
+    // staged/topped snapshot still enforces it, and unlike this gate it is
+    // timeout-bounded.
+    if (DcRun::Of(context).musterRestOverride)
+        return gate;
+
     gate.minHp = RestMinHpPct(bot);
     gate.minMp = RestMinMpPct(bot);
     return gate;

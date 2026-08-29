@@ -41,6 +41,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRaidMuster.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRezRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcStrandedRecovery.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
@@ -424,6 +425,41 @@ bool DungeonClearAtBossTrigger::IsActive()
         {
             DcRun::Of(context).sealedMusterSince = 0;   // left the approach; re-arm
         }
+    }
+
+    // RAID BOSS: THE PRE-BOSS MUSTER IS THE GATE.
+    //
+    // Plan C's muster (stage -> top off -> rebuff -> release, every phase and the
+    // whole thing timeout-bounded) used to be hosted only in the engage action
+    // BEHIND this trigger, with IsBetweenPullsReady below as the gate. That is a
+    // loop the muster cannot get out of: it pushes RestHealthPct/RestManaPct to
+    // 100 for the run so bots eat and drink to the bars, IsPartyReady is strict
+    // on every tank and healer, and a priest single-target buffing thirty-nine
+    // people is a healer who is never at full mana. The gate stayed down, the
+    // engage action never ran, and every budget the muster owns — which is only
+    // ever compared against getMSTime() on a tick that EVALUATES it — was never
+    // sampled. Live at Vaelastrasz (2026-08-28, five 40-mans, 60s ceiling): the
+    // kernel was asked three times in 126s and released 66s late; the siblings
+    // ran 77s, 89s, 116s and 218s. Nothing was wrong with DcRaidMusterDecision.
+    //
+    // So tick it HERE, every tick, and gate on its verdict. It subsumes what
+    // IsBetweenPullsReady was doing at a raid boss and does it better: `staged`
+    // is the same PartyMaxSpread walk, `topped` is a stricter HP/mana bar than
+    // the rest floors, and unlike the readiness gate it hands itself forward on a
+    // clock instead of waiting forever. A pending party rez still outranks it —
+    // releasing forty players onto a boss over a corpse the elected rezzer is
+    // already working is never the lesser evil. (DcPartyState::GetRestGate also
+    // stops feeding the muster's own override back into the general readiness
+    // gate, so advance and the pull rungs no longer inherit a 100/100 bar either.)
+    //
+    // The engage action still calls the same helper as the action-side half of
+    // this guard, the pairing used throughout this module; by then the phase
+    // reads Ready and it passes straight through.
+    if (map->IsRaid() && next->kind == DungeonAnchorKind::Boss)
+    {
+        if (DcRezRecovery::IsPending(bot))
+            return false;
+        return !DcRaidMuster::Holds(bot, botAI, context, *next);
     }
 
     // Don't pull while party is still recovering or tank-side loot is pending.

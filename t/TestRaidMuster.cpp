@@ -7,6 +7,9 @@
 
 #include "Ai/Dungeon/DungeonClear/Util/DcRaidMusterDecision.h"
 
+#include <cstdint>
+#include <vector>
+
 // The raid pre-boss muster phase machine (raid-support plan, Plan C):
 // Idle -> Resting -> Rebuffing -> Ready, every phase timeout-bounded.
 
@@ -183,4 +186,73 @@ TEST(DcRaidMusterTest, ZeroTimeoutNeverExpires)
                              /*rebuff*/ 25000, /*total*/ 0));
     EXPECT_EQ(v.phase, Phase::Resting);
     EXPECT_TRUE(v.hold);
+}
+
+// --- THE BUDGET ONLY EXISTS WHERE THE KERNEL IS ASKED -----------------------
+//
+// Every bound here is `now - since >= budget`, evaluated on the tick the glue
+// calls Decide. That makes the CALL SITE part of the contract, and it is the
+// half that was wrong live: the muster was hosted only in
+// DungeonClearEngageBossAction, behind DungeonClearAtBossTrigger, whose last
+// gate was DcPartyState::IsBetweenPullsReady — a gate the muster itself made
+// unsatisfiable by pushing RestHealthPct/RestManaPct to 100 (IsPartyReady is
+// strict on every healer, and the priest single-target buffing the raid is a
+// healer who is never at full mana). Vaelastrasz, 2026-08-28: the kernel was
+// asked three times in 126s against a 60s ceiling, and four sibling raids stood
+// there 77s, 89s, 116s and 218s.
+//
+// These two tests pin both halves: sparse sampling releases late no matter how
+// correct the kernel is, and per-tick sampling releases on the budget. The fix
+// is the call site (DungeonClearAtBossTrigger ticks DcRaidMuster::Holds every
+// tick and gates on its verdict); this is the statement of why it has to.
+namespace
+{
+    // Drive the machine from Idle over a list of evaluation offsets (ms from
+    // the arming tick), with a raid that never comes staged/topped and buffs
+    // that never finish. Returns how long after arming the tick that first read
+    // Ready happened. Offsets are taken from a non-zero epoch because
+    // Expired() treats a zero stamp as "unset".
+    std::uint32_t ReleaseDelayOverSamples(std::vector<std::uint32_t> const& offsetsMs)
+    {
+        constexpr std::uint32_t kEpoch = 1000;
+        Phase phase = Phase::Idle;
+        std::uint32_t phaseSince = 0;
+        std::uint32_t armed = 0;
+        for (std::uint32_t off : offsetsMs)
+        {
+            std::uint32_t const now = kEpoch + off;
+            Inputs in = In(false, false, false, now, phaseSince, 35000, 25000, 60000,
+                           /*armed*/ 1);
+            in.armedSinceMs = armed;
+            auto const v = Decide(phase, in);
+            if (v.phase != phase)
+            {
+                phase = v.phase;
+                phaseSince = now;
+                if (phase == Phase::Resting)
+                    armed = now;   // the glue stamps the ceiling on the arming tick
+            }
+            if (phase == Phase::Ready)
+                return now - armed;
+        }
+        return 0;
+    }
+}
+
+TEST(DcRaidMusterTest, SparseSamplingReleasesLongPastTheCeiling)
+{
+    // The live Vaelastrasz sample times (13:28:40 / 13:29:32 / 13:30:46, in ms
+    // from the arming tick). The kernel does the right thing at every one of
+    // them and the raid still stands there 126s on a 60s budget.
+    EXPECT_EQ(ReleaseDelayOverSamples({0, 52000, 126000}), 126000u);
+}
+
+TEST(DcRaidMusterTest, PerTickSamplingReleasesOnTheCeiling)
+{
+    std::vector<std::uint32_t> ticks;
+    for (std::uint32_t t = 0; t <= 200000; t += 100)
+        ticks.push_back(t);
+    // 35s rest bound hands to the buff round, then the 60s ceiling fires from
+    // Rebuffing — released within one tick of the budget, not two minutes past.
+    EXPECT_EQ(ReleaseDelayOverSamples(ticks), 60000u);
 }
