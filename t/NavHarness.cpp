@@ -139,6 +139,7 @@ namespace DcNavHarness
         out.startFarFromPoly = raw.startFarFromPoly;
         out.failureReason = raw.failureReason;
         out.pointCount = static_cast<uint32_t>(raw.rawPts.size());
+        out.points = raw.rawPts;
 
         for (std::size_t i = 1; i < raw.rawPts.size(); ++i)
         {

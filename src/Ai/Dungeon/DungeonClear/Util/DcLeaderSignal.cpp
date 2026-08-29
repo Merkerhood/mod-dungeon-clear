@@ -1016,12 +1016,13 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     if (ctx->GetValue<uint32>(DcKey::PullSetting)->Get() != 2u)
         return false;
 
-    // While a PERSISTENT anchored event drives (ZulFarrak's temple), the pull
-    // system is forced Off (see DungeonClearPullModeCurrentValue): drop the
-    // scout-lag too so followers stay tight on the tank and are in position when
-    // each wave hits, instead of lagging up-ramp to rest and arriving late. Same
-    // single predicate as the pull-mode override, evaluated on the leader's context.
-    if (DungeonEventExecutor::IsPersistentAnchoredEventActive(ctx))
+    // While an event that OWNS THE PULL drives (ZulFarrak's temple; BWL's
+    // Suppression Rooms crossing), the pull system is forced Off (see
+    // DungeonClearPullModeCurrentValue): drop the scout-lag too so followers stay
+    // tight on the tank and are in position when each wave hits, instead of lagging
+    // up-ramp to rest and arriving late. Same single predicate as the pull-mode
+    // override, evaluated on the leader's context.
+    if (DungeonEventExecutor::IsPullOwningEventDriving(leader, ctx))
         return false;
 
     // Still scouting: the verdict for the upcoming pack hasn't been committed. Once
@@ -1443,6 +1444,53 @@ bool DcLeaderSignal::IsLeaderRazorgoreRunner(Player* bot)
     // GetMSTimeDiffToNow rather than a plain subtraction: getMSTime() wraps, and
     // this is the only comparison that survives the wrap.
     return st.razorDrivingMs && GetMSTimeDiffToNow(st.razorDrivingMs) <= 3000;
+}
+
+bool DcLeaderSignal::IsLeaderTransitDriving(Player* bot)
+{
+    Position ignored;
+    return GetTransitAnchor(bot, ignored);
+}
+
+bool DcLeaderSignal::GetTransitAnchor(Player* bot, Position& out)
+{
+    if (!bot)
+        return false;
+
+    // Resolving through the leader is what makes this answerable by a FOLLOWER:
+    // every bot carries its own DcRunState and a follower's stays at defaults, so
+    // a bare read of the asker's own copy would say "not driving" for the whole
+    // raid.
+    Player* leader = FindLeaderTank(bot);
+    if (!leader)
+        return false;
+
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return false;
+
+    DcRunState const& st = DcRun::Of(leaderAI->GetAiObjectContext());
+    if (!st.enabled || st.paused || !st.transitDrivingMs)
+        return false;
+
+    // Two AI ticks of slack, the same window and the same reasoning as the
+    // Razorgore camp: the driver stamps on every tick it has work, so a stamp
+    // older than this means the crossing is over (or the leader stopped driving)
+    // and the pack must be released rather than pinned to a cursor nobody is
+    // walking to any more. GetMSTimeDiffToNow, not a subtraction — getMSTime()
+    // wraps, and this is the only comparison that survives the wrap.
+    if (GetMSTimeDiffToNow(st.transitDrivingMs) > 3000)
+        return false;
+
+    // A cursor of (0,0,0) is an unpublished one. The driver publishes before it
+    // stamps, so this can only be seen on the very first tick of a crossing; a
+    // follower that reads it holds still for one tick rather than being walked to
+    // the middle of the map.
+    if (st.transitCursorX == 0.0f && st.transitCursorY == 0.0f && st.transitCursorZ == 0.0f)
+        return false;
+
+    out.Relocate(st.transitCursorX, st.transitCursorY, st.transitCursorZ);
+    return true;
 }
 
 bool DcLeaderSignal::IsLeaderRazorgoreDriving(Player* bot)

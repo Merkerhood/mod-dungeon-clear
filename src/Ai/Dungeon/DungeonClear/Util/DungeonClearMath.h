@@ -6,6 +6,8 @@
 #ifndef _PLAYERBOT_DUNGEONCLEARMATH_H
 #define _PLAYERBOT_DUNGEONCLEARMATH_H
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -73,6 +75,36 @@ namespace DungeonClearMath
         return StandoffCandidates(target, bot, standoffRadius, ringPoints);
     }
 
+    // A point `distFromAnchor` yards out from `anchor` along the 2D bearing to
+    // `toward`, with z carried along the SAME fraction of the way.
+    //
+    // Interpolating z is the whole reason this is a shared helper and not two
+    // lines at the call site: leaving it at the anchor's height describes a point
+    // that exists nowhere — the anchor's floor over the hold point's x/y. That is
+    // flat-leg-only reasoning, and the legs this is used on are not all flat (the
+    // Suppression Rooms ramp climbs 5yd over one 20yd leg). Same defect, same fix,
+    // as HealCloseFallbackPoint above.
+    //
+    // Clamped to `toward` when it is nearer than `distFromAnchor`, and returns
+    // `anchor` unchanged when the two are stacked within `bearingFloor` (no
+    // meaningful bearing to walk out along).
+    inline Position PointTowardFrom(Position const& anchor, Position const& toward,
+                                    float distFromAnchor, float bearingFloor)
+    {
+        float const dx = toward.GetPositionX() - anchor.GetPositionX();
+        float const dy = toward.GetPositionY() - anchor.GetPositionY();
+        float const bearing = std::sqrt(dx * dx + dy * dy);
+        if (!(bearing >= bearingFloor))
+            return anchor;
+
+        float const out = std::min(std::max(distFromAnchor, 0.0f), bearing);
+        float const frac = out / bearing;
+        return Position(anchor.GetPositionX() + dx * frac,
+                        anchor.GetPositionY() + dy * frac,
+                        anchor.GetPositionZ() +
+                            (toward.GetPositionZ() - anchor.GetPositionZ()) * frac,
+                        anchor.GetOrientation());
+    }
     // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
     // pre-resolved by the caller from game state: true only when this mob is
     // navmesh-reachable from the pull target with a clear line of sight and no

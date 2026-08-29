@@ -211,6 +211,18 @@ public:
     // so pass the context of the bot whose run state you mean (the leader's).
     static bool IsPersistentAnchoredEventActive(AiObjectContext* context);
 
+    // True while an event that OWNS THE PULL is driving this run — either the
+    // anchored case above, or a CONDITIONAL event whose row carries
+    // DungeonEvent::ownsThePull and whose activation predicate reads true right
+    // now. This is the predicate the pull-mode value and the scout-lag should ask;
+    // IsPersistentAnchoredEventActive alone answers only half the question,
+    // because a conditional event never appears in the anchor roster at all
+    // (NextDungeonBoss stays on the boss beyond it) and so could never satisfy it.
+    //
+    // Needs the bot as well as the context: the conditional half re-evaluates
+    // activation predicates, which are written against a Player.
+    static bool IsPullOwningEventDriving(Player* bot, AiObjectContext* context);
+
     // If `context`'s current objective drives an event with a KillCreature ENGAGE
     // step (KillCreatureEngage — .engage set), report true and fill `outEntry` /
     // `outSearchRadius` with the creature entry to seek and the radius to seek it

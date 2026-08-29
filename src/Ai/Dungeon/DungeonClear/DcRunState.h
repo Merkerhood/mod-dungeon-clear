@@ -226,6 +226,67 @@ struct DcRunState
     // encounter.
     std::vector<ObjectGuid> razorEggSkipped;
 
+    // === Blackwing Lair — the Suppression Rooms transit (leader-owned) ===========
+    // The Vaelastrasz -> Broodlord crossing (see the transit block in
+    // DungeonEventTables.h). All of it belongs to the leader; the CURSOR is the
+    // only part read cross-bot, through DcLeaderSignal::GetTransitAnchor, by the
+    // pack rung on every other member.
+    //
+    // The cursor is a POSITION, not an index into somebody else's copy of the
+    // route: a follower must be able to answer "where is the leader taking us"
+    // with one struct read and no table lookup, and publishing the point rather
+    // than the index means a route edit can never leave the two halves disagreeing
+    // about which anchor index 7 is.
+    //
+    // getMSTime() of the last tick the transit driver had work to do — from the
+    // leader's arrival at the staging point to its arrival at the Broodlord
+    // standoff. Read cross-bot (DcLeaderSignal::IsLeaderTransitDriving) by the
+    // pack rung, so that rung arms and releases with the crossing and needs no
+    // latch of its own: the driver simply stops stamping when the leg is over.
+    uint32 transitDrivingMs = 0;
+    uint32 transitCursorIndex = 0;   // authored anchor the leader is walking toward
+    float  transitCursorX = 0.0f;    // ...and that anchor's position, published
+    float  transitCursorY = 0.0f;
+    float  transitCursorZ = 0.0f;
+
+    // getMSTime() the crossing armed (the tick the leader first read due inside
+    // the corridor). The gather gate's budget is measured from here, and
+    // `transitGathered` latches it open so a raid that spreads out mid-crossing
+    // is handled by the pack rung rather than by re-gathering at the staging
+    // point behind them.
+    uint32 transitArmedMs = 0;
+    bool   transitGathered = false;
+
+    // The current hold, if any: getMSTime() it began (0 = the driver is advancing)
+    // and which of DcSuppressionTransitDecision::Hold it is. Every hold reason
+    // carries its own watchdog and these are its clock — one wedged straggler must
+    // cost the crossing seconds, never the run.
+    uint32 transitHoldSinceMs = 0;
+    uint8  transitHoldReason = 0;
+
+    // ...and whether that hold's watchdog has already given up on it. The release
+    // LATCHES (the verdict keeps reporting the hold so the leg keeps walking), so
+    // this is what makes the WARN fire once per release instead of once per tick.
+    bool   transitHoldTimedOut = false;
+
+    // Drop the whole transit block. Called when the crossing ends and from the run
+    // teardown: the leg is Repeatable and a leader shoved back into the gauntlet
+    // re-arms it, so coming back holding a stale cursor — or a gather gate that
+    // latched open two rooms ago — is the one way this state can lie.
+    void ClearTransit()
+    {
+        transitDrivingMs = 0;
+        transitCursorIndex = 0;
+        transitCursorX = 0.0f;
+        transitCursorY = 0.0f;
+        transitCursorZ = 0.0f;
+        transitArmedMs = 0;
+        transitGathered = false;
+        transitHoldSinceMs = 0;
+        transitHoldReason = 0;
+        transitHoldTimedOut = false;
+    }
+
     // Drop the whole Razorgore block. Called when phase 1 ends and on the run
     // teardown below: the encounter soft-resets itself after a phase-1 wipe
     // (the boss respawns in 30s and the instance clears the field), so coming

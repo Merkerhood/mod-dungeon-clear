@@ -48,10 +48,43 @@ namespace DcCombatFlag
         Map const* const map = p->GetMap();
         constexpr float radiusSq = DC_ENGAGEMENT_RADIUS * DC_ENGAGEMENT_RADIUS;
 
+        // EVADING IS NOT FIGHTING, and this is the second qualifier the radius
+        // could not supply. A creature in evade mode is on its way out of combat
+        // and back to its spawn: it will not swing, it cannot be tanked, and
+        // nothing the party does resolves it. It is exactly the shape that holds
+        // the flag with no fight behind it — and unlike the stranding case the
+        // radius was added for, it happens WELL INSIDE 100yd, so the radius never
+        // sees it.
+        //
+        // The case that produced this: BWL's Vaelastrasz->staging hall runs 24.3yd
+        // directly under the upper suppression room, and 24% of that route is
+        // inside the 3D aggro radius of the trash standing on the floor above.
+        // Those mobs aggro through the floor, cannot path down, and evade where
+        // they stand at 100% HP — `first contact: Blackwing Technician at 25.0yd,
+        // 0.0yd from its spawn` is the fingerprint, the mob never moved. On
+        // tp-20260828-175353-1 one member with twelve such attackers made
+        // AnyPartyEngagement true for the whole party, MayDrive false for the
+        // leader, and every MayDrive-gated rung — Advance included — inert. All
+        // five raids stopped there permanently.
+        //
+        // The SAME evade question ScanCombatHolders asks of the same units
+        // (CombatManager::IsInEvadeMode, not Creature's UNIT_STATE_EVADE) — and the
+        // same one DcDiagSnapshot prints as EVADING in the teardown dump. Two
+        // predicates about "is this holder real" disagreeing on what evading means
+        // is how a triage ends up reading a blame table that contradicts the gate
+        // it is trying to explain.
+        //
+        // Cheap enough for the module's hottest predicate: a reference read and an
+        // integer compare, kept behind the distance test. No pathfind, unlike
+        // ScanCombatHolders' reachability walk — this answers a strictly narrower
+        // question and pays a strictly smaller price for it.
         auto const inFight = [p, map](Unit const* other)
         {
-            return other && other->IsInWorld() && other->GetMap() == map &&
-                   p->GetExactDistSq(other) <= radiusSq;
+            if (!other || !other->IsInWorld() || other->GetMap() != map)
+                return false;
+            if (p->GetExactDistSq(other) > radiusSq)
+                return false;
+            return !other->GetCombatManager().IsInEvadeMode();
         };
 
         if (inFight(p->GetVictim()))

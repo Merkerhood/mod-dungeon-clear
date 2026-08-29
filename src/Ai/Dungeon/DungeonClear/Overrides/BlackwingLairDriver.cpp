@@ -7,6 +7,7 @@
 
 #include <list>
 #include <unordered_map>
+#include <algorithm>
 #include <unordered_set>
 #include <vector>
 
@@ -24,7 +25,12 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSuppressionTransit.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSuppressionTransitDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 
@@ -617,10 +623,477 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
     return ObjectiveArriveResult::Done;
 }
 
-// Id 20. The Violet Hold's are 15-19; ids are one flat space across every
+
+// --- the Suppression Rooms transit ----------------------------------------
+//
+// Hook 21, and the only thing on this map that MOVES THE LEADER WHILE IT IS
+// ENGAGED. Everything above drives a possessed boss around a room the raid is
+// already standing in; this drives the raid itself across 342yd of gauntlet that
+// the ordinary clear cannot cross at all.
+//
+// WHY IT CANNOT. Three facts, and the design is just their consequence:
+//
+//   1. DcCombatFlag::MayDrive is false for as long as anything in the party is
+//      engaged, and Advance is registered ONLY in the non-combat engine. With 100
+//      whelps inside 20yd of the route line on a 30s respawn, AnyPartyEngagement
+//      is true essentially forever — so the clear has no driver. Not a slow leg: a
+//      stopped one.
+//   2. Clearing it is arithmetically impossible. 160 whelps / 30s = 5.3 spawns a
+//      second. A 40-bot raid can out-DPS that; it cannot out-TRAVEL it.
+//   3. 95% of the route lies inside an armed Suppression Device's 20yd bubble, so
+//      the 54-second walk is a 268-second one until they are disarmed — and over
+//      268 seconds the route-adjacent whelps come back NINE times.
+//
+// So this is a TRANSIT: cross it in one body with the brakes off, and stand still
+// only for the three things worth standing still for (the pack, the elites, the
+// disarm rung's tick). What it deliberately does NOT do is clear, detour, or
+// teleport past — the twenty elites on this leg are 600s respawns and six of them
+// hold the only ramp between the rooms.
+//
+// THE RETURN CONTRACT is the Black Morass one, and getting it backwards wipes
+// raids:
+//
+//   Running => "I am steering the raid right now." Claims the tick, which is what
+//              lets it take the tank off whatever it is fighting and walk it down
+//              the route.
+//   Done    => "Nothing to steer." YIELDS the tick (the stepsOwnMovement branch in
+//              DcRunEventAction) so the stock combat engine can fight: pick a
+//              target, swing, cast, hold threat.
+//
+// EVERY HOLD YIELDS. That is not an optimisation — a hold is precisely a tick on
+// which the raid should be fighting rather than walking, and a driver at
+// relevance 61 that returns Running through a two-minute Taskmaster fight is a
+// raid with no rotation for two minutes.
+
+namespace
+{
+    // The authored route, as the kernel's plain-arithmetic view of it. Rebuilt per
+    // call rather than cached: it is twenty structs, the registry read is a hash
+    // lookup, and a cache would be one more thing to invalidate on a route edit.
+    //
+    // SLICED AT THE STAGING POINT. The registry row is the whole Vaelastrasz ->
+    // Broodlord walk, and its first twenty anchors are the approach — the ordinary
+    // clear's business, not the transit's. Everything downstream of here counts
+    // from staging: the kernel's gather gate is `cursorIndex == 0`, the arm pins
+    // the cursor to 0, ResolveCursor clamps against a stored index in the same
+    // space, and the completion test is "the LAST anchor". Hand the driver the
+    // unsliced row and every one of those means something different — the gather
+    // would form up in Vaelastrasz's chamber and the crossing would report itself
+    // complete at the staging point.
+    bool BwlTransitRoute(std::vector<WaypointHint>& hints,
+                         std::vector<DcSuppressionTransit::Anchor>& out)
+    {
+        std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
+            MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+        if (!row || row->size() < TRANSIT_STAGE_ANCHOR_INDEX + 2)
+            return false;
+
+        hints.assign(row->begin() + TRANSIT_STAGE_ANCHOR_INDEX, row->end());
+
+        out.clear();
+        out.reserve(hints.size());
+        for (WaypointHint const& h : hints)
+            out.push_back({ h.x, h.y, h.z });
+        return true;
+    }
+
+    // How far the FURTHEST living member is from a point, and how many are inside
+    // a radius of the leader. One walk of the group for both, because both are
+    // wanted on the same ticks and a second walk of a 40-member raid every tick
+    // buys nothing.
+    //
+    // Living members ON THIS MAP only: a corpse-running member is the rez ladder's
+    // business, and a member who never zoned in must not pin the crossing.
+    struct BwlPackView
+    {
+        float trailDist = -1.0f;  // <0 = the leader is alone
+        uint32 living = 0;        // living members on this map, leader included
+        uint32 nearLeader = 0;    // ...of which, inside the gather radius
+        bool topped = true;       // ...and everybody is at the pre-boss bars
+
+        // The pack hold's own counts, measured against the CURSOR rather than
+        // against the leader — the pack forms on the leg ahead, not on the tank.
+        uint32 followers = 0;     // living members on this map, leader EXCLUDED
+        uint32 outsideLeash = 0;  // ...of which, further than the pack leash from it
+    };
+
+    // TOPPED uses the RAID MUSTER's bars, not Smart Rest's release bars, and
+    // deliberately: the muster runs this same test either side of this leg (at
+    // Vaelastrasz and at Broodlord), and one definition of "the raid is ready" for
+    // the whole raid layer is worth more than a second one tuned three points
+    // differently. Bots are held to 99% because they can always eat; humans to a
+    // loose 90/80 because a muster must never deadlock on a player standing where
+    // they mean to stand.
+    constexpr float BWL_BOT_HP_BAR = 99.0f;
+    constexpr float BWL_BOT_MP_BAR = 99.0f;
+    constexpr float BWL_HUMAN_HP_BAR = 90.0f;
+    constexpr float BWL_HUMAN_MP_BAR = 80.0f;
+
+    BwlPackView BwlPack(Player* bot, float cursorX, float cursorY, float cursorZ,
+                        float gatherRadius, float packLeash)
+    {
+        BwlPackView v;
+        if (!bot)
+            return v;
+
+        v.living = 1;
+        v.nearLeader = 1;
+
+        Group* group = bot->GetGroup();
+        if (!group)
+            return v;
+
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || !member->IsAlive() || member->GetMapId() != bot->GetMapId())
+                continue;
+
+            bool const isBot = GET_PLAYERBOT_AI(member) != nullptr;
+            if (member->GetHealthPct() < (isBot ? BWL_BOT_HP_BAR : BWL_HUMAN_HP_BAR))
+                v.topped = false;
+            if (member->GetMaxPower(POWER_MANA) > 0 &&
+                member->GetPowerPct(POWER_MANA) < (isBot ? BWL_BOT_MP_BAR : BWL_HUMAN_MP_BAR))
+                v.topped = false;
+
+            if (member == bot)
+                continue;
+
+            ++v.living;
+            if (bot->GetExactDist(member) <= gatherRadius)
+                ++v.nearLeader;
+
+            float const d = member->GetExactDist(cursorX, cursorY, cursorZ);
+            if (d > v.trailDist)
+                v.trailDist = d;
+
+            ++v.followers;
+            if (packLeash > 0.0f && d > packLeash)
+                ++v.outsideLeash;
+        }
+        return v;
+    }
+
+    // Nearest LIVE elite worth stopping for, or -1. Taskmasters and Hatchers only:
+    // the whelps are not a reason to stand still (there is no number of them the
+    // party can finish) and DcNeverTargetRegistry has already taken them out of
+    // the clear's pickers.
+    float BwlNearestElite(Player* bot)
+    {
+        if (!bot)
+            return -1.0f;
+
+        static std::vector<uint32> const kElites = { NPC_BLACKWING_TASKMASTER,
+                                                     NPC_DEATH_TALON_HATCHER };
+        std::list<Creature*> found;
+        bot->GetCreatureListWithEntryInGrid(found, kElites, TRANSIT_SCAN);
+
+        float best = -1.0f;
+        for (Creature* c : found)
+        {
+            if (!c || !c->IsAlive())
+                continue;
+            float const d = bot->GetExactDist(c);
+            if (best < 0.0f || d < best)
+                best = d;
+        }
+        return best;
+    }
+
+    // Nearest ARMED Suppression Device, or -1. GO_STATE_READY is the armed state —
+    // go_suppression_device pulses 22247 every 5s while it holds it, and the bot
+    // disarm rung turns it off with SetGoState(GO_STATE_ACTIVE). A device turned
+    // off that way never re-arms, so a device that reads ACTIVE is done with for
+    // the rest of the run and is not a reason to stop.
+    float BwlNearestArmedDevice(Player* bot)
+    {
+        if (!bot)
+            return -1.0f;
+
+        std::list<GameObject*> found;
+        bot->GetGameObjectListWithEntryInGrid(found, GO_SUPPRESSION_DEVICE, TRANSIT_SCAN);
+
+        float best = -1.0f;
+        for (GameObject* go : found)
+        {
+            if (!go || !go->isSpawned() || go->GetGoState() != GO_STATE_READY)
+                continue;
+            float const d = bot->GetExactDist(go);
+            if (best < 0.0f || d < best)
+                best = d;
+        }
+        return best;
+    }
+
+    // The per-tick telemetry line, throttled. Without this a failed run tells you
+    // nothing about WHICH of the four mechanisms is still biting — the whole point
+    // of measuring the leg was to be able to tell "the pack never formed" from
+    // "the devices were never disarmed" from "the driver never got a tick".
+    void BwlTransitLog(Player* bot, DcSuppressionTransit::Inputs const& in,
+                       DcSuppressionTransit::Verdict const& v, BwlPackView const& pack,
+                       uint32 anchorCount)
+    {
+        thread_local std::unordered_map<uint32, uint32> lastMs;
+        uint32 const guid = bot->GetGUID().GetCounter();
+        uint32& prev = lastMs[guid];
+        if (prev && GetMSTimeDiffToNow(prev) < TRANSIT_TELEMETRY_MS)
+            return;
+        prev = getMSTime();
+
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] BWL transit — cursor {}/{} ({:.1f}yd), pack {}/{} near{}, "
+                  "{} of {} outside, trail {:.1f}yd (leash {:.0f}), elite {:.1f}yd, "
+                  "armed device {:.1f}yd -> {}{}",
+                  bot->GetName(), in.cursorIndex, anchorCount ? anchorCount - 1 : 0, in.distToCursor,
+                  pack.nearLeader, pack.living, pack.topped ? "" : ", NOT TOPPED",
+                  in.packOutside, in.packLiving,
+                  in.trailDist, in.packLeash,
+                  in.nearestEliteDist, in.nearestArmedDeviceDist,
+                  v.complete ? "AT THE STANDOFF"
+                             : (v.advance ? "advancing" : DcSuppressionTransit::HoldName(v.hold)),
+                  v.timedOut ? " (WATCHDOG)" : "");
+    }
+}
+
+ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* context,
+                                              DungeonBossInfo const& /*info*/)
+{
+    if (!bot || !context || bot->GetMapId() != MAP_ID)
+        return ObjectiveArriveResult::Done;
+
+    PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+    if (!botAI)
+        return ObjectiveArriveResult::Done;
+
+    DcRunState& st = DcRun::Of(context);
+
+    // THE MASTER SWITCH, and the rollback. Off, this hook is a no-op that stops
+    // publishing — within two AI ticks the pack rung goes inert with it and the
+    // leg behaves exactly as it did before any of this existed.
+    if (!DcSettings::GetBool(bot, "SuppressionTransit"))
+    {
+        st.ClearTransit();
+        return ObjectiveArriveResult::Done;
+    }
+
+    std::vector<WaypointHint> hints;
+    std::vector<DcSuppressionTransit::Anchor> route;
+    if (!BwlTransitRoute(hints, route))
+    {
+        // No authored route: there is nothing to run a cursor down, and inventing
+        // one across this geometry is how a raid ends up in a wall. Yield and let
+        // the ordinary ladder have the leg back.
+        st.ClearTransit();
+        return ObjectiveArriveResult::Done;
+    }
+
+    uint32 const now = getMSTime();
+    uint32 const anchorCount = static_cast<uint32>(route.size());
+    uint32 const lastAnchor = anchorCount - 1;
+
+    // --- arm the crossing --------------------------------------------------
+    if (!st.transitArmedMs)
+    {
+        st.transitArmedMs = now;
+        st.transitCursorIndex = 0;
+        st.transitHoldSinceMs = 0;
+        st.transitHoldReason = 0;
+        st.transitHoldTimedOut = false;
+
+        // YOU CANNOT GATHER AT A POINT YOU HAVE ALREADY PASSED, and DISTANCE IS
+        // NOT THE TEST FOR THAT — position ALONG THE ROUTE is.
+        //
+        // This asked `toStage > TRANSIT_STAGE_SKIP_DIST` alone, and it is a test
+        // that cannot tell "37yd short of staging" from "37yd past it". In
+        // tp-20260828-121941-1 all five raids armed at 37yd, every one of them
+        // INSIDE the lower room, and every one latched `gathered = false` — which
+        // pins the cursor to anchor 0, a point BEHIND the raid, for the rest of
+        // the run. The gather gate then cannot open (it wants `reached`, and a
+        // raid walking deeper into the room never gets it), so the pack hold
+        // measured twenty-four members against that behind-them anchor and held
+        // forever: runs 1, 3 and 4 spent 100% of their transit at `cursor 0/19`
+        // with the distance drifting 37 -> 65yd. Three of five never left the
+        // entrance.
+        //
+        // The projection answers the actual question. Past anchor 1 the leader is
+        // in the gauntlet, whatever the straight-line distance says.
+        float const toStage = bot->GetExactDist(TRANSIT_STAGE_X, TRANSIT_STAGE_Y, TRANSIT_STAGE_Z);
+        uint32 const armCursor = DcSuppressionTransit::ResolveCursor(
+            route, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+            /*stored*/ 1, TRANSIT_CURSOR_RESYNC_DIST);
+
+        st.transitGathered = toStage > TRANSIT_STAGE_SKIP_DIST || armCursor > 1;
+        if (st.transitGathered)
+            st.transitCursorIndex = armCursor;
+
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] BWL transit — crossing the Suppression Rooms ({} anchors, "
+                 "{:.0f}yd to staging, projected anchor {}){}",
+                 bot->GetName(), anchorCount, toStage, armCursor,
+                 st.transitGathered ? " — already past the staging point, skipping the gather"
+                                    : "");
+    }
+
+    // --- where are we ------------------------------------------------------
+    //
+    // The cursor is the leader's projection onto the route, monotone-clamped
+    // against what we stored (see ResolveCursor) — EXCEPT while the gather gate is
+    // still shut, where it is pinned to the staging anchor so the pack forms on
+    // the point the raid is standing on rather than on a leg twelve yards into the
+    // room. The pin is only ever correct while the raid is actually AT staging.
+    uint32 const projected = DcSuppressionTransit::ResolveCursor(
+        route, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+        std::max<uint32>(st.transitCursorIndex, 1), TRANSIT_CURSOR_RESYNC_DIST);
+
+    // ...and the pin is re-checked EVERY TICK, not only at the arm. A leader can
+    // be shoved into the gauntlet after arming — dragged by a fight, carried by a
+    // spline already in flight — and the arm-time answer would keep the cursor
+    // parked on staging behind it for the rest of the run. Same test as the arm's:
+    // past anchor 1 means the gather has nothing left to gather at.
+    if (!st.transitGathered && projected > 1)
+    {
+        st.transitGathered = true;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] BWL transit — the raid is already {} anchor(s) into the "
+                 "gauntlet; abandoning the gather and crossing from here",
+                 bot->GetName(), projected);
+    }
+
+    uint32 cursor = st.transitGathered ? projected : 0u;
+    if (cursor > lastAnchor)
+        cursor = lastAnchor;
+
+    WaypointHint const& target = hints[cursor];
+
+    // --- the snapshot ------------------------------------------------------
+    float const gatherRadius = DcSettings::GetFloat(bot, "TransitGatherRadius");
+    float const packLeash = DcSettings::GetFloat(bot, "TransitPackLeash");
+    BwlPackView const pack =
+        BwlPack(bot, target.x, target.y, target.z, gatherRadius, packLeash);
+
+    float const quorum = DcSettings::GetFloat(bot, "TransitGatherQuorum");
+
+    DcSuppressionTransit::Inputs in;
+    in.cursorIndex = cursor;
+    in.anchorCount = anchorCount;
+    in.distToCursor = bot->GetExactDist(target.x, target.y, target.z);
+    in.arriveRadius = target.arriveRadius;
+    in.gathered = st.transitGathered;
+    in.quorumMet = pack.living <= 1 ||
+                   static_cast<float>(pack.nearLeader) >= static_cast<float>(pack.living) * quorum;
+    in.topped = pack.topped;
+    in.trailDist = pack.trailDist;
+    in.packLeash = packLeash;
+    in.packOutside = pack.outsideLeash;
+    in.packLiving = pack.followers;
+    in.packQuorum = quorum;
+    in.nearestEliteDist = BwlNearestElite(bot);
+    in.eliteHoldRadius = DcSettings::GetFloat(bot, "TransitEliteHoldRadius");
+    in.nearestArmedDeviceDist = BwlNearestArmedDevice(bot);
+    in.disarmHoldRadius = DcSettings::GetFloat(bot, "TransitDisarmHoldRadius");
+    in.nowMs = now;
+    in.armedSinceMs = st.transitArmedMs;
+    in.holdSinceMs = st.transitHoldSinceMs;
+    in.holdReason = st.transitHoldReason;
+    in.gatherTimeoutMs = DcSettings::GetUInt(bot, "TransitGatherTimeoutMs");
+    in.packHoldTimeoutMs = TRANSIT_PACK_HOLD_TIMEOUT_MS;
+    in.eliteHoldTimeoutMs = TRANSIT_ELITE_HOLD_TIMEOUT_MS;
+    in.disarmHoldTimeoutMs = TRANSIT_DISARM_HOLD_TIMEOUT_MS;
+
+    DcSuppressionTransit::Verdict const v = DcSuppressionTransit::Decide(in);
+
+    BwlTransitLog(bot, in, v, pack, anchorCount);
+
+    // --- act ---------------------------------------------------------------
+    if (v.openGatherGate)
+    {
+        st.transitGathered = true;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] BWL transit — {} of {} raid members formed up at the staging "
+                 "point{} — crossing",
+                 bot->GetName(), pack.nearLeader, pack.living,
+                 v.timedOut ? " (GATHER TIMEOUT — going with what we have)" : "");
+    }
+
+    if (v.complete)
+    {
+        // The standoff. Kill the glide first: the event sets StepsOwnMovement, so
+        // nothing else cancels it, and deciding "arrived" while an escort spline is
+        // still in flight carries the tank straight on past Broodlord (the Black
+        // Morass lesson, measured on map 269).
+        DcMovement::ResolveEscortConflict(bot);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] BWL transit — the raid is at the Broodlord standoff "
+                 "({} member(s) alive on the map)",
+                 bot->GetName(), pack.living);
+        st.ClearTransit();
+        return ObjectiveArriveResult::Done;
+    }
+
+    // ONCE PER RELEASE, not once per tick. A watchdog release now LATCHES (the
+    // verdict keeps reporting the hold with its original clock so the leg keeps
+    // walking), so `v.timedOut` stays true for as long as the condition it gave up
+    // on persists — which for a wedged straggler is minutes of identical warnings.
+    bool const watchdogFired = v.timedOut && !v.openGatherGate;
+    if (watchdogFired && !st.transitHoldTimedOut)
+        LOG_WARN("playerbots.dungeonclear",
+                 "[DC:{}] BWL transit — watchdog released a '{}' hold at anchor {} "
+                 "(trail {:.1f}yd, elite {:.1f}yd, armed device {:.1f}yd) -> walking on",
+                 bot->GetName(),
+                 DcSuppressionTransit::HoldName(
+                     static_cast<DcSuppressionTransit::Hold>(st.transitHoldReason)),
+                 cursor, in.trailDist, in.nearestEliteDist, in.nearestArmedDeviceDist);
+
+    st.transitHoldTimedOut = watchdogFired;
+    st.transitHoldSinceMs = v.holdSinceMs;
+    st.transitHoldReason = static_cast<uint8>(v.hold);
+
+    // The cursor bump happens HERE, before publication, so the index and the
+    // position it names can never disagree even for one tick — a follower that
+    // read a stale pair would form up on the leg the leader has just finished.
+    if (v.cursorAdvance && cursor < lastAnchor)
+        ++cursor;
+    WaypointHint const& aim = hints[cursor];
+
+    // PUBLISH, on every branch that is not completion. The pack rung reads this
+    // cross-bot and a hold is still a tick on which the raid should be forming up
+    // on this anchor — publishing only when walking would release the pack exactly
+    // when the column most needs to close.
+    st.transitCursorIndex = cursor;
+    st.transitCursorX = aim.x;
+    st.transitCursorY = aim.y;
+    st.transitCursorZ = aim.z;
+    st.transitDrivingMs = now;
+
+    if (!v.advance)
+    {
+        // HOLDING. Issue no movement and YIELD — a hold is exactly a tick on which
+        // the raid should be fighting rather than walking, and the pack rung does
+        // any walking the column still needs. Deliberately no StopBot: killing the
+        // spline every tick of a two-minute elite fight is a stop packet every
+        // tick, and the bot is being held by combat anyway.
+        return ObjectiveArriveResult::Done;
+    }
+
+    // WALKING. Through LongRangePathfinder, because a bare MovePoint truncates
+    // silently past ~30yd and a straggling leader's catch-up leg is longer than
+    // the authored 24 (the Black Morass lesson again). DcTransit::TravelTo returns
+    // false when the leader is already inside the arrive radius, which the kernel
+    // has already told us it is not — so a false here means the route could not be
+    // issued at all, and the honest answer is to yield rather than claim a tick we
+    // did nothing with.
+    if (!DcTransit::TravelTo(bot, botAI, aim.x, aim.y, aim.z, aim.arriveRadius))
+        return ObjectiveArriveResult::Done;
+
+    return ObjectiveArriveResult::Running;
+}
+
+// Ids 20 and 21. The Violet Hold's are 15-19; ids are one flat space across every
 // dungeon, and AddHook LOG_ERRORs a collision rather than silently dropping one.
 void RegisterBlackwingLairHooks(ObjectiveHookRegistry::HookTable& out)
 {
     ObjectiveHookRegistry::AddHook(out, DcBlackwingLair::HOOK_RAZORGORE_ORB,
                                    &DriveRazorgoreOrb);
+    ObjectiveHookRegistry::AddHook(out, DcBlackwingLair::HOOK_SUPPRESSION_TRANSIT,
+                                   &DriveSuppressionTransit);
 }

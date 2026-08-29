@@ -233,6 +233,24 @@ struct DcPullContext
                                                  // immunity are handed back to the
                                                  // player's setting when the plan
                                                  // ends, and only then.
+    bool        eventForced = false;             // the mirror image: a pull-owning
+                                                 // event — or a NO_STOP route leg
+                                                 // (DcNoStopZone), which wants the
+                                                 // identical stand-down and shares
+                                                 // this latch — LOWERED the
+                                                 // pull-mode bool.
+                                                 // Clearing the effective value is
+                                                 // not enough on its own — the
+                                                 // follower camp-hold and party
+                                                 // state read the LATCHED bool
+                                                 // (DcLeaderSignal::GetLeaderPullInfo
+                                                 // / GetLeaderCampHold), so a bool
+                                                 // latched true when the event armed
+                                                 // would keep the party pinned at a
+                                                 // camp for the event's whole
+                                                 // duration while the tank fights
+                                                 // alone. Remembered so the setting
+                                                 // is handed back when it ends.
     bool        losPull    = false;              // this pull targets a RANGED pack
                                                  // and the camp was placed to break
                                                  // line of sight to it (rangers must

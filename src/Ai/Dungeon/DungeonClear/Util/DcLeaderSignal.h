@@ -345,7 +345,27 @@ public:
     // authored camp instead of wherever the pull left them.
     static bool IsLeaderRazorgoreDriving(Player* bot);
 
+    // BLACKWING LAIR, the Suppression Rooms: is the leader crossing the gauntlet
+    // right now?
+    //
+    // True while the transit driver has had work within the last few seconds — it
+    // stamps DcRunState::transitDrivingMs on every tick from the leader's arrival
+    // at the staging point to its arrival at the Broodlord standoff. Exactly the
+    // Razorgore-driving shape and for the same reason: the stamp is the whole
+    // window, so the rung that reads it arms with the crossing and releases within
+    // a tick or two of it ending, by EVERY exit the leg has (the standoff, the
+    // event's timeout, a wipe, `dc pause`, a dead leader). There is no latch to
+    // reset.
+    static bool IsLeaderTransitDriving(Player* bot);
 
+    // ...and WHERE is it taking us — the leader's live route cursor, the anchor it
+    // is currently walking toward.
+    //
+    // This is the moving anchor the pack rung leashes to, and it is why that rung
+    // could not simply reuse the Razorgore camp: on this leg there is no fixed
+    // point to camp at. Returns false whenever the transit is not driving, so one
+    // call answers both "is there a pack to hold" and "hold it where".
+    static bool GetTransitAnchor(Player* bot, Position& out);
 };
 
 #endif  // _DC_LEADER_SIGNAL_H

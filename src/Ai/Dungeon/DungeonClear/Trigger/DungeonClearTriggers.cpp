@@ -37,6 +37,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcEngageGeometry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHazard.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcHazardRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPlayerbotCompat.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRegroupDecision.h"
@@ -1644,6 +1645,18 @@ bool DungeonClearAssistCampCombatTrigger::IsActive()
 
 bool DungeonClearLeaderAssistTrigger::IsActive()
 {
+    // NOT ON A NO_STOP LEG. This rung walks the tank BACK to a fight the party
+    // picked up, which is the one thing a crossing must never do — the ground
+    // behind the raid on such a leg is ground it has already paid for, and on the
+    // case NO_STOP was authored for it is also the ground doing the flagging (BWL's
+    // approach hall, trash 24.3yd overhead that cannot be reached or fought). The
+    // action's own co-located guard stops the degenerate 0.0yd spin; this stops the
+    // non-degenerate version, where the tank really does walk 20yd backwards to
+    // stand under the same ceiling. Anything that reaches the party here is still
+    // fought where it stands — stock combat and the tank rotation own that.
+    if (DcNoStopZone::IsInNoStopZone(bot, context))
+        return false;
+
     // Leader-side assist. All the gating (leader-only, out of combat, no own
     // target, a groupmate latched in combat, not mid-drag) lives in the predicate.
     return DcLeaderSignal::IsLeaderShouldAssistFight(bot);

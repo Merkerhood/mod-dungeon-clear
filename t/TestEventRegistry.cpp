@@ -176,6 +176,20 @@ namespace
             // is its "nothing to steer this tick" yield, not a completion, and it
             // is Repeatable besides, so a momentary Done latches nothing.
             {469, 1},
+            // Blackwing Lair "Cross the Suppression Rooms": SuppressionTransitDue
+            // is gated on an AXIS-ALIGNED BOX (x -7720..-7570, y -1130..-905,
+            // z 430..455) that is the two suppression rooms and their approach and
+            // nothing else on the map — the leader is literally standing in the
+            // corridor or the event is not due. It is then gated on the leader NOT
+            // yet being within 10yd of the Broodlord standoff, which is the
+            // crossing's own completion: the far-tank false-latch state is not
+            // merely unreachable here, it is the state the predicate exists to
+            // exclude. Its lone step (hook 21, DriveSuppressionTransit) OWNS the
+            // travel — it walks the leader anchor to anchor down the authored
+            // route — so there is nothing an arrival step would add, and Done is
+            // its "nothing to steer this tick" yield rather than a completion.
+            // Repeatable besides: a momentary Done latches nothing.
+            {469, 3},
             // Underbog "Send Ghaz'an up to his platform": deliberately map-wide,
             // and the one case where near-gating would be WRONG. Its hook fires
             // the same DoAction areatrigger 4302 fires, and path 1383921 opens by
@@ -623,6 +637,17 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // usually carries (taking the combat tick off the stock movers) is not
         // paid here.
         {469, 1},
+        // Blackwing Lair "Cross the Suppression Rooms". THE flag this event turns
+        // on, and the reason the leg needs an event at all. Two rooms hold 160
+        // Corrupted Whelps on a THIRTY-SECOND respawn, a hundred of them within
+        // 20yd of the 375yd route line — so AnyPartyEngagement is true essentially
+        // without a break, DcCombatFlag::MayDrive is therefore false, and Advance
+        // (which lives only in the non-combat engine) never runs. The clear does
+        // not cross this leg slowly; it does not cross it at all. Unlike the
+        // Razorgore row above, this driver DOES steer the tank and so does pay the
+        // flag's usual cost — which is why it yields the tick on every hold, and
+        // why "advance" is the only branch that returns Running.
+        {469, 3},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -973,6 +998,16 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // ResolveEscortConflict) cancel the orb runner's long-haul glide to the
         // ledge the tick after it is issued.
         {469, 1},
+        // Blackwing Lair "Cross the Suppression Rooms": hook 21 issues every metre
+        // of the crossing itself, one authored leg at a time through the long-haul
+        // funnel (DcTransit::TravelTo). With the per-tick hold in place each of
+        // those splines is cancelled the tick after it is issued and the raid
+        // creeps a tick at a time down a 342yd route while every log line reports
+        // a healthy spline — the Black Morass shape verbatim. The flag is also
+        // what makes a Done RETURN YIELD, which is load-bearing here: the driver
+        // holds for the ramp's six Taskmasters, and a raid that spends that fight
+        // claiming the tick is a raid with no rotation.
+        {469, 3},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1775,4 +1810,78 @@ TEST(DungeonEventIntegrityTest, DrakTharonRitualCrystalsAreNavigationInvisible)
         EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(crystal))
             << "Ritual Crystal " << crystal << " must never be clicked by a bot";
     }
+}
+
+// A pull-owning event stands the WHOLE pull system down for as long as it drives
+// (DungeonClearPullModeCurrentValue) and drops the follower scout-lag with it
+// (DcLeaderSignal::IsLeaderDynamicScouting). That is the right call only for a leg
+// the party must cross or hold rather than clear pack-by-pack, so — like
+// DrivesInCombat above — every row that claims it is vetted here by hand.
+TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
+{
+    struct Row { uint32 mapId; uint32 eventId; };
+    static Row const kVetted[] = {
+        // Blackwing Lair "Cross the Suppression Rooms". The leg is a TRANSIT, and
+        // an advanced pull is the exact opposite of crossing: its Idle branch
+        // answers unplanned aggro by walking a fresh camp BACK along the route
+        // until it finds ground clear of hostiles, and among 160 whelps on a 30s
+        // respawn there is no such ground short of maxDrag. Live on
+        // tr-20260828-142623-4: nine drag legs in four minutes at 16-71yd (a
+        // sibling run at 102yd), transit cursor falling 10/19 -> 6/19 and
+        // re-walking the same four anchors — the tank ran the gauntlet backwards.
+        {469, 3},
+    };
+
+    for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
+    {
+        if (!ev.ownsThePull)
+            continue;
+
+        bool vetted = false;
+        for (Row const& r : kVetted)
+            if (r.mapId == ev.mapId && r.eventId == ev.id)
+                vetted = true;
+
+        EXPECT_TRUE(vetted)
+            << "event " << ev.mapId << "/" << ev.id << " '" << ev.name
+            << "' sets OwnsThePull(), which forces the effective pull mode Off and"
+               " drops the scout-lag for the event's whole duration. If that is"
+               " genuinely intended (a leg to cross or hold, not to clear), add it"
+               " to kVetted here with the reason.";
+
+        // The flag is read through DungeonEventExecutor::IsPullOwningEventDriving,
+        // whose conditional half asks FindDueConditionalEvent. An ANCHORED event
+        // would never reach that half — it takes the IsPersistentAnchoredEventActive
+        // path, which infers the stand-down from `persistent` alone — so the flag
+        // on an anchored row is a silent no-op, exactly the failure class this file
+        // exists to turn red.
+        EXPECT_TRUE(ev.condition != nullptr)
+            << "event " << ev.mapId << "/" << ev.id << " '" << ev.name
+            << "' sets OwnsThePull() but is not Conditional(). The flag is only"
+               " consulted for conditional events; on an anchored row it does"
+               " nothing at all.";
+    }
+}
+
+// The Suppression Rooms crossing must carry the flag. This is the regression pin
+// for the backward-running tank: without it the advanced pull owns every whelp
+// aggro and drags the raid back down the gauntlet, and nothing else in the transit
+// can stop it — the driver yields the tick on every Done/advancing verdict, and
+// DcRel::PullManeuver (60) then outranks nothing it needs to.
+TEST(DungeonEventIntegrityTest, SuppressionCrossingOwnsThePull)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(469, 3);
+    ASSERT_NE(ev, nullptr) << "BWL 'Cross the Suppression Rooms' (469/3) is missing";
+    EXPECT_STREQ(ev->name.c_str(), "Cross the Suppression Rooms");
+
+    EXPECT_TRUE(ev->ownsThePull)
+        << "the crossing must stand the pull system down: with it live, the pull's"
+           " Idle branch stamps a fresh camp behind the tank on every unplanned"
+           " whelp aggro and drags it there, backwards through the gauntlet";
+
+    // Conditional, or IsPullOwningEventDriving's conditional half never sees it.
+    EXPECT_NE(ev->condition, nullptr);
+    // And persistent, so the crossing keeps its progress across the combat gaps
+    // the whelps guarantee.
+    EXPECT_TRUE(ev->persistent);
 }

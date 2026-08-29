@@ -51,6 +51,32 @@ namespace DcRel
     inline constexpr float HealReposition  = 41.0f;  // healer-only; both engines (see note below)
 
     // ===== non-combat leader driving ladder =====
+    // BLACKWING LAIR ONLY, every member but the leader: hold the pack inside one
+    // leash around the leader's route cursor while it crosses the Suppression
+    // Rooms. Registered in BOTH engines (the crossing has out-of-combat ticks and
+    // the non-combat driving ladder owns the followers on those), and listed here
+    // rather than in the combat block only because its higher-value siblings are.
+    //
+    // 36 is chosen against what it must OUTRANK, which on this leg is the whole
+    // reason the pack strings out: stock MoveChase (~30), AssistCampCombat (35)
+    // and RegroupCombat (29) — a follower chasing a whelp 40yd off the line is
+    // exactly the string-out this exists to stop, and a strung-out raid sweeps a
+    // far larger cylinder of a room whose spawns are the problem. It also clears
+    // the non-combat follower rungs it would otherwise lose to (AssistCamp 29,
+    // HoldAtCamp 28, FollowTank 25, Advance 15) and RezParty (31.5), which is
+    // deliberate and the same call the Razorgore camp makes: walking a rezzer 40yd
+    // back across the gauntlet for a corpse is not a recovery, it is a second
+    // death.
+    //
+    // It stays BELOW everything that must still win: StrandedRecovery (42) and
+    // HealReposition (41) above it, and in the combat engine the camp owners (60),
+    // HazardVacate (55) and the phantom hatch (65) — none of which contend on this
+    // leg, and all of which should if they ever did.
+    //
+    // TIES HakkarSuppressor (36, non-combat, Sunken Temple). Map-partitioned: map
+    // 109 and map 469 cannot both be under a bot's feet. Asserted in
+    // t/TestRelevanceLadder.cpp with the rest of the legitimate ties.
+    inline constexpr float TransitPack      = 36.0f; // raid: hold the transit pack together
     inline constexpr float HakkarSuppressor = 36.0f; // ST Hakkar: silence a resetting suppressor
     inline constexpr float HakkarFlame      = 35.5f; // ST Hakkar: douse (tie-broken above Pull)
     inline constexpr float Pull             = 35.0f; // advanced/dynamic pull-to-camp maneuver

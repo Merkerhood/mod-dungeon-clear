@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_DUNGEONEVENTTABLES_H
 #define _PLAYERBOT_DUNGEONEVENTTABLES_H
 
+#include <cstddef>
 #include <unordered_map>
 #include <vector>
 
@@ -600,6 +601,255 @@ namespace DcBlackwingLair
         bool dormant{false};     // ...and has not turned on the raid yet
     };
     VaelastraszState Vaelastrasz(Player* bot);
+
+    // --- the Suppression Rooms (the Vaelastrasz -> Broodlord transit) ------
+    //
+    // The 375yd of gauntlet between Vaelastrasz's chamber and Broodlord
+    // Lashlayer, and the one leg on this map that the ordinary clear cannot
+    // cross AT ALL. Everything in this block exists because of one arithmetic
+    // fact and one code fact:
+    //
+    //   * 160 Corrupted Whelps live in the two rooms on a THIRTY-SECOND
+    //     respawn — a spawn rate of 5.3/s, ~3.3/s for the hundred within 20yd
+    //     of the route line. No DPS closes that; the room's population is a
+    //     fixed point the party cannot move.
+    //   * DcCombatFlag::MayDrive is false for as long as anything in the party
+    //     is engaged, and Advance is registered ONLY in the non-combat engine.
+    //     So with the whelps up the clear has no driver at all: it is not slow,
+    //     it is stopped.
+    //
+    // Plus a third that decides how long "stopped" lasts: 38 Suppression Devices
+    // (GO 179784) each pulse spell 22247 in a 20yd bubble for -80% movement
+    // speed, and 95% of the route lies inside at least one of them. 54 seconds
+    // of walking becomes 268.
+    //
+    // THE ANSWER IS NOT TO CLEAR IT. This leg is a TRANSIT: one body, brakes
+    // off, crossed under fire. Four parts, in the order they ship:
+    //
+    //   A  the authored route below (data; the cursor the other three share)
+    //   B  DcNeverTargetRegistry rows on 14022-14025, so the clear's pickers
+    //      stop walking the tank BACK into the room for the nearest whelp
+    //   D  DungeonClearTransitPack{Trigger,Action} — a moving camp that keeps
+    //      the raid inside one leash around the leader's route cursor
+    //   C  the transit driver (event EVENT_SUPPRESSION_TRANSIT / hook
+    //      HOOK_SUPPRESSION_TRANSIT, Overrides/BlackwingLairDriver.cpp), the
+    //      only thing on this map that moves the leader while it is engaged
+    //
+    // What the transit does NOT skip is the ELITES. Thirteen of the twenty
+    // Death Talon Hatchers / Blackwing Taskmasters are within 25yd of the route,
+    // they respawn on a TEN-MINUTE timer, and six Taskmasters stand on the only
+    // ramp between the two rooms. Killing those is real progress and the driver
+    // holds for them.
+
+    // Broodlord Lashlayer — boss 3, and the route's owner in
+    // DungeonClearRouteRegistry.
+    constexpr uint32 NPC_BROODLORD_LASHLAYER = 12017;
+
+    // ...and his index in instance_blackwing_lair's own BWLEncounter enum
+    // (DATA_BROODLORD_LASHLAYER = 2), which is what GetBossState is keyed on.
+    // Read rather than derived: the instance's index space is the script's, not
+    // the roster's, and the two agree here only by coincidence.
+    constexpr uint32 BROODLORD_ENCOUNTER_INDEX = 2;
+
+    // THE DRAKE HALL, and why its four bosses need naming here at all.
+    //
+    // Firemaw stands at (-7520.2, -1025.8, 449.1) — **24.7yd STRAIGHT ABOVE
+    // approach anchor 7** at (-7520.5, -1023.3, 424.5), which is 2.5yd from him
+    // in plan view. The hall the raid walks from Vaelastrasz to the staging point
+    // runs directly under his room, and a level-63 boss's aggro radius is about
+    // 25yd, measured in 3D. In tp-20260828-121941-1 that tripped in four of five
+    // runs: one bot inside the radius (21.8yd) aggros him, `BossAI::_JustEngagedWith`
+    // calls `DoZoneInCombat()` — every player in the map within 250yd, no LOS and
+    // no reachability test — and all twenty-five bots enter combat with a boss two
+    // floors up while he never leaves his spawn. The raid then spends the rest of
+    // the run split across two floors, and some of it walks up through the ceiling
+    // to reach him (a PathGenerator with no navmesh route still hands a player a
+    // straight line — see the ac-pathgenerator note).
+    //
+    // Nothing here can stop him being flagged; the exclusion rows in
+    // DcTargetExclusionRegistry stop the raid ACTING on it.
+    constexpr uint32 NPC_FIREMAW    = 11983;
+    constexpr uint32 NPC_EBONROC    = 14601;
+    constexpr uint32 NPC_FLAMEGOR   = 11981;
+    constexpr uint32 NPC_CHROMAGGUS = 14020;
+
+    // The four Corrupted Whelps (red / green / blue / bronze). Level 60 normals,
+    // 4 578 HP, no AI and no script, MovementType 1 — they aggro on proximity,
+    // individually, and they are back thirty seconds after they die. The
+    // DcNeverTargetRegistry rows are keyed on these; nothing else does.
+    constexpr uint32 NPC_CORRUPTED_RED_WHELP    = 14022;
+    constexpr uint32 NPC_CORRUPTED_GREEN_WHELP  = 14023;
+    constexpr uint32 NPC_CORRUPTED_BLUE_WHELP   = 14024;
+    constexpr uint32 NPC_CORRUPTED_BRONZE_WHELP = 14025;
+
+    // The two elites the transit stands and fights: Blackwing Taskmaster (9
+    // spawns, six of them stacked on the ramp at (-7711,-1070,445)) and Death
+    // Talon Hatcher (11 spawns, scattered through both rooms). 600s respawn
+    // each, so unlike the whelps a kill here is progress that stays bought.
+    constexpr uint32 NPC_BLACKWING_TASKMASTER = 12458;
+    constexpr uint32 NPC_DEATH_TALON_HATCHER  = 12468;
+
+    // The Suppression Device: GameObject 179784, `type 6` (TRAP), 38 spawns.
+    // go_suppression_device casts 22247 every 5s while it is GO_STATE_READY —
+    // 20yd radius, -80% move speed, -80% cast speed, 6s duration, i.e. permanent
+    // while you stand in it.
+    //
+    // DISARMING IS NOT OURS. mod-playerbots already owns it
+    // (BwlSuppressionDeviceTrigger / BwlTurnOffSuppressionDeviceAction, Ai/Raid/
+    // BWL/), turning off any READY device within 15yd at ACTION_RAID (60) — and
+    // this box runs `AiPlayerbot.BotCheats = "food,taxi,raid"`, so every bot
+    // qualifies, not just rogues. A device turned off that way NEVER re-arms
+    // (nothing in the bot path calls DoAction(ACTION_DISARMED), so
+    // EVENT_SUPPRESSION_RESET is never scheduled, and a bare SetGoState sets no
+    // cooldown for autoCloseTime to fire off). One pass is enough.
+    //
+    // All the transit owes that rung is a TICK: 17 of the 19 route-adjacent
+    // devices are within 10yd of the route line, so walking the route reaches
+    // them with no detour — the driver only has to stop walking for one tick
+    // when an armed one is close enough for the disarm to fire.
+    constexpr uint32 GO_SUPPRESSION_DEVICE = 179784;
+
+    // THE STAGING POINT — the last genuinely clean ground before the gauntlet,
+    // at the head of the climb into the lower room.
+    //
+    // Measured against map 469's spawn table: nearest whelp 40.8yd, nearest
+    // device 50.1yd, ZERO whelps within 30yd. The ordinary clear delivers the
+    // raid here by itself (it is out of combat up to this point), so the
+    // transit's first step is a short intra-room hop, not a haul.
+    constexpr float TRANSIT_STAGE_X = -7630.9f;
+    constexpr float TRANSIT_STAGE_Y = -915.5f;
+    constexpr float TRANSIT_STAGE_Z = 437.3f;
+
+    // WHERE THE STAGING POINT SITS IN THE AUTHORED ROW, and why that is not zero.
+    //
+    // The registry row for Broodlord is two halves (see RegisterBlackwingLairRoute):
+    // anchors 0-19 are the un-crossed approach from Vaelastrasz's chamber, which
+    // exists so the ordinary clear has a polyline to walk and a cursor to project
+    // onto, and 20-39 are the crossing itself. The transit driver must NOT see the
+    // approach — its kernel keys the gather gate on `cursorIndex == 0` meaning "at
+    // staging", and its arm pins the cursor to 0 — so BwlTransitRoute slices the
+    // row here and hands the driver a route whose anchor 0 is the staging point,
+    // exactly as it was before the approach was authored.
+    //
+    // Certified by t/TestBlackwingLairSuppressionRouteProbe: the row's anchor at
+    // this index must BE the staging point, or the driver runs its cursor down the
+    // wrong half of the route.
+    constexpr std::size_t TRANSIT_STAGE_ANCHOR_INDEX = 20;
+
+    // THE BROODLORD STANDOFF — where the transit ends and the ordinary raid
+    // pipeline (muster, standoff, engage) takes back over. Nearest whelp 27.5yd,
+    // nearest device 21.7yd; clean ground, on the upper room's floor.
+    constexpr float TRANSIT_END_X = -7573.8f;
+    constexpr float TRANSIT_END_Y = -1033.5f;
+    constexpr float TRANSIT_END_Z = 449.3f;
+
+    // How close the leader has to get before the transit is over. Also the
+    // predicate's own OFF switch: the event is due while the leader is inside the
+    // corridor and NOT yet here, so arriving simply stops it being due. There is
+    // no completion latch to reset — a leader shoved back into the gauntlet
+    // re-arms it, which is the correct answer.
+    constexpr float TRANSIT_END_RADIUS = 10.0f;
+
+    // THE CORRIDOR — the axis-aligned box that is the two suppression rooms plus
+    // the approach and NOTHING else on the map. The transit's activation
+    // predicate is gated on the leader being inside it, which is what keeps a
+    // rung registered on every bot's combat engine inert for the other seven
+    // encounters of this raid.
+    //
+    // Derived from the route: x spans the climb (-7631) to the standoff (-7574),
+    // y spans the upper room's far wall (-1130) to the head of the climb (-905),
+    // z spans the lower room's floor (437) to the upper room's (449) with a
+    // couple of yards of slack either side. Vaelastrasz's chamber (-7484,-1016,
+    // z 409) is outside it on x, y AND z; the Razorgore chamber (-7615,-1027,
+    // z 409-413) is outside it on z.
+    constexpr float TRANSIT_BOX_MIN_X = -7720.0f;
+    constexpr float TRANSIT_BOX_MAX_X = -7570.0f;
+    constexpr float TRANSIT_BOX_MIN_Y = -1130.0f;
+    constexpr float TRANSIT_BOX_MAX_Y = -905.0f;
+    constexpr float TRANSIT_BOX_MIN_Z = 430.0f;
+    constexpr float TRANSIT_BOX_MAX_Z = 455.0f;
+
+    // Is `bot` standing inside the suppression corridor right now? One bbox test,
+    // and the transit's cheapest real gate after the map compare.
+    bool InTransitCorridor(Player* bot);
+
+    // How far INSIDE the pack leash a drifted member is walked back to.
+    //
+    // The margin IS the hysteresis, so it is neither zero nor a hair: land exactly
+    // on the boundary and the next yard of drift re-arms the rung. It must stay
+    // well under the leash — a margin that reached it would put the hold point
+    // back at the cursor itself and bring the cross-the-whole-pack lap back with
+    // it. Four yards is the Razorgore camp's number, which is authored against the
+    // same shape (CAMP_HOLD_MARGIN) and survived a live raid.
+    //
+    // Not a setting: it is a property of the hold, not of the leg, and it only
+    // means anything relative to TransitPackLeash — which IS a setting, and whose
+    // clamp floor (10) keeps this comfortably inside it.
+    constexpr float TRANSIT_PACK_HOLD_MARGIN = 4.0f;
+
+    // Grid-scan radius for the driver's per-tick elite / device sweeps. Wide
+    // enough to see every hold-worthy thing from the middle of a leg (the widest
+    // hold radius is 20yd and a leg is up to 33yd), tight enough that it never
+    // reaches across the room divider into the other suppression room.
+    constexpr float TRANSIT_SCAN = 40.0f;
+
+    // The event row and the hook that drives it. Event ids are per-map (1
+    // Razorgore, 2 Vaelastrasz); HOOK ids are ONE FLAT SPACE across every dungeon
+    // (see ObjectiveHookRegistry::AddHook) — 15-19 are the Violet Hold's and 20
+    // is Razorgore's, so this is 21.
+    constexpr uint32 EVENT_SUPPRESSION_TRANSIT = 3;
+    constexpr uint32 HOOK_SUPPRESSION_TRANSIT  = 21;
+
+    // THE THREE HOLD WATCHDOGS, and why they are three numbers rather than one.
+    //
+    // The holds are not the same KIND of wait. A device disarm is a tick or two of
+    // standing still while somebody else's ACTION_RAID rung fires; a straggler
+    // catching up across a 24yd leg is tens of seconds; an elite fight on this leg
+    // is minutes (the live budget allows ~3 of the crossing's 4). One shared
+    // watchdog would either release the disarm hold before that rung had a tick,
+    // or leave the leg parked behind a wedged straggler for the whole elite
+    // budget.
+    //
+    // None of them is a target. Each bounds ONE wait, and on expiry the driver
+    // walks on and logs which hold gave up — the member it leaves behind is
+    // stranded recovery's problem (relevance 42), which sits above this whole
+    // ladder.
+    constexpr uint32 TRANSIT_PACK_HOLD_TIMEOUT_MS   = 30000;
+    constexpr uint32 TRANSIT_ELITE_HOLD_TIMEOUT_MS  = 120000;
+    constexpr uint32 TRANSIT_DISARM_HOLD_TIMEOUT_MS = 1500;
+
+    // How far from the staging point the leader may be when the transit ARMS and
+    // still be asked to gather there.
+    //
+    // Past this the gather gate latches open immediately, and is logged: you
+    // cannot gather at a point you have already walked past, and a driver that
+    // insisted would march a leader standing in the upper room 300yd back through
+    // the gauntlet to form up. The case is a re-arm after a partial wipe, which is
+    // exactly when walking backwards is worst.
+    constexpr float TRANSIT_STAGE_SKIP_DIST = 60.0f;
+
+    // How far the leader may be from its own stored cursor before the projection
+    // is believed over it (DcSuppressionTransit::ResolveCursor). Inside a working
+    // crossing nothing is ever this far from the anchor it is walking to; a leader
+    // that is has died and come back, and the stored index is a fact about a
+    // previous attempt.
+    constexpr float TRANSIT_CURSOR_RESYNC_DIST = 60.0f;
+
+    // Throttle on the driver's per-tick telemetry line. Without the line a failed
+    // run says nothing about WHICH of the four mechanisms is still biting; without
+    // the throttle it says it several times a second, per bot.
+    constexpr uint32 TRANSIT_TELEMETRY_MS = 3000;
+
+    // Bound on the whole crossing, as the step's timeout.
+    //
+    // §6.2's live budget is FOUR MINUTES from the staging point (54s of
+    // unsuppressed walking plus ~3min of elite fights), so ten minutes is a
+    // ceiling on a genuinely broken run and never the binding constraint on a
+    // working one. The event is Repeatable and every yielded tick re-bases the
+    // step clock, so this only fires when the driver has held (returned Running)
+    // continuously for the whole budget — i.e. when a hold's own watchdog has
+    // failed to release, which is the one shape nothing else here can see.
+    constexpr uint32 TRANSIT_TIMEOUT_MS = 600000;
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);
@@ -679,5 +929,14 @@ void RegisterMaraudonWings(std::unordered_map<uint32, DungeonWingLayout>& store)
 // directly — and are invoked from DungeonClearRouteRegistry's own one-time
 // seed, for the same linkage reason as the tables above.
 void RegisterAzjolNerubRoute();
+// Blackwing Lair (469) — Vaelastrasz -> Broodlord Lashlayer, the suppression
+// rooms. Unlike the Azjol-Nerub row this is NOT there because the mesh defeats
+// the pathfinder: the corridor routes fine. It is there because the SUPPRESSION
+// TRANSIT needs a fixed, monotone polyline to run a cursor along — the pack
+// leash, the hold decisions and the telemetry all measure against the same
+// authored legs, and a route re-derived every tick from the leader's live
+// position is not something a cursor can advance through. See
+// DcBlackwingLair's transit block.
+void RegisterBlackwingLairRoute();
 
 #endif

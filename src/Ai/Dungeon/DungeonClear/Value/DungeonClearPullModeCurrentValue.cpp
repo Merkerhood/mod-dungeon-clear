@@ -11,6 +11,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -51,10 +52,67 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // event's step 0 completed and armed this stand-down. `decision` then read
     // PatrolHold for 913 seconds, the sweep never advanced past step 0, and the run
     // failed the 600s no-progress watchdog with the party standing in the hallway.
-    if (DungeonEventExecutor::IsPersistentAnchoredEventActive(context))
+    //
+    // ANCHORED IS ONLY HALF OF IT. The predicate below also covers a CONDITIONAL
+    // event whose row carries `ownsThePull` — BWL's Suppression Rooms crossing.
+    // The anchored-only read could never see that one: it resolves the event from
+    // DcKey::NextDungeonBoss and requires an Objective anchor, while a conditional
+    // event drives BETWEEN anchors with the next BOSS still sitting in that value
+    // (live: the whole crossing ran with NextDungeonBoss = Broodlord, kind boss).
+    // So the stand-down never armed, the advanced pull's Idle branch answered every
+    // whelp aggro with a fresh camp walked back along the route, and the tank ran
+    // the gauntlet backwards 16-102yd at a time — nine legs in four minutes on
+    // tr-20260828-142623-4. See DungeonEvent::ownsThePull.
+    //
+    // A NO_STOP ROUTE LEG STANDS THE PULL DOWN THE SAME WAY, and it wants exactly
+    // this behaviour rather than a variant of it — no camp, no drag, no LOS-break
+    // setback, no scout-lag stranding, the stored setting untouched and handed back
+    // on the way out. So it shares the branch and the latch below rather than
+    // growing a third one.
+    //
+    // What it buys: some stretches of an authored route are ground to CROSS, not
+    // ground to camp, for reasons the pull planner cannot see. BWL's
+    // Vaelastrasz->staging hall runs 24.3yd under the upper suppression room and
+    // is inside that floor's 3D aggro radius for 24% of its length. Left to plan,
+    // the pull system answers the legitimate pack at the FAR end of that hall with
+    // `safe-camp: ranged attacker -> requiring LOS break, maxDrag extended to
+    // 60yd`, drags the camp BACKWARD into the middle of the overhead band, and
+    // parks the raid there to fight, loot and rest. On tp-20260828-175353-1 that is
+    // where all five raids ended their run. See DcNoStopZone.
+    if (DungeonEventExecutor::IsPullOwningEventDriving(bot, context) ||
+        DcNoStopZone::IsInNoStopZone(bot, context))
     {
         pull.ClearDynamicVerdict();
+        // LOWER THE LATCHED BOOL TOO, not just the effective value. Returning
+        // false here skips UpdateDynamicPullMode, which is the only writer of
+        // DcKey::PullMode — so whatever the governor had latched when the event
+        // armed stays latched for the event's whole duration. That bool is what
+        // the follower camp-hold reads (DcLeaderSignal::GetLeaderPullInfo /
+        // GetLeaderCampHold, DcPartyState), so arming mid-Advanced-pull would pin
+        // the party at a stale camp while the tank fights the event alone. Latched
+        // as `eventForced` so the handback below can never clobber a player choice,
+        // exactly like scriptedForced one clause down.
+        if (!pull.eventForced)
+        {
+            pull.eventForced = true;
+            context->GetValue<bool>(DcKey::PullMode)->Set(false);
+            DcLeaderSignal::SetLeaderDazeImmunity(bot, false);
+        }
         return false;
+    }
+    if (pull.eventForced)
+    {
+        pull.eventForced = false;
+        // Same handback as the scripted stage's: Off/On go back in lock-step with
+        // the setting, Dynamic is left for the governor call at the bottom of this
+        // function to re-decide from the pack in front of the tank.
+        uint32 const setting = context->GetValue<uint32>(DcKey::PullSetting)->Get();
+        if (setting != 2u)
+        {
+            bool const active = (setting == 1u);
+            context->GetValue<bool>(DcKey::PullMode)->Set(active);
+            DcLeaderSignal::SetLeaderDazeImmunity(bot, active);
+        }
     }
 
     // SCRIPTED PULL STAGE (ScriptedPullRegistry) — the mirror image of the override

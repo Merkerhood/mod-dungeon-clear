@@ -49,6 +49,7 @@ public:
         creators["dungeon clear hazard vacate"] = &DungeonClearActionContext::hazard_vacate;
         creators["dungeon clear razorgore orb"] = &DungeonClearActionContext::razorgore_orb;
         creators["dungeon clear razorgore camp"] = &DungeonClearActionContext::razorgore_camp;
+        creators["dungeon clear transit pack"] = &DungeonClearActionContext::transit_pack;
         creators["dungeon clear hold fire"] = &DungeonClearActionContext::hold_fire;
         creators["dungeon clear hakkar suppressor"] = &DungeonClearActionContext::hakkar_suppressor;
         creators["dungeon clear hakkar flame"] = &DungeonClearActionContext::hakkar_flame;
@@ -113,6 +114,7 @@ private:
     static Action* hazard_vacate(PlayerbotAI* ai) { return new DungeonClearHazardVacateAction(ai); }
     static Action* razorgore_orb(PlayerbotAI* ai) { return new DungeonClearRazorgoreOrbAction(ai); }
     static Action* razorgore_camp(PlayerbotAI* ai) { return new DungeonClearRazorgoreCampAction(ai); }
+    static Action* transit_pack(PlayerbotAI* ai) { return new DungeonClearTransitPackAction(ai); }
     static Action* hold_fire(PlayerbotAI* ai) { return new DungeonClearHoldFireAction(ai); }
     static Action* hakkar_suppressor(PlayerbotAI* ai) { return new DungeonClearHakkarSuppressorAction(ai); }
     static Action* hakkar_flame(PlayerbotAI* ai) { return new DungeonClearHakkarFlameAction(ai); }

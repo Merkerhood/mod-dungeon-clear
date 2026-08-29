@@ -416,6 +416,30 @@ struct DungeonEvent
     // stairs to the bosses) while the event drives, instead of being held at it.
     bool persistent{false};
 
+    // This event OWNS THE PULL while it drives: the whole dynamic/advanced pull
+    // system stands down (DungeonClearPullModeCurrentValue) and the scout-lag
+    // drops with it (DcLeaderSignal::IsLeaderDynamicScouting), exactly as they do
+    // for a persistent ANCHORED event. The tank face-pulls whatever it meets and
+    // fights it where it stands; the party follows close and the leader-fight
+    // assist collapses onto it.
+    //
+    // The anchored path infers this from `persistent` alone, but it cannot serve a
+    // CONDITIONAL event: IsPersistentAnchoredEventActive reads NextDungeonBoss and
+    // requires an Objective anchor, and a conditional event drives BETWEEN anchors
+    // (FindDueConditionalEvent) with the next boss still sitting in that value. So
+    // the conditional half is opted in per row rather than inferred — persistence
+    // says "keep my progress across combat gaps", which is not the same claim.
+    //
+    // BWL's Suppression Rooms is why this exists. The crossing is a TRANSIT, and
+    // the advanced pull's Idle branch answers every unplanned aggro by walking a
+    // fresh camp BACK along the route until it finds ground clear of hostiles —
+    // which, among 160 whelps on a 30s respawn, means all the way out to maxDrag.
+    // Live (tr-20260828-142623-4): nine drag legs in four minutes, 16-71yd each,
+    // one sibling run at 102yd, with the transit cursor falling 10/19 -> 6/19 and
+    // re-walking the same four anchors. The tank ran the gauntlet backwards, over
+    // and over. See DcSuppressionTransitDecision.h.
+    bool ownsThePull{false};
+
     // Conditional events only, panel cosmetics. By default an off-path
     // conditional event renders last in the `dc bosses` panel (index 99). When
     // this names a boss entry, the event instead sorts just BEFORE that boss —
@@ -458,6 +482,10 @@ public:
     EventBuilder& Optional();
     EventBuilder& Repeatable();
     EventBuilder& Persistent();
+    // Stand the whole pull system (and the scout-lag) down for as long as this
+    // event drives — see DungeonEvent::ownsThePull. Conditional events only; the
+    // anchored path already infers it from Persistent().
+    EventBuilder& OwnsThePull();
     // Keep driving this conditional event while the party is IN COMBAT (see
     // DungeonEvent::drivesInCombat). For continuous wave encounters only.
     EventBuilder& DrivesInCombat();

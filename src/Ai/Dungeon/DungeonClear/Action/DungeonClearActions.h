@@ -838,6 +838,27 @@ public:
     bool Execute(Event event) override;
 };
 
+// Walk back inside the transit pack leash. Every member but the leader, both
+// engines, while the leader is crossing the Suppression Rooms.
+//
+// The destination is the near EDGE of the leash around the leader's live route
+// cursor, not the cursor itself — the CAMP_HOLD_MARGIN lesson, and it matters
+// more here than it did at Razorgore because the anchor is moving toward the bot
+// as well: aiming at the centre of a leash that is itself advancing makes every
+// correction a sprint past the leader instead of a step back into formation.
+//
+// Nothing in this rung walks a bot FORWARD past the cursor, and nothing holds one
+// there. It only ever closes a gap. Driven by DungeonClearTransitPackTrigger.
+class DungeonClearTransitPackAction : public DcMovementAction
+{
+public:
+    DungeonClearTransitPackAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear transit pack")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // LET GO of a creature DcTargetExclusionRegistry bars right now. One tick, three
 // side effects, and then the trigger that fires it goes inert:
 //

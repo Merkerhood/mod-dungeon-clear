@@ -114,6 +114,62 @@ namespace
         return DcMovement::SplinePath(botAI, window);
     }
 
+    // A TRANSIT OWNS THE COLUMN — follow-tank stands down for it. A true return
+    // means "return false, this tick is not yours".
+    //
+    // Two rungs cannot both position the column, and during a transit they aim at
+    // points that are nowhere near each other. DungeonClearTransitPackTrigger
+    // (relevance 36) walks a follower to within `TransitPackLeash - margin` of the
+    // LEADER'S PUBLISHED ROUTE CURSOR; this action (25) walks it to a crumb `lag`
+    // yards behind the TANK. On an ordinary leg those coincide, because the tank
+    // is at its own cursor. On the Blackwing Lair Suppression Rooms crossing it
+    // does not: the Suppression Device aura is -80% movement speed and the tank
+    // eats it almost continuously while followers spend much of the leg outside a
+    // bubble, so the tank falls a MEASURED median 21yd — p90 31, max 48 — behind
+    // the cursor it is publishing (tr-20260828-183508-4, 310 driver ticks; 80 of
+    // them beyond the 25yd pack leash on their own).
+    //
+    // What that produced: the pack rung walks a follower forward to the cursor
+    // band and, the instant it is inside, goes inert by design ("the fine
+    // positioning inside the pack stays the raid strategy's") and hands the tick
+    // down to follow-tank — which walks it 17yd back down the corridor to the
+    // snared tank, out of the band again, so the pack rung re-arms and walks it
+    // forward. In that run 114 follower moves inside the crossing corridor went
+    // BACKWARDS along the route; the trail branch below was logging on every one
+    // of them (80% of its moves went backwards, median 17.4yd), while the pack
+    // rung as the sole mover went backwards 0 times in 57 and the tank 0 in 10.
+    // That is the reported "the raid walks back through the suppression room over
+    // and over"; it is followers-only because a leader never trails itself.
+    //
+    // It also starved the crossing it was undoing. The driver's advance gate is a
+    // quorum on the followers' distance to the CURSOR, so dragging them off the
+    // cursor is precisely what kept `pack trailing` holding 217 of 310 ticks.
+    //
+    // Standing down does not strand anyone: outside the band the pack rung
+    // outranks this action anyway, and inside it the right behaviour is to hold
+    // and fight rather than retrace 17yd through a 30s-respawn whelp field.
+    // Returning false (not true) yields the tick to the rotation / rest / loot
+    // pipeline exactly as the in-bubble scout-lag branch below does.
+    bool StandDownForTransit(Player* bot)
+    {
+        Position anchor;
+        if (!bot || !DcLeaderSignal::GetTransitAnchor(bot, anchor))
+            return false;
+
+        // Same loose end StandDownForRezzer clears, for the same reason: this
+        // action installs a PERSISTENT MoveFollow generator, and with it no longer
+        // executing nothing else cancels it — it would keep driving the follower
+        // back to the tank underneath the pack rung's point moves. Clear it once.
+        // Self-limiting: after this the active generator is the pack walk itself,
+        // so the guard is false on every later tick and an in-flight transit glide
+        // is never chopped (the driver deliberately avoids a stop packet per tick
+        // of a two-minute elite fight; so must this).
+        MotionMaster* mm = bot->GetMotionMaster();
+        if (mm && mm->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
+            DcMovement::StopBot(bot, DcMovement::Stop::Hold);
+        return true;
+    }
+
     // THE ELECTED REZZER MUST BE ABLE TO WALK — every mover on this bot stands
     // down for it. Call at the top of a follower rung; a true return means
     // "return false, this tick is not yours".
@@ -280,6 +336,20 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     else
     {
         lootYieldStart = 0;  // not looting -> reset the commit timer
+    }
+
+    // A transit is driving the column to a published cursor: every branch below
+    // positions against the TANK instead, and while the tank is snared behind its
+    // own cursor those two answers fight each other tick by tick. See
+    // StandDownForTransit. Placed after the loot-policy upkeep above so a
+    // follower's give-up timers keep advancing across the crossing (five minutes
+    // of whelp corpses is exactly when an unfinishable one gets camped).
+    if (StandDownForTransit(bot))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] follow-tank: standing down, the transit owns the column",
+                  bot->GetName());
+        return false;
     }
 
     // In DYNAMIC pull mode, trail the tank at a lag distance while it scouts toward
@@ -1638,6 +1708,38 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
     if (!target && !nearestFighter)
         return false;
 
+    // THE GROUPMATE FALLBACK NEEDS SOMEWHERE TO GO. Walking at `nearestFighter`
+    // when no attacker resolves is only defensible while the fight is somewhere
+    // ELSE — the comment above says so: "the tank at least rounds the corner back
+    // into sight". A flagged member standing ON the tank has no corner to round,
+    // so the destination is the tank's own position, the mover refuses it, and the
+    // unconditional `return true` at the bottom of this function burns the tick.
+    // At DcRel::LeaderAssist (24) that starves DcRel::Advance (15) — one action
+    // per tick — and the party never walks out of whatever is flagging it, so the
+    // flag never clears either.
+    //
+    // Live: tp-20260828-175353-1, all five BWL raids. The party parked under the
+    // upper suppression room, trash 24.3yd overhead flagged it through the floor
+    // and went EVADING where it stood, IsLevelReachable (correctly) rejected every
+    // holder, and the tank logged nothing but
+    //   leader assist: closing on party fight (0.0yd, target=groupmate)
+    //   move REFUSED ... (dest <own position> at 0.0yd)
+    // for 3m17s, watchdogs all clear, until the operator aborted. Force-clearing
+    // the phantom combat could not break it (59 clears in 3.5 min for one party):
+    // the only escape is to WALK, and this rung is what was starving the walker.
+    //
+    // Bounded by the same distance the follower rungs treat as "already here", so
+    // a genuine round-the-corner assist — the case this fallback exists for — is
+    // untouched.
+    if (!target && bestFighterDist <= DC_LEADER_ASSIST_COLOCATED_RANGE)
+    {
+        DC_PULL_TRACE("[DC:{}] leader assist: nothing reachable to assist and the "
+                      "nearest flagged member is {:.1f}yd away -> yielding the tick "
+                      "to the driving ladder",
+                      bot->GetName(), bestFighterDist);
+        return false;
+    }
+
     Unit* const moveTo = target ? target : static_cast<Unit*>(nearestFighter);
 
     // Take threat ONLY once the pack is in sight. Force-combating while still out of
@@ -1676,10 +1778,13 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
                   target ? target->GetGUID().ToString() : "groupmate",
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
-    DcMoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
-           moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
-           /*normal_only*/ false, /*exact_waypoint*/ false, prio);
-    return true;
+    // Report the move's own verdict rather than discarding it. A refused move is a
+    // tick this rung did not use, and claiming it anyway is what let the co-located
+    // case above spin forever; the same claim on any other refusal (no path, a
+    // duplicate order) would sit on the ladder just as hard.
+    return DcMoveTo(moveTo->GetMapId(), moveTo->GetPositionX(), moveTo->GetPositionY(),
+                    moveTo->GetPositionZ(), /*idle*/ false, /*react*/ false,
+                    /*normal_only*/ false, /*exact_waypoint*/ false, prio);
 }
 
 namespace

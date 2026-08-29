@@ -1428,6 +1428,31 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
            prog.stepIndex < ev->steps.size();
 }
 
+bool DungeonEventExecutor::IsPullOwningEventDriving(Player* bot, AiObjectContext* context)
+{
+    if (!bot || !context)
+        return false;
+
+    // The anchored half, unchanged: a persistent objective anchor that has started.
+    if (IsPersistentAnchoredEventActive(context))
+        return true;
+
+    // The conditional half. There is no progress/anchor state to consult here —
+    // a conditional event IS its activation predicate, and FindDueConditionalEvent
+    // is the same read the event's own driving rungs make, so asking it is asking
+    // "is this event driving right now" directly.
+    //
+    // requireDrivesInCombat is deliberately left false: the pull system must stand
+    // down on BOTH engines. A crossing whose driver only opts into the combat
+    // engine still must not have the non-combat pull trigger committing packs
+    // behind its back between fights.
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+    DungeonEvent const* ev = FindDueConditionalEvent(bot, context, map->GetId());
+    return ev && ev->ownsThePull;
+}
+
 bool DungeonEventExecutor::ActiveEngageStep(AiObjectContext* context, uint32& outEntry,
                                             float& outSearchRadius, bool anyStep)
 {

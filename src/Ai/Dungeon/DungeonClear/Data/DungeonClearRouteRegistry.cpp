@@ -25,6 +25,7 @@ namespace
         static bool const seeded = []
         {
             RegisterAzjolNerubRoute();
+            RegisterBlackwingLairRoute();
             return true;
         }();
         (void)seeded;

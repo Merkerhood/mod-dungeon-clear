@@ -284,6 +284,24 @@ constexpr float DC_FIGHT_HOLDER_RADIUS = 40.0f;
 // costs one stranded-recovery teleport.
 constexpr float DC_ENGAGEMENT_RADIUS = 100.0f;
 
+// How close a flagged groupmate has to be before the leader-assist rung's
+// walk-at-the-groupmate fallback stops being a movement at all
+// (DungeonClearLeaderAssistAction). That fallback exists to round a corner back
+// into sight of a fight the tank never saw; inside this band there is no corner,
+// the destination is where the tank already stands, and claiming the tick starves
+// the driving ladder underneath. Deliberately small — a genuine round-the-corner
+// assist is tens of yards, and the failure this bounds was measured at 0.0yd.
+constexpr float DC_LEADER_ASSIST_COLOCATED_RANGE = 5.0f;
+
+// Half-width of the capsule around a NO_STOP route leg within which the pull
+// system stands down (DcNoStopZone). Wide enough to cover a raid's natural
+// spread across the corridor and the wobble of a party that has just fought,
+// deliberately not wide enough to leak into the rooms either end of a span —
+// on the case this was authored for (BWL's approach hall) the corridor is
+// ~20yd across and the nearest place a pull is legitimate is 40yd past the
+// last flagged anchor.
+constexpr float DC_NO_STOP_CORRIDOR = 18.0f;
+
 // The max party-spread default lives in DcSettingsRegistry ("PartyMaxSpread");
 // the trigger, the advance gate, and the status publisher all read it through
 // DcSettings so per-run addon overrides apply. The HP/mana recovery thresholds

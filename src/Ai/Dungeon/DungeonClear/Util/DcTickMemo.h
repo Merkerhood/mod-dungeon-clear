@@ -52,6 +52,10 @@ struct DcTickMemo
     std::int8_t partyCombatFlag = -1;
     std::int8_t partyHeldByLiveEnemy = -1;
     float       partyHeldRadius = -1.0f;
+    // Standing on a NO_STOP leg of the authored route (DcNoStopZone) — a walk of
+    // the route's anchors, asked by the pull-mode value and the leader-assist
+    // trigger on the same tick.
+    std::int8_t noStopZone = -1;
 
     static constexpr std::uint32_t kMemoWindowMs = 50;
 

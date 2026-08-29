@@ -175,6 +175,43 @@ namespace
     // NOT LISTED: the Prison Door Seal (30896), Defense Dummy Target (30857) and
     // Defense System (30837). All three are NOT_SELECTABLE as well as immune, so
     // they are invisible to every selector on both sides of the question.
+    // Blackwing Lair (469) — the four Corrupted Whelps (14022 red / 14023 green /
+    // 14024 blue / 14025 bronze), and the whole of class 3.
+    //
+    // THE ARITHMETIC, which is the only argument this row has and the only one it
+    // needs. The two Suppression Rooms between Vaelastrasz and Broodlord Lashlayer
+    // hold 160 of them — 79 on the lower floor (z 440), 81 on the upper (z 449) —
+    // on a THIRTY-SECOND respawn. That is a spawn rate of 5.3/s across the
+    // complex and ~3.3/s for the hundred that sit within 20yd of the 375yd route
+    // line the clear has to cross. A 40-bot raid can out-DPS that. It cannot
+    // out-TRAVEL it, because DcCombatFlag::MayDrive is false for as long as
+    // anything in the party is engaged and Advance is registered only in the
+    // NON-combat engine — so with the whelps up the clear has no driver at all.
+    // Over the 268 seconds the crossing takes at the Suppression Devices' -80%
+    // move speed the route-adjacent hundred respawn NINE times: ~900 whelp kills
+    // to cross one leg, against a party moving at 1.4yd/s.
+    //
+    // WHAT THE CLEAR WAS DOING WITH THEM, which is the part this row removes. The
+    // corridor blocking-trash scan, the en-route pack sweep and the map-wide
+    // stalled fallback all read a whelp as a legitimate target, and they pick the
+    // NEAREST one — so the tank is continuously walked BACK into the room it has
+    // just crossed for a mob that will be replaced in thirty seconds. Half of
+    // "they just kill trash forever" is that walk, and it is pure loss: the whelps
+    // are level-60 normals with no AI, no script and no formation, worth nothing
+    // to a raid that only has to get past them.
+    //
+    // NOT PACIFISM, and this matters more here than anywhere else in the table.
+    // The stock combat engine is untouched, so a whelp that aggros a bot is still
+    // fought and still cleaved down — which on a 375yd walk through a hundred of
+    // them is free AoE and exactly what the transit wants. All that is removed is
+    // the clear's decision to go LOOKING.
+    //
+    // NOT LISTED, deliberately: the Death Talon Hatchers (12468) and Blackwing
+    // Taskmasters (12458) in the same two rooms. They are elites on a TEN-MINUTE
+    // respawn, thirteen of the twenty are within 25yd of the route, and six
+    // Taskmasters stand on the only ramp between the two rooms — killing those is
+    // real progress that stays bought, and the transit driver stands and fights
+    // them on purpose. Class 3 is about a spawn rate, not about difficulty.
     DcNeverTargetRow const kRows[] =
     {
         { 576, 26793 },  // The Nexus — Crystalline Frayer (seed pod; unkillable until Ormorok dies)
@@ -182,6 +219,10 @@ namespace
         { 619, 30385 },  // Ahn'kahet — Twilight Volunteer (24/25 permanently unattackable; the 25th walks in)
         { 600, 27583 },  // Drak'Tharon Keep — Novos Summon Target (killing one softlocks the Novos gate)
         { 608, 31079 },  // The Violet Hold — Azure Saboteur (IMMUNE_TO_PC bait that walks the whole room)
+        { 469, 14022 },  // Blackwing Lair — Corrupted Red Whelp    (160 whelps, 30s respawn: infinite)
+        { 469, 14023 },  // Blackwing Lair — Corrupted Green Whelp  (see the class-3 note above)
+        { 469, 14024 },  // Blackwing Lair — Corrupted Blue Whelp
+        { 469, 14025 },  // Blackwing Lair — Corrupted Bronze Whelp
     };
 }
 

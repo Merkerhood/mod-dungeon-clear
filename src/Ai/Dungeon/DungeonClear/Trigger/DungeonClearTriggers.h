@@ -622,6 +622,38 @@ public:
     bool IsActive() override;
 };
 
+// BLACKWING LAIR ONLY, and only while the leader is crossing the Suppression
+// Rooms: is this bot outside the pack leash around the leader's route cursor?
+//
+// The Razorgore camp one room over holds the raid at a FIXED point. This one
+// cannot: on the Vaelastrasz -> Broodlord leg there is no place to stand, only a
+// 342yd line to walk, so the anchor MOVES — it is the authored anchor the leader
+// is currently walking toward, published tick by tick
+// (DcLeaderSignal::GetTransitAnchor).
+//
+// WHY A PACK RUNG EXISTS AT ALL ON THIS LEG. A raid strung over 100yd sweeps a
+// far larger cylinder of a room that holds 160 whelps on a 30s respawn, and
+// every straggler independently holds the WHOLE party in combat
+// (AnyPartyEngagement is party-wide) — which is what makes DcCombatFlag::MayDrive
+// false and leaves the clear with no driver. Travelling as one body is not a
+// nicety here, it is the precondition for travelling at all.
+//
+// INERT INSIDE THE LEASH, never "own the tick and return false": a bot already in
+// the pack must not contend with its own rotation for the whole crossing. The
+// leader is exempt — it IS the anchor.
+//
+// Free everywhere else: the map compare rejects before anything is read. See
+// DungeonClearTransitPackAction for where a drifted bot is walked back to.
+class DungeonClearTransitPackTrigger : public Trigger
+{
+public:
+    DungeonClearTransitPackTrigger(PlayerbotAI* botAI)
+        : Trigger(botAI, "dungeon clear transit pack", 1)
+    {
+    }
+    bool IsActive() override;
+};
+
 // IS THIS BOT AIMED AT SOMETHING IT IS FORBIDDEN TO DAMAGE RIGHT NOW?
 //
 // The second half of DcTargetExclusionRegistry, and the half that had to exist.

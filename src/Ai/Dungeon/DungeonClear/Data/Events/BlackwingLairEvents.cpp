@@ -3,6 +3,7 @@
  * and/or modify it under version 3 of the License, or (at your option), any later version.
  */
 
+#include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonRosterBuilders.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
@@ -178,6 +179,54 @@ namespace
                run.musterPhase ==
                    static_cast<uint8>(DcRaidMusterDecision::Phase::Ready);
     }
+
+    // DUE while the leader is inside the Suppression Rooms corridor with Broodlord
+    // still to kill and the standoff still to reach.
+    //
+    // Four probes, cheapest first, because this runs on every COMBAT tick of the
+    // DC leader on map 469 — and on this leg the party is in combat essentially
+    // without a break:
+    //
+    //   1. the map;
+    //   2. the corridor bbox, one axis-aligned test that is false everywhere else
+    //      on the map including both encounters immediately behind the gauntlet;
+    //   3. the standoff — being there is what ENDS the crossing. Expressing
+    //      completion as "not yet at the far end" rather than as a latch is what
+    //      makes it self-resetting: a leader shoved back into the rooms re-arms the
+    //      transit, which is the correct answer, and there is no flag for a wipe to
+    //      leave stale;
+    //   4. Broodlord's encounter bit, which reads DONE the moment he dies and is
+    //      the authoritative end of this leg.
+    //
+    // DELIBERATELY NOT a grid scan for Broodlord himself, which is the obvious
+    // fourth probe and would break the whole thing: he stands at the FAR END of
+    // the crossing, 342yd from the staging point where the transit has to arm, so
+    // any scan radius honest enough to be called a room scan reads "not there" for
+    // the first two thirds of the leg. The bit answers the question the scan was
+    // for, from anywhere, for free.
+    //
+    // AND NOT GATED ON COMBAT. The crossing starts from the staging point while it
+    // is still quiet — the gather gate is the first thing it does — and a predicate
+    // that waited for combat would arm the driver only after the raid had already
+    // walked into the whelps as a column.
+    //
+    // Nothing here has to stand the transit down during Broodlord's own fight: no
+    // conditional event without EncounterActive is offered while a raid encounter
+    // is in progress, and this one deliberately does not claim that exemption.
+    bool SuppressionTransitDue(Player* bot, AiObjectContext* /*context*/)
+    {
+        if (!bot || bot->GetMapId() != MAP_ID)
+            return false;
+
+        if (!DcBlackwingLair::InTransitCorridor(bot))
+            return false;
+
+        if (bot->GetExactDist(TRANSIT_END_X, TRANSIT_END_Y, TRANSIT_END_Z) <= TRANSIT_END_RADIUS)
+            return false;
+
+        InstanceScript* inst = bot->GetInstanceScript();
+        return !inst || inst->GetBossState(BROODLORD_ENCOUNTER_INDEX) != DONE;
+    }
 }
 
 // Grethok the Controller and the two Blackwing Guardsmen who hold the orb
@@ -274,6 +323,23 @@ DcBlackwingLair::VaelastraszState DcBlackwingLair::Vaelastrasz(Player* bot)
     return st;
 }
 
+// One axis-aligned box, and the transit's real gate. See the block in
+// DungeonEventTables.h for how the bounds were drawn and what they deliberately
+// exclude — everything else on this map, in particular the two encounters
+// immediately behind the gauntlet.
+bool DcBlackwingLair::InTransitCorridor(Player* bot)
+{
+    if (!bot || bot->GetMapId() != MAP_ID)
+        return false;
+
+    float const x = bot->GetPositionX();
+    float const y = bot->GetPositionY();
+    float const z = bot->GetPositionZ();
+    return x >= TRANSIT_BOX_MIN_X && x <= TRANSIT_BOX_MAX_X &&
+           y >= TRANSIT_BOX_MIN_Y && y <= TRANSIT_BOX_MAX_Y &&
+           z >= TRANSIT_BOX_MIN_Z && z <= TRANSIT_BOX_MAX_Z;
+}
+
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
 {
     // ONE Custom step, for the same reason the Violet Hold's wave driver is one:
@@ -358,6 +424,82 @@ void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
             .PanelAfterBoss(NPC_RAZORGORE)
             .Gossip(NPC_VAELASTRASZ, VAEL_GOSSIP_OPTION)
             .Build());
+
+    // CROSS THE SUPPRESSION ROOMS — the leg between Vaelastrasz and Broodlord,
+    // and the only content on this map DC cannot simply walk.
+    //
+    // ONE Custom step, for the Black Morass / Violet Hold reason: what this leg
+    // needs is a standing PREFERENCE re-decided every tick — walk, or stand for the
+    // pack, or stand for an elite, or stand for the disarm rung's tick — not a
+    // sequence. A step list can only say "do these in order and block on each",
+    // and every one of the twenty legs can be interrupted by any of the three
+    // holds at any point. The staging hop and the gather gate live INSIDE the hook
+    // for the same reason: they are the first two states of one controller, not
+    // two steps that happen to come first.
+    //
+    // DRIVES IN COMBAT — the load-bearing flag, and the whole point. The ordinary
+    // conditional rung stands down on IsInCombat(), which on a leg with a hundred
+    // whelps inside 20yd of the route is a rung that never runs. It is the same
+    // failure the flag was written for on map 269 ("the party never left combat so
+    // nothing ever walked it to a portal") and the same failure that leaves this
+    // leg with no driver at all (DcCombatFlag::MayDrive).
+    //
+    // STEPS OWN MOVEMENT — the driver delivers the leader on its own long-range
+    // spline, and the at-objective hold runs BEFORE Drive: without this, last
+    // tick's glide is cancelled before the hook can even see it and the raid
+    // creeps one tick at a time while every log line reports a healthy spline
+    // issue. (Old Hillsbrad's barrels; Black Morass's 151 attempts, 0 arrivals.)
+    // It also makes a Done RETURN YIELD THE TICK, which is what lets the raid
+    // fight through every hold.
+    //
+    // REPEATABLE — the crossing is not a thing that completes once. The condition
+    // going false (the leader reaches the standoff, or leaves the corridor, or
+    // Broodlord dies) is the only "done", and a leader shoved back into the rooms
+    // has to re-arm cleanly.
+    //
+    // PERSISTENT — the step list must not be rewound by the combat gaps. On this
+    // leg a "gap" is one whelp wave dying, several times a minute.
+    //
+    // NOT EncounterActive: no encounter is in progress here. This is the leg
+    // BETWEEN two of them, which is exactly where DC is supposed to work.
+    //
+    // NOT Optional, and that is a deliberate difference from the Razorgore row.
+    // Every hold this driver takes is watchdog-bounded from inside, so the step's
+    // own ten-minute timeout can only fire if a hold's watchdog has itself failed
+    // to release — a shape nothing else here can observe. Skipping quietly at that
+    // point would hand the leg back to a clear that provably cannot cross it;
+    // stalling names the problem for the human, who can `dc skip` if they disagree.
+    //
+    // PANEL: sorted AFTER Vaelastrasz rather than BEFORE Broodlord, which is what
+    // it visually wants and what it must not have — the same trap the rouse event
+    // above documents, and worse here. PanelBeforeBoss keys
+    // DcTargeting::HasPendingSummonEvent, which treats an unlatched gating event
+    // as "this boss must still be SUMMONED" and suppresses the dynamic pull within
+    // 80yd of him... and a REPEATABLE event is never latched, so the suppression
+    // would be permanent: the raid would arrive at Broodlord and never pull him.
+    // PanelAfterBoss carries no such second meaning, and Vaelastrasz is the anchor
+    // immediately before this leg, so the row lands in exactly the same place.
+    out.push_back(
+        EventBuilder(MAP_ID, EVENT_SUPPRESSION_TRANSIT, "Cross the Suppression Rooms")
+            .Conditional(&SuppressionTransitDue)
+            .Repeatable()
+            .Persistent()
+            // ZERO ADVANCED PULLS ACROSS THE GAUNTLET. The crossing is a transit,
+            // and a camp-drag is the exact opposite of crossing: the pull's Idle
+            // branch reacts to unplanned aggro by walking a fresh camp BACK along
+            // the route until it finds ground clear of hostiles, which among 160
+            // whelps on a 30s respawn is never nearby, so it runs out to maxDrag
+            // and hauls the tank there. With the pull stood down the tank
+            // face-pulls what it meets and fights it where it stands, the party
+            // stays tight (the scout-lag drops with the same predicate), and the
+            // transit's own elite / pack / disarm holds are left to pace the leg.
+            .OwnsThePull()
+            .DrivesInCombat()
+            .StepsOwnMovement()
+            .PanelAfterBoss(NPC_VAELASTRASZ)
+            .Custom(HOOK_SUPPRESSION_TRANSIT)
+                .Timeout(TRANSIT_TIMEOUT_MS)
+            .Build());
 }
 
 
@@ -414,4 +556,182 @@ void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
     };
 
     t.push_back(std::move(p));
+}
+
+
+// --- the Vaelastrasz -> Broodlord route ------------------------------------
+//
+// FORTY anchors, in two halves, and the split between them is the whole point of
+// the row:
+//
+//   0-19   THE APPROACH. Vaelastrasz's chamber to the staging point, 317.5yd.
+//          Nothing crosses a suppression room here; this is the ordinary walk the
+//          clear has always made, and it is authored for one reason only — see
+//          below.
+//   20-39  THE CROSSING. The staging point (anchor TRANSIT_STAGE_ANCHOR_INDEX) to
+//          the Broodlord standoff, 342.6yd across the two suppression rooms. This
+//          is the transit's CURSOR TRACK, and BwlTransitRoute hands the driver
+//          exactly this half so its anchor 0 is still staging.
+//
+// WHY THE APPROACH IS AUTHORED AT ALL, which is the S2043 lesson and cost four of
+// five raids the leg. It used to start at the staging point, so the 162yd from
+// Vaelastrasz's corpse to anchor 0 had no route — and Blackwing Lair FOLDS BACK
+// OVER ITSELF: the upper suppression room sits ~41yd directly above Vaelastrasz's
+// chamber, 82yd from it as the crow flies, while the staging point is 162yd away.
+// The path cursor therefore projected a tank standing on Vaelastrasz's corpse onto
+// anchor 19 — the STANDOFF, the far end of the crossing — and read the leg as
+// nearly finished before the raid had walked a step. Resnap failed every tick
+// (>45yd, `behind=true`), the rebuild re-ran every tick, the tank sat at
+// `posDelta=0.00 gen=IDLE`, and where the party eventually blundered into the
+// corridor bbox decided at random where the transit armed: one run of five armed
+// at staging (13yd) and crossed in 9m50s; the other four armed 33-86yd away and
+// took 18-24m, two of them walking clean past Broodlord's closed portcullis — the
+// navmesh does not know a GameObject is shut — and killing Firemaw out of order.
+//
+// A polyline the party is standing ON has none of those failure modes: the cursor
+// projects onto the leg it is actually walking, Resnap has something to snap to,
+// and the transit arms at staging every time because the raid arrives there.
+//
+// Three separate consumers measure against this row and they must measure against
+// the same thing: StridedPathfinder chunks the Broodlord approach along it, the
+// transit driver runs its cursor down the second half, and the pack rung leashes
+// every follower to the leg the leader is on.
+//
+// HOW IT WAS DERIVED, and how to re-derive it. Every point here is a decimation
+// of the REAL Detour corridor: LongRangePathfinder's own core, run against the
+// live map-469 mmtiles by t/TestBlackwingLairSuppressionRouteProbe, printed as
+// an 87-point polyline and reduced (Douglas-Peucker at 2yd, then split so no
+// leg exceeds ~24yd). The plan's hand-reconstructed coordinates are NOT what is
+// here — that reconstruction bridged tile seams with a 5yd centroid stitch,
+// which can invent a link across a railing, and a route that walks the raid into
+// geometry with 160 whelps behind it is not a route. The probe re-prints the
+// polyline on every run for exactly this reason: an mmaps regen that moves the
+// corridor is re-authored from the print, not by hand.
+//
+// The certified shape, for reading the numbers against the room:
+//
+//   0-3    Vaelastrasz's chamber, south along its west wall at a flat z 409
+//   4-5    the SWITCHBACK out of the chamber — the corridor doubles back on
+//          itself and climbs 409 -> 424 in 20yd. Decimation must never cut this
+//          corner: the straight line between its ends is inside the rock.
+//   6-11   north up the long hall at a flat z 424.5
+//   12-16  the bend northeast and the long straight, 428.5 -> 429.3
+//   17-19  the hook east onto the staging shelf, 434 -> 438
+//   20     THE STAGING POINT — anchor 0 of the crossing proper
+//   20-22  the climb out of the Hall of the Dragonspawn, 437 -> 443 -> 441
+//   23-25  south down the lower room's east wall at a flat z 440.8
+//   26-29  the long diagonal southwest across the lower room, 440 -> 442
+//   30-31  the TASKMASTER RAMP's foot. Six Blackwing Taskmasters stand at
+//          (-7711,-1070,445) — 3.8yd off anchor 31. There is no running past
+//          them, and their 600s respawn means killing them is progress.
+//   32-33  over the crest into the upper room, 446 -> 451 -> 450
+//   34-39  northeast up the upper room to the standoff, flat at z 449.8
+//
+// PIVOT_TIGHT on 4-5 and 31-33, and only there: those are the two places the
+// corridor narrows to a chokepoint the raid has to file through, and a pack that
+// fans out across one of them is a pack half of which is a floor behind.
+void RegisterBlackwingLairRoute()
+{
+    using namespace DcBlackwingLair;
+
+    DungeonClearRouteRegistry::Register(
+        MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER,
+        {
+            // --- the approach: Vaelastrasz's chamber to the staging point ---
+            { -7506.70f, -1014.10f, 408.69f },
+            { -7496.43f, -1031.26f, 409.32f },
+            { -7486.39f, -1048.59f, 409.32f },
+            { -7482.43f, -1068.08f, 409.41f },
+            // the switchback: doubles back and climbs 15yd in 20
+            { -7491.60f, -1060.33f, 418.38f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::PIVOT_TIGHT) },
+            // NO_STOP starts HERE, not at the first band's midpoint: the flag
+            // covers the leg LEAVING an anchor, and the exposure begins 3yd into
+            // the leg out of this one (route 92.9yd).
+            { -7497.71f, -1055.17f, 424.28f, /*doorGoEntry*/ 0,
+              AnchorFlag::PIVOT_TIGHT | AnchorFlag::NO_STOP },
+            // North up the long hall — and this hall is a CEILING, not a room.
+            //
+            // It runs directly underneath the upper suppression room and the drake
+            // hall, and 24% of the approach is inside the 3D aggro radius of what
+            // stands up there. Sampling this polyline every 2yd against map 469's
+            // `creature` gives three overhead bands, all at z 449.3 (24.3yd up):
+            //
+            //   route 92.9-105.2yd  (anchors 5-6)   up to 4 Technician / Warlock
+            //   route 116.1-129.6yd (anchors 6-7)   Firemaw, the known one
+            //   route 160.7-200.8yd (anchors 10-12) up to SEVEN: Technician,
+            //                                       Warlock, Death Talon Overseer,
+            //                                       Blackwing Spellbinder
+            //
+            // A level 60-62 elite aggros at ~25yd measured in 3D, and anchor 11 has
+            // six of them within 27yd — 1.8-20yd away in PLAN view. They flag the
+            // raid through the floor, cannot path down, and evade where they stand
+            // at full HP (`first contact: Blackwing Technician at 25.0yd, 0.0yd
+            // from its spawn` — the mob never moved). Nothing the party does there
+            // resolves them, and every second parked buys another wave.
+            //
+            // So the legs from anchor 5 to anchor 12 are CROSSED, not camped. The
+            // pull system's own instinct here is actively harmful: the legitimate
+            // same-floor pack lives at anchors 13-16, and `safe-camp: ranged
+            // attacker -> requiring LOS break, maxDrag extended to 60yd` drags that
+            // camp BACKWARD into the middle of the worst band, which is then where
+            // the raid fights, loots and rests. All five raids of
+            // tp-20260828-175353-1 ended their run inside it, wedged at seg 13/41.
+            // See DcNoStopZone and [[dc-bwl-approach-overhead-trash-aggro]].
+            //
+            // The flag covers the leg LEAVING each anchor, so 12 is the last one
+            // marked: the raid may set up again from 13, where the nearest thing
+            // overhead is 37yd away and the pack in front of it is on its own floor.
+            { -7509.92f, -1044.83f, 424.31f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            { -7520.52f, -1023.30f, 424.52f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            { -7525.81f, -1012.53f, 424.59f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            { -7531.11f, -1001.76f, 424.59f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            { -7528.78f,  -990.17f, 424.55f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            { -7523.75f,  -974.98f, 424.95f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            // the bend northeast, then the long straight
+            { -7537.02f,  -955.13f, 428.52f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::NO_STOP) },
+            { -7549.37f,  -944.97f, 428.65f },
+            { -7564.82f,  -932.26f, 428.86f },
+            { -7577.17f,  -922.10f, 428.99f },
+            { -7592.62f,  -909.39f, 429.32f },
+            // the hook east onto the staging shelf
+            { -7601.89f,  -901.77f, 434.18f },
+            { -7608.06f,  -896.69f, 433.61f },
+            { -7624.62f,  -907.86f, 438.58f },
+            // --- the climb into the lower suppression room ---
+            { TRANSIT_STAGE_X, TRANSIT_STAGE_Y, TRANSIT_STAGE_Z },
+            { -7627.03f,  -926.86f, 440.63f },
+            { -7623.17f,  -938.22f, 443.28f },
+            // --- the lower room, south along the wall ---
+            { -7627.83f,  -953.50f, 440.78f },
+            { -7633.00f,  -968.64f, 440.81f },
+            { -7638.17f,  -983.78f, 440.77f },
+            // --- the diagonal across the lower room ---
+            { -7650.86f,  -999.24f, 440.61f },
+            { -7666.09f, -1017.79f, 440.77f },
+            { -7678.78f, -1033.24f, 440.73f },
+            { -7694.01f, -1051.79f, 441.58f },
+            // --- the Taskmaster ramp: the chokepoint between the rooms ---
+            { -7706.71f, -1067.25f, 445.71f },
+            { -7707.85f, -1075.17f, 445.96f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::PIVOT_TIGHT) },
+            { -7695.20f, -1090.66f, 451.31f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::PIVOT_TIGHT) },
+            { -7691.20f, -1090.68f, 449.83f, /*doorGoEntry*/ 0,
+              ToFlag(AnchorFlag::PIVOT_TIGHT) },
+            // --- the upper room, northeast to Broodlord ---
+            { -7669.63f, -1080.17f, 449.71f },
+            { -7651.64f, -1071.41f, 449.71f },
+            { -7633.66f, -1062.65f, 449.85f },
+            { -7612.09f, -1052.15f, 449.85f },
+            { -7590.51f, -1041.64f, 449.85f },
+            { TRANSIT_END_X, TRANSIT_END_Y, TRANSIT_END_Z },
+        });
 }

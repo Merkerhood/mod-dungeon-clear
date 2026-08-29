@@ -121,3 +121,45 @@ TEST(DcNeverTargetRegistryTest, DrakTharonRowDoesNotBanTheRestOfTheMap)
     // Scoping, same as the Nexus row above.
     EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(601, 27583));
 }
+
+// --- Blackwing Lair (469) — the Suppression Rooms' Corrupted Whelps -------
+//
+// The registry's third admissible class, and the only content so far that meets
+// it: the pack is INFINITE BY CONSTRUCTION. 160 whelps across the two rooms on a
+// 30s respawn is a spawn rate of 5.3/s (~3.3/s within 20yd of the route line the
+// clear has to walk), so "clear the corridor" is unreachable at any DPS — the
+// clear's pickers select the nearest one, kill it, and select its replacement,
+// walking the tank BACK into the room it just crossed every time.
+//
+// The four entries are one mob wearing four colours; a row for three of them
+// would leave the pickers a fourth of the room to chase.
+TEST(DcNeverTargetRegistryTest, BlackwingLairWhelpsAreNeverAClearTarget)
+{
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(469, 14022)) << "Corrupted Red Whelp";
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(469, 14023)) << "Corrupted Green Whelp";
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(469, 14024)) << "Corrupted Blue Whelp";
+    EXPECT_TRUE(DcNeverTargetRegistry::IsNeverTarget(469, 14025)) << "Corrupted Bronze Whelp";
+}
+
+TEST(DcNeverTargetRegistryTest, BlackwingLairRowsDoNotBanTheRestOfTheRaid)
+{
+    // THE ELITES ARE STILL TARGETS, and that is the whole distinction class 3
+    // draws. Both respawn on a TEN-MINUTE timer, thirteen of the twenty are
+    // within 25yd of the route, and six Taskmasters hold the only ramp between
+    // the two rooms — killing them is progress that stays bought, and the transit
+    // driver holds the raid to fight them on purpose.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 12458))
+        << "Blackwing Taskmaster — the six-strong ramp stack the transit must kill";
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 12468))
+        << "Death Talon Hatcher — 600s respawn, killing it is progress";
+
+    // The bosses on either side of the gauntlet.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 13020));  // Vaelastrasz
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 12017));  // Broodlord Lashlayer
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 12435));  // Razorgore
+
+    // Scoping: whelp entries are Blackwing Lair's alone.
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(509, 14022));
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 14021));
+    EXPECT_FALSE(DcNeverTargetRegistry::IsNeverTarget(469, 14026));
+}

@@ -26,7 +26,7 @@
 // still fights back normally. All this removes is the clear's decision to go
 // LOOKING for them.
 //
-// Two kinds of mob qualify, and both are about the same question:
+// Three kinds of mob qualify, and all three are about the same question:
 //
 //   1. IT CANNOT BE KILLED in the window the clear is walking through, so the
 //      pull can never end in a kill and the scan re-picks it every tick (the
@@ -36,11 +36,23 @@
 //      the party off the encounter (Ahn'kahet's Twilight Worshippers and
 //      Volunteers, which the clear chased 52yd off Jedoga's ritual floor while
 //      she was untargetable, resetting the encounter behind it).
+//   3. THE RESPAWN RATE EXCEEDS ANY POSSIBLE CLEAR RATE, so the pack is INFINITE
+//      BY CONSTRUCTION. Not "respawns eventually" — 160 spawns on a THIRTY-SECOND
+//      timer across the 375yd the clear must cross is a spawn rate of 5.3/s. The
+//      clear's pickers select the nearest one, walk to it, kill it, and select
+//      its replacement; the room's population is a fixed point the party can
+//      never move, and the clear's own driver is gated on nothing being engaged,
+//      so the run does not slow down — it stops. The bar for this class is
+//      ARITHMETIC, not annoyance: respawn interval x living population must make
+//      "clear the corridor" unreachable AT ANY DPS. Blackwing Lair's Corrupted
+//      Whelps are the row this class was written for and, so far, the only
+//      content that meets it.
 //
 // Keep it small and keep the justification in the table. A mob that merely
-// resists, heals, or respawns does not belong here, and neither does ordinary
-// trash that is simply inconvenient — class 2 is for mobs a SCRIPT spawns as
-// part of an encounter the party must stay inside.
+// resists or heals does not belong here, and neither does ordinary trash that is
+// simply inconvenient: class 2 is for mobs a SCRIPT spawns as part of an
+// encounter the party must stay inside, and class 3 is a claim about a spawn
+// rate that has to be shown, not asserted.
 //
 // Mirrors FightInPlaceRegistry / RoomAggroRegistry: adding a fix is a single
 // table edit inside DungeonClear/, never a core change.

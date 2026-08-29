@@ -58,6 +58,12 @@ EventBuilder& EventBuilder::Persistent()
     return *this;
 }
 
+EventBuilder& EventBuilder::OwnsThePull()
+{
+    _ev.ownsThePull = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::DrivesInCombat()
 {
     _ev.drivesInCombat = true;

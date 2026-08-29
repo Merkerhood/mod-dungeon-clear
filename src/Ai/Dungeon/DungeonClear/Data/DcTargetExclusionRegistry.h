@@ -54,6 +54,15 @@ struct DcTargetExclusionRow
     // Is the exclusion in force RIGHT NOW? Evaluated per target pick, so it must
     // be cheap and must read live state rather than latch. nullptr = always.
     bool (*inForce)(Player* bot){nullptr};
+
+    // Does the bar reach the TANK's pick as well?
+    //
+    // Default false, which is Razorgore's case and the reason the tank carve-out
+    // exists at all: somebody must still HOLD the creature the rest of the raid
+    // is barred from killing. It is exactly wrong for an OUT-OF-ORDER boss — a
+    // tank that answers a boss two rooms ahead walks the raid there, which is the
+    // whole harm the row is meant to prevent — so those rows set it.
+    bool alsoTank{false};
 };
 
 class DcTargetExclusionRegistry
@@ -67,7 +76,11 @@ public:
     static bool HasRowsFor(uint32 mapId);
 
     // Is `entry` excluded for `bot` right now? Runs the row's live gate.
-    static bool IsExcluded(Player* bot, uint32 mapId, uint32 entry);
+    //
+    // `forTank` asks the question for a TANK pick, which only rows carrying
+    // `alsoTank` answer yes to. Everything else — DPS, attacker pools, and the
+    // clear's own hold-fire rung — asks the default.
+    static bool IsExcluded(Player* bot, uint32 mapId, uint32 entry, bool forTank = false);
 };
 
 #endif  // _PLAYERBOT_DCTARGETEXCLUSIONREGISTRY_H

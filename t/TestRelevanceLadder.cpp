@@ -6,6 +6,7 @@
 #include "gtest/gtest.h"
 
 #include "Ai/Dungeon/DungeonClear/Strategy/DcRelevance.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 
 // Executable form of the trigger relevance ladder (arch-review F3). Pins the
 // ordering both strategies depend on and documents every same-value tie with the
@@ -63,6 +64,31 @@ TEST(DungeonClearRelevanceTest, LeaderAssistFillsGapBelowOwnEngageScans)
     EXPECT_LT(DcRel::LeaderAssist, DcRel::BlockingTrash);
     EXPECT_LT(DcRel::LeaderAssist, DcRel::RoomTrash);
     EXPECT_LT(DcRel::LeaderAssist, DcRel::AtBoss);
+}
+
+TEST(DungeonClearRelevanceTest, LeaderAssistOutranksAdvanceSoItMustYieldWhenItCannotAct)
+{
+    // The pairing that made tp-20260828-175353-1 unrecoverable, pinned so the
+    // reasoning survives the next reader.
+    //
+    // Leader-assist sits ABOVE advance, and DC runs one action per tick. That is
+    // correct — a tank must go help the fight rather than keep walking to the next
+    // boss — but it means the rung is only allowed to claim the tick when it can
+    // actually DO something. When it cannot, the cost of claiming anyway is not a
+    // wasted tick, it is a stopped run: advance never gets to drive, the party
+    // never leaves the ground that is flagging it, and the flag therefore never
+    // clears either. All five BWL raids died in that loop, watchdogs clear,
+    // 0.0yd from the "fight" they were closing on, for as long as anyone watched.
+    EXPECT_GT(DcRel::LeaderAssist, DcRel::Advance);
+    EXPECT_GT(DcRel::LeaderAssist, DcRel::Stalled);
+
+    // Hence DungeonClearLeaderAssistAction's two exits: the co-located guard
+    // (nothing reachable to assist and the flagged member is already here) and
+    // reporting DcMoveTo's own refusal instead of discarding it. The guard's band
+    // has to stay well under the ranges a REAL assist covers, or it would start
+    // swallowing the case the rung exists for.
+    EXPECT_LT(DC_LEADER_ASSIST_COLOCATED_RANGE, DC_ENGAGE_RANGE);
+    EXPECT_GT(DC_LEADER_ASSIST_COLOCATED_RANGE, 0.0f);
 }
 
 TEST(DungeonClearRelevanceTest, StrandedRecoveryOutranksTheFrozenDrivingLadder)
@@ -251,6 +277,46 @@ TEST(DungeonClearRelevanceTest, PartitionedTiesAreEqualByDesign)
     // AssistCamp (29) ONLY in the non-combat engine. They can never arbitrate on
     // the same tick, so the shared value is safe (contribution-gate rework).
     EXPECT_FLOAT_EQ(DcRel::RegroupCombat, DcRel::AssistCamp);
+    // MAP-partitioned: the transit pack rung (36) is Blackwing Lair's and its
+    // first test is `GetMapId() == 469`; the Hakkar suppressor (36) is the Sunken
+    // Temple's. Two maps cannot both be under a bot's feet.
+    EXPECT_FLOAT_EQ(DcRel::TransitPack, DcRel::HakkarSuppressor);
+}
+
+// The transit pack rung is the one that keeps the raid one body while the leader
+// crosses Blackwing Lair's Suppression Rooms — and a strung-out raid there is not
+// untidy, it is a run with no driver at all (every straggler holds the WHOLE party
+// in combat, and DcCombatFlag::MayDrive is false while anything is engaged). So
+// what it outranks is load-bearing, and so is what outranks it.
+TEST(DungeonClearRelevanceTest, TransitPackOutranksTheRungsThatStringTheRaidOut)
+{
+    // The movers that would take a follower off the column: a whelp 40yd off the
+    // line is precisely the string-out this exists to stop.
+    EXPECT_GT(DcRel::TransitPack, DcRel::AssistCampCombat);   // combat engine
+    EXPECT_GT(DcRel::TransitPack, DcRel::RegroupCombat);
+    EXPECT_GT(DcRel::TransitPack, DcRel::AssistCamp);         // non-combat engine
+    EXPECT_GT(DcRel::TransitPack, DcRel::HoldAtCamp);
+    EXPECT_GT(DcRel::TransitPack, DcRel::FollowTank);
+    EXPECT_GT(DcRel::TransitPack, DcRel::Advance);
+    // ...and the rez rung, deliberately: walking a rezzer back through the
+    // gauntlet for a corpse is a second death, not a recovery. Same call the
+    // Razorgore camp (61.5) makes one room over.
+    EXPECT_GT(DcRel::TransitPack, DcRel::RezParty);
+
+    // What must still win. Stranded recovery is the floor under the whole ladder,
+    // heal-reposition is healer-only and above every driver, and in the combat
+    // engine the camp owners / hazard vacate / the phantom hatch all outrank it.
+    EXPECT_GT(DcRel::StrandedRecovery, DcRel::TransitPack);
+    EXPECT_GT(DcRel::HealReposition,   DcRel::TransitPack);
+    EXPECT_GT(DcRel::HazardVacate,     DcRel::TransitPack);
+    EXPECT_GT(DcRel::PullManeuver,     DcRel::TransitPack);
+    EXPECT_GT(DcRel::StayAtCamp,       DcRel::TransitPack);
+    EXPECT_GT(DcRel::BreakStuckCombat, DcRel::TransitPack);
+
+    // The leader's own transit driver runs on the COMBAT event rung (61) and must
+    // outrank the pack rung: the leader is exempt from the pack anyway, but if the
+    // two ever landed on one bot, moving the column is what matters.
+    EXPECT_GT(DcRel::EventDueCombat, DcRel::TransitPack);
 }
 
 TEST(DungeonClearRelevanceTest, HealRepositionAboveLeaderDriversIsRolePartitioned)

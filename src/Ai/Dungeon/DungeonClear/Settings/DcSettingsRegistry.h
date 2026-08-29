@@ -215,6 +215,57 @@ inline constexpr DcSettingDef kDcSettings[] =
     // survivor hiding at range would hold the verdict open forever.
     { "RaidWipeFractionPct",   DcType::UInt,  90,  50, 100,  true  },
 
+    // Blackwing Lair, the Suppression Rooms transit: how far off the leader's
+    // route cursor a member may be before the pack rung walks it back in.
+    //
+    // 25 is the ordinary party spread and it is the right order of magnitude for
+    // the same reason it is there: it is about how wide a cylinder of a room the
+    // raid sweeps. On this leg that is not a comfort question — the two rooms hold
+    // 160 whelps on a 30s respawn, and every straggler independently holds the
+    // WHOLE party in combat, which is what leaves the clear with no driver at all.
+    //
+    // Deliberately NOT scaled up for a raid the way PartyMaxSpread is (25 -> 40).
+    // A 40-member column is legitimately longer than a 5-man file when it is
+    // walking a corridor nobody is fighting in; here the length IS the failure,
+    // and the pack rung is inert inside the leash, so a tight number costs a bot
+    // in position nothing at all.
+    { "TransitPackLeash",      DcType::Float, 25,  10,  60,  true  },
+
+    // The rest of the transit's knobs. SuppressionTransit is the master switch and
+    // the rollback: with it off, Phases A/B/D stay (a route is data, the whelp
+    // rows only remove targets, and the pack rung is inert without the cursor this
+    // driver publishes) and the leg behaves exactly as it did before.
+    { "SuppressionTransit",    DcType::Bool,   1,   0,   1,  true  },
+
+    // THE GATHER GATE at the staging point — the one place on this leg the raid
+    // can wait for its stragglers for free (nearest whelp 40.8yd, nearest device
+    // 50.1yd, no whelp within 30yd).
+    //
+    // Radius 20 is tighter than PartyMaxSpread on purpose: this is the ball the
+    // raid enters the gauntlet as, and the whole argument for the transit is that
+    // a wide ball sweeps more of a room whose spawns are the problem. Quorum 0.85
+    // rather than 1.0 for the reason RaidReadyQuorumPct exists — one bot that
+    // cannot path in must not hold thirty-nine at the door — and the timeout is
+    // the backstop under both: on expiry the crossing starts anyway and says so.
+    { "TransitGatherRadius",   DcType::Float, 20,   8,  60,  true  },
+    { "TransitGatherQuorum",   DcType::Float, 0.85, 0.5, 1.0, true },
+    { "TransitGatherTimeoutMs", DcType::UInt, 60000, 10000, 300000, true },
+
+    // HOW CLOSE AN ELITE HAS TO BE before the driver stands and fights it instead
+    // of walking past. 20yd is a little over the aggro band of the level-61/62
+    // elites on this leg, so the hold arms as the pack pulls them rather than
+    // after they are already in the middle of the column — the six Taskmasters on
+    // the ramp cannot be walked past at all, and the Hatchers are worth 600s each.
+    { "TransitEliteHoldRadius", DcType::Float, 20,  0,  60,  true  },
+
+    // ...and how close an ARMED Suppression Device has to be before the driver
+    // spends a tick letting mod-playerbots' disarm rung fire. 15 is that rung's
+    // own reach (BwlTurnOffSuppressionDeviceAction), so a wider number here would
+    // hold for devices it will not take and a narrower one would walk past devices
+    // it would have. Zero disables the hold without disabling the disarm — the
+    // rung still fires whenever it wins a tick of its own.
+    { "TransitDisarmHoldRadius", DcType::Float, 15,  0,  30,  true  },
+
     // Clamp ceiling 120 (was 60) so a raid run can widen the straggler gate by
     // override; the authored raid default is 40 — a 25-40 member column is
     // legitimately longer than a 5-man file, and holding raids to the 25yd

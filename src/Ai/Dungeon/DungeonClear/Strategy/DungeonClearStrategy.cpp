@@ -331,6 +331,24 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear razorgore camp",
         { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));
 
+    // Blackwing Lair only: hold the raid inside one leash of the leader's route
+    // cursor while it crosses the Suppression Rooms. Registered in BOTH engines
+    // for the same reason the Razorgore camp is — the crossing has plenty of
+    // out-of-combat ticks (a whelp wave dies, combat drops for a second) and on
+    // those the NON-combat driving ladder owns the followers, walking them at the
+    // tank with follow-tank / assist-camp instead of keeping the column tight.
+    //
+    // 36 clears every follower rung it has to (assist 29 / hold-at-camp 28 /
+    // follow-tank 25 / advance 15) and RezParty (31.5) — walking a rezzer back
+    // across the gauntlet for a corpse is a second death, not a recovery — while
+    // staying under StrandedRecovery (42) and HealReposition (41). It is inert
+    // everywhere else: the trigger's first test is the map id, and its second is
+    // whether the leader is publishing a cursor at all.
+    // See DungeonClearTransitPackTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear transit pack",
+        { NextAction("dungeon clear transit pack", DcRel::TransitPack) }));
+
     // Let go of a creature the run is barred from damaging right now
     // (DcTargetExclusionRegistry). Registered in BOTH engines for the same reason
     // the camp is: the barred window spans combat and the gaps in it, and a bot
@@ -538,6 +556,24 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
         "dungeon clear razorgore camp",
         { NextAction("dungeon clear razorgore camp", DcRel::RazorgoreCamp) }));
 
+    // Blackwing Lair only: hold the raid inside one leash of the leader's route
+    // cursor while it crosses the Suppression Rooms. Registered in BOTH engines
+    // for the same reason the Razorgore camp is — the crossing has plenty of
+    // out-of-combat ticks (a whelp wave dies, combat drops for a second) and on
+    // those the NON-combat driving ladder owns the followers, walking them at the
+    // tank with follow-tank / assist-camp instead of keeping the column tight.
+    //
+    // 36 clears every follower rung it has to (assist 29 / hold-at-camp 28 /
+    // follow-tank 25 / advance 15) and RezParty (31.5) — walking a rezzer back
+    // across the gauntlet for a corpse is a second death, not a recovery — while
+    // staying under StrandedRecovery (42) and HealReposition (41). It is inert
+    // everywhere else: the trigger's first test is the map id, and its second is
+    // whether the leader is publishing a cursor at all.
+    // See DungeonClearTransitPackTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear transit pack",
+        { NextAction("dungeon clear transit pack", DcRel::TransitPack) }));
+
     // Let go of a creature the run is barred from damaging right now
     // (DcTargetExclusionRegistry). Registered in BOTH engines for the same reason
     // the camp is: the barred window spans combat and the gaps in it, and a bot
@@ -603,11 +639,20 @@ bool DungeonClearCombatStrategy::HasTargetExclusions() const
 void DungeonClearCombatStrategy::AppendTargetExclusions(GuidSet& exclusions,
                                                         TargetValueExclusionType type)
 {
-    // DPS and ATTACKER pools only. A TANK pick is untouched on purpose: the
-    // encounters that need this are the ones where somebody must still HOLD the
-    // creature everyone else is barred from killing.
-    if (type != TargetValueExclusionType::Dps && type != TargetValueExclusionType::Attacker)
+    // DPS, ATTACKER and — for rows that ask for it — TANK pools.
+    //
+    // The tank was untouched wholesale, on the reasoning that the encounters
+    // needing this are the ones where somebody must still HOLD the creature
+    // everyone else is barred from killing. That is Razorgore's case and it still
+    // holds; it is exactly wrong for an OUT-OF-ORDER boss, where a tank answering
+    // a creature two rooms ahead is the thing that walks the raid there. So the
+    // carve-out moved into the row (`alsoTank`) rather than staying here.
+    if (type != TargetValueExclusionType::Dps &&
+        type != TargetValueExclusionType::Attacker &&
+        type != TargetValueExclusionType::Tank)
         return;
+
+    bool const forTank = type == TargetValueExclusionType::Tank;
 
     Player* const self = botAI ? botAI->GetBot() : nullptr;
     if (!self)
@@ -621,7 +666,7 @@ void DungeonClearCombatStrategy::AppendTargetExclusions(GuidSet& exclusions,
     for (ObjectGuid const guid : AI_VALUE(GuidVector, DcKey::Stock::Attackers))
     {
         Unit* unit = botAI->GetUnit(guid);
-        if (unit && DcTargetExclusionRegistry::IsExcluded(self, mapId, unit->GetEntry()))
+        if (unit && DcTargetExclusionRegistry::IsExcluded(self, mapId, unit->GetEntry(), forTank))
             exclusions.insert(guid);
     }
 }

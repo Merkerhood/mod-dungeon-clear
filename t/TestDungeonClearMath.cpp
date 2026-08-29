@@ -2228,3 +2228,74 @@ TEST(DungeonClearMathTest, NearestPointOnPolylineToleratesDegenerateLegs)
     EXPECT_FLOAT_EQ(out.x, 6.0f);
     EXPECT_FLOAT_EQ(out.y, 0.0f);
 }
+
+// --- PointTowardFrom: the transit pack's hold point --------------------------
+//
+// Same defect as HealCloseFallbackPoint (see TestHealReposition.cpp): the hold
+// point is walked back along the bearing from the route anchor, but z used to
+// stay at the ANCHOR's height — the anchor's floor over a point up to a leash
+// away. Flat legs hid it; the Suppression Rooms ramps do not.
+
+TEST(DungeonClearMathTest, PointTowardFromCarriesZAlongTheBearing)
+{
+    Position const anchor(0.0f, 0.0f, 100.0f, 0.0f);
+    Position const toward(0.0f, 40.0f, 140.0f, 0.0f);   // 40yd out, 40yd up
+
+    // Half way out is half way up.
+    Position const p = DungeonClearMath::PointTowardFrom(anchor, toward, 20.0f, 1.0f);
+    EXPECT_NEAR(p.GetPositionY(), 20.0f, 1e-3f);
+    EXPECT_NEAR(p.GetPositionZ(), 120.0f, 1e-3f);
+}
+
+// A flat leg — the common case — must not move at all.
+TEST(DungeonClearMathTest, PointTowardFromFlatLegKeepsItsHeight)
+{
+    Position const anchor(0.0f, 0.0f, 440.0f, 0.0f);
+    Position const toward(0.0f, 25.0f, 440.0f, 0.0f);
+
+    Position const p = DungeonClearMath::PointTowardFrom(anchor, toward, 21.0f, 1.0f);
+    EXPECT_NEAR(p.GetPositionY(), 21.0f, 1e-3f);
+    EXPECT_NEAR(p.GetPositionZ(), 440.0f, 1e-3f);
+}
+
+// THE BUG, on the crossing's steepest authored leg: anchors 30 -> 31 climb
+// 445.96 -> 451.31 over 20.0yd. A follower down at the anchor-30 end gets a hold
+// point three quarters of the way back along that ramp, and the anchor's height
+// there is four yards of solid rock.
+TEST(DungeonClearMathTest, PointTowardFromNeverAuthorsTheAnchorsFloor)
+{
+    Position const anchor(-7695.20f, -1090.66f, 451.31f, 0.0f);
+    Position const bot(-7707.85f, -1075.17f, 445.96f, 0.0f);
+
+    Position const p = DungeonClearMath::PointTowardFrom(anchor, bot, 15.0f, 1.0f);
+
+    // Strictly between the two ends, never ON the anchor's floor.
+    EXPECT_LT(p.GetPositionZ(), 451.31f);
+    EXPECT_GT(p.GetPositionZ(), 445.96f);
+    // 3/4 of the way down: 451.31 - 0.75 * 5.35.
+    EXPECT_NEAR(p.GetPositionZ(), 447.30f, 5e-2f);
+}
+
+// Clamped to the target when it is nearer than the requested distance, so the
+// hold point never overshoots the bot it is pulling in.
+TEST(DungeonClearMathTest, PointTowardFromClampsToTheNearerTarget)
+{
+    Position const anchor(0.0f, 0.0f, 10.0f, 0.0f);
+    Position const toward(0.0f, 5.0f, 15.0f, 0.0f);
+
+    Position const p = DungeonClearMath::PointTowardFrom(anchor, toward, 21.0f, 1.0f);
+    EXPECT_NEAR(p.GetPositionY(), 5.0f, 1e-3f);
+    EXPECT_NEAR(p.GetPositionZ(), 15.0f, 1e-3f);
+}
+
+// Stacked within the bearing floor: the anchor comes back untouched, no NaN.
+TEST(DungeonClearMathTest, PointTowardFromDegenerateBearingReturnsTheAnchor)
+{
+    Position const anchor(12.0f, 34.0f, 56.0f, 1.5f);
+    Position const toward(12.2f, 34.1f, 90.0f, 0.0f);
+
+    Position const p = DungeonClearMath::PointTowardFrom(anchor, toward, 21.0f, 1.0f);
+    EXPECT_FALSE(std::isnan(p.GetPositionX()));
+    EXPECT_NEAR(p.GetPositionX(), 12.0f, 1e-3f);
+    EXPECT_NEAR(p.GetPositionZ(), 56.0f, 1e-3f);
+}

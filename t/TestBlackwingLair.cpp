@@ -12,11 +12,14 @@
 #include "Position.h"
 
 #include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDifficulty.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Strategy/DcRelevance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
 
@@ -575,6 +578,113 @@ TEST(DungeonEventBlackwingLairTest, RazorgoreIsATargetExclusionRowOnHisOwnMap)
     EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, 409u, NPC_RAZORGORE));
 }
 
+// --- the drake hall, pulled through a ceiling -----------------------------
+
+TEST(DungeonEventBlackwingLairTest, TheApproachWalksTheRaidDirectlyUnderFiremaw)
+{
+    // The geometry the exclusion rows exist for, pinned so a route re-author
+    // cannot quietly move the raid back under him without this failing.
+    //
+    // Firemaw's spawn is (-7520.2, -1025.8, 449.1). Approach anchor 7 — the long
+    // hall from Vaelastrasz — is (-7520.5, -1023.3, 424.5): 2.5yd away in plan
+    // view and 24.6yd below. A level-63 boss aggros at about 25yd in 3D, so the
+    // route is INSIDE his radius, and DoZoneInCombat does the rest.
+    std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
+        MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+    ASSERT_NE(row, nullptr);
+    ASSERT_GT(row->size(), 8u);
+
+    constexpr float kFiremawX = -7520.2f, kFiremawY = -1025.8f, kFiremawZ = 449.1f;
+
+    float nearest = 1e9f;
+    for (std::size_t i = 0; i < DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX; ++i)
+    {
+        WaypointHint const& a = (*row)[i];
+        float const dx = a.x - kFiremawX, dy = a.y - kFiremawY, dz = a.z - kFiremawZ;
+        nearest = std::min(nearest, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+
+    // Not an assertion that this is ACCEPTABLE — it is a record that it is true,
+    // and the reason the rows below are not optional. If a future route moves the
+    // hall out of his bubble this becomes a free win and the number can change.
+    EXPECT_LT(nearest, 30.0f)
+        << "the approach no longer passes under Firemaw — re-read the exclusion "
+           "rows' justification before trusting them to be load-bearing";
+}
+
+TEST(DungeonEventBlackwingLairTest, TheDrakeHallIsBarredWhileBroodlordStands)
+{
+    // Four rows, one window. The bar is not "killing this wastes damage" — it is
+    // "answering this walks the raid two floors up through a ceiling the navmesh
+    // cannot cross", which is what DoZoneInCombat makes possible from 250yd with
+    // no line of sight.
+    for (uint32 const entry : { DcBlackwingLair::NPC_FIREMAW, DcBlackwingLair::NPC_EBONROC,
+                                DcBlackwingLair::NPC_FLAMEGOR,
+                                DcBlackwingLair::NPC_CHROMAGGUS })
+    {
+        // Windowed, not permanent: with no bot to read the instance from, the row
+        // must not answer yes — a flat always-on would block the kills the clear
+        // is sequencing, exactly as it would for Razorgore.
+        EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, entry))
+            << "entry " << entry << " must carry a live gate, not a flat bar";
+
+        // Right entry, wrong map.
+        EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, 409u, entry));
+    }
+
+    // Broodlord himself is NOT a row: he is the objective this sequences toward.
+    EXPECT_FALSE(
+        DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, NPC_BROODLORD_LASHLAYER));
+}
+
+TEST(DungeonEventBlackwingLairTest, TheDrakeHallBarKeysOnTheFloorNotTheDistance)
+{
+    // The property the row's second clause exists for, pinned as geometry because
+    // the clause itself needs a live bot to evaluate.
+    //
+    // Distance cannot separate the two cases: approach anchor 7 is 24.7yd from
+    // Firemaw — closer than plenty of legitimate pulls — while the drake hall's
+    // own floor is 449.1. What separates them is that the approach's 24.6yd are
+    // VERTICAL. So the bar keys on z, and every approach anchor must sit below the
+    // threshold while the hall sits above it, or the clause is decoration.
+    std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
+        MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+    ASSERT_NE(row, nullptr);
+    ASSERT_GT(row->size(), DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX);
+
+    constexpr float kThresholdZ = 445.0f;  // BWL_DRAKE_HALL_FLOOR_Z
+    constexpr float kFiremawZ = 449.1f;
+
+    EXPECT_GT(kFiremawZ, kThresholdZ) << "the hall must read as ON its own floor";
+
+    for (std::size_t i = 0; i < DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX; ++i)
+        EXPECT_LT((*row)[i].z, kThresholdZ)
+            << "approach anchor " << i << " reads as standing in the drake hall, "
+               "so the out-of-order bar would be off exactly where it is needed";
+}
+
+TEST(DungeonEventBlackwingLairTest, TheTankCarveOutIsPerRowNotBlanket)
+{
+    // Razorgore's row leaves the TANK pick alone on purpose — somebody has to hold
+    // him between mind controls while the raid is barred from killing him. An
+    // out-of-order boss is the opposite case: a tank that answers Firemaw is
+    // precisely how twenty-four other bots end up in his room. The distinction
+    // lives on the row, so pin that the two rows disagree about it.
+    //
+    // Both are read here through the same nullptr-bot path used above, so what is
+    // being pinned is the ROW SHAPE — that the tank question is asked per row at
+    // all — rather than a live verdict, which needs an InstanceScript.
+    EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, NPC_RAZORGORE,
+                                                       /*forTank*/ true));
+    EXPECT_FALSE(DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID,
+                                                       DcBlackwingLair::NPC_FIREMAW,
+                                                       /*forTank*/ true));
+
+    // ...and the map gate still holds for the new rows.
+    EXPECT_TRUE(DcTargetExclusionRegistry::HasRowsFor(MAP_ID));
+    EXPECT_FALSE(DcTargetExclusionRegistry::HasRowsFor(469u + 1u));
+}
+
 // --- the brake that does not go through the raid icon ---------------------
 
 TEST(DungeonEventBlackwingLairTest, HoldFireOutranksTheRaidStrategyAndYieldsToPositioning)
@@ -773,4 +883,347 @@ TEST(DungeonEventBlackwingLairTest, VaelastraszStaysWhereHeIsInTheRoster)
     EXPECT_EQ(vael->eventId, 0u)
         << "the rouse is Conditional, not anchored to him";
     EXPECT_EQ(BossOrderKey(*vael), 2u) << "Grethok 0, Razorgore 1, Vaelastrasz 2";
+}
+
+// --- the Suppression Rooms transit (Vaelastrasz -> Broodlord) --------------
+
+TEST(DungeonEventBlackwingLairTest, TheTransitIsACombatDriverThatOwnsItsOwnMovement)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(MAP_ID, EVENT_SUPPRESSION_TRANSIT);
+    ASSERT_NE(ev, nullptr) << "Blackwing Lair (469) event 3 (suppression transit) is missing";
+
+    EXPECT_EQ(ev->activation, EventActivation::Conditional);
+    EXPECT_TRUE(static_cast<bool>(ev->condition)) << "the corridor gate predicate must be bound";
+
+    // THE flag, and the reason the leg needs an event at all. A hundred whelps
+    // inside 20yd of the route on a 30s respawn means AnyPartyEngagement is true
+    // essentially without a break — DcCombatFlag::MayDrive is therefore false, and
+    // Advance lives only in the NON-combat engine. Drop this and the clear does
+    // not cross the leg slowly; it does not cross it at all.
+    EXPECT_TRUE(ev->drivesInCombat)
+        << "the transit must DrivesInCombat: with the whelps up there are no "
+           "out-of-combat ticks to drive it on";
+
+    // The driver walks the leader down the route on its own long-range splines,
+    // and the per-tick objective hold runs BEFORE the hook — so without this each
+    // spline is cancelled the tick after it is issued and the raid creeps a tick
+    // at a time down 342yd while every log line reports a healthy issue.
+    EXPECT_TRUE(ev->stepsOwnMovement) << "the transit must StepsOwnMovement";
+
+    // The crossing is not a thing that completes once: the condition going false
+    // (the leader reaches the standoff, leaves the corridor, or Broodlord dies) is
+    // the only "done", and a leader shoved back into the rooms has to re-arm.
+    EXPECT_TRUE(ev->repeatable) << "the transit must be Repeatable";
+
+    // On this leg a combat "gap" is one whelp wave dying, several times a minute.
+    // A non-persistent event would rewind its step list on each of them.
+    EXPECT_TRUE(ev->persistent) << "the transit must be Persistent";
+
+    // Deliberately NOT optional: every hold is watchdog-bounded from inside, so
+    // the step timeout can only fire when a watchdog itself failed to release —
+    // and skipping quietly at that point hands the leg back to a clear that
+    // provably cannot cross it.
+    EXPECT_TRUE(ev->required)
+        << "the transit must NOT be Optional — a timeout here is a broken watchdog, "
+           "and the human should hear about it";
+
+    // ...and NOT EncounterActive: this is the leg BETWEEN two encounters, which is
+    // exactly where DC is supposed to work. Claiming the exemption would let it
+    // run inside Broodlord's own fight.
+    EXPECT_FALSE(ev->encounterActive)
+        << "no encounter is in progress on this leg; the stand-down exemption is not ours";
+
+    // ONE Custom step: what the leg needs is a preference re-decided every tick
+    // (walk / hold for the pack / hold for an elite / hold for the disarm rung),
+    // not a sequence. The staging hop and the gather gate are the controller's
+    // first two states, not two steps that happen to come first.
+    ASSERT_EQ(ev->steps.size(), 1u);
+    EXPECT_EQ(ev->steps[0].kind, EventStepKind::Custom);
+    EXPECT_EQ(ev->steps[0].hookId, HOOK_SUPPRESSION_TRANSIT);
+    EXPECT_EQ(ev->steps[0].timeoutMs, TRANSIT_TIMEOUT_MS);
+    EXPECT_TRUE(ObjectiveHookRegistry::Has(HOOK_SUPPRESSION_TRANSIT))
+        << "hook " << HOOK_SUPPRESSION_TRANSIT
+        << " (DriveSuppressionTransit) must be registered";
+
+    // Hook ids are one flat space across every dungeon; a collision silently drops
+    // one dungeon's driver.
+    EXPECT_NE(HOOK_SUPPRESSION_TRANSIT, HOOK_RAZORGORE_ORB);
+    EXPECT_NE(EVENT_SUPPRESSION_TRANSIT, EVENT_RAZORGORE_ORB);
+    EXPECT_NE(EVENT_SUPPRESSION_TRANSIT, EVENT_VAELASTRASZ_ROUSE);
+}
+
+TEST(DungeonEventBlackwingLairTest, TheTransitAuthoredIdsMatchTheWorldData)
+{
+    EXPECT_EQ(NPC_BROODLORD_LASHLAYER, 12017u);
+    // instance_blackwing_lair's own BWLEncounter enum, which GetBossState is keyed
+    // on — NOT the roster order, which puts Grethok in front of everything.
+    EXPECT_EQ(BROODLORD_ENCOUNTER_INDEX, 2u);
+
+    // The four Corrupted Whelps and the two elites, as the never-target rows and
+    // the driver's elite scan read them.
+    EXPECT_EQ(NPC_CORRUPTED_RED_WHELP, 14022u);
+    EXPECT_EQ(NPC_CORRUPTED_GREEN_WHELP, 14023u);
+    EXPECT_EQ(NPC_CORRUPTED_BLUE_WHELP, 14024u);
+    EXPECT_EQ(NPC_CORRUPTED_BRONZE_WHELP, 14025u);
+    EXPECT_EQ(NPC_BLACKWING_TASKMASTER, 12458u);
+    EXPECT_EQ(NPC_DEATH_TALON_HATCHER, 12468u);
+
+    // go_suppression_device — the GO the bot disarm rung turns off.
+    EXPECT_EQ(GO_SUPPRESSION_DEVICE, 179784u);
+}
+
+// The corridor box is the transit's real gate: one axis-aligned test standing
+// between a rung on every bot's combat engine and the other seven encounters of
+// this raid. Both ends of the crossing must be inside it, and the two encounters
+// immediately behind the gauntlet must not be.
+TEST(DungeonEventBlackwingLairTest, TheTransitCorridorHoldsTheLegAndNothingElse)
+{
+    auto inside = [](float x, float y, float z)
+    {
+        return x >= TRANSIT_BOX_MIN_X && x <= TRANSIT_BOX_MAX_X &&
+               y >= TRANSIT_BOX_MIN_Y && y <= TRANSIT_BOX_MAX_Y &&
+               z >= TRANSIT_BOX_MIN_Z && z <= TRANSIT_BOX_MAX_Z;
+    };
+
+    EXPECT_TRUE(inside(TRANSIT_STAGE_X, TRANSIT_STAGE_Y, TRANSIT_STAGE_Z));
+    EXPECT_TRUE(inside(TRANSIT_END_X, TRANSIT_END_Y, TRANSIT_END_Z));
+
+    EXPECT_FALSE(inside(VAEL_X, VAEL_Y, VAEL_Z)) << "Vaelastrasz";
+    EXPECT_FALSE(inside(ORB_X, ORB_Y, ORB_Z)) << "the Orb of Domination";
+    EXPECT_FALSE(inside(CAMP_X, CAMP_Y, CAMP_Z)) << "the Razorgore camp";
+    EXPECT_FALSE(inside(GRETHOK_X, GRETHOK_Y, GRETHOK_Z)) << "Grethok's platform";
+}
+
+// The three watchdogs bound three different KINDS of wait. Collapsing them onto
+// one number would either release the disarm hold before mod-playerbots' rung had
+// a tick, or park the leg behind a wedged straggler for the whole elite budget.
+TEST(DungeonEventBlackwingLairTest, TheTransitHoldBudgetsAreOrderedByWhatTheyWaitFor)
+{
+    EXPECT_LT(TRANSIT_DISARM_HOLD_TIMEOUT_MS, TRANSIT_PACK_HOLD_TIMEOUT_MS);
+    EXPECT_LT(TRANSIT_PACK_HOLD_TIMEOUT_MS, TRANSIT_ELITE_HOLD_TIMEOUT_MS);
+    // ...and every one of them well inside the whole crossing's bound, or the
+    // step timeout would fire before the watchdog it exists to backstop.
+    EXPECT_LT(TRANSIT_ELITE_HOLD_TIMEOUT_MS, TRANSIT_TIMEOUT_MS);
+
+    // The hold margin is the pack leash's hysteresis and has to stay well under
+    // the leash's own clamp floor (10) — a margin that reached the leash would put
+    // the hold point back at the cursor and bring the cross-the-pack lap with it.
+    EXPECT_GT(TRANSIT_PACK_HOLD_MARGIN, 0.0f);
+    EXPECT_LT(TRANSIT_PACK_HOLD_MARGIN, 10.0f);
+}
+
+// The drake hall is stacked DIRECTLY over the Broodlord approach corridor, and
+// that is the whole reason the followers' assist picker needs a reachability gate
+// rather than a better distance metric (tp-20260828-142623-1: the raid crossed
+// from the approach hall into Firemaw's room and never killed Broodlord).
+//
+// Coordinates are world-DB spawns; if a data update moves them, the justification
+// for the gate moves with them and this test should be the thing that says so.
+TEST(DungeonEventBlackwingLairTest, TheDrakeHallSitsDirectlyOverTheBroodlordApproach)
+{
+    // Route anchor 11 of the authored Broodlord approach — where the raid stood.
+    constexpr float HALL_X = -7523.75f, HALL_Y = -974.98f, HALL_Z = 424.95f;
+    // Blackwing Warlock (12459, guid 84560), on the drake-hall floor above.
+    constexpr float WARLOCK_X = -7538.6f, WARLOCK_Y = -983.2f, WARLOCK_Z = 449.4f;
+    // Death Talon Seether (12464, guid 84524) — a LEGITIMATE corridor pack, on the
+    // approach hall's own floor, and what the party should have been fighting.
+    constexpr float SEETHER_X = -7534.2f, SEETHER_Y = -926.7f, SEETHER_Z = 428.0f;
+
+    auto dist2d = [](float ax, float ay, float bx, float by)
+    { return std::sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by)); };
+    auto dist3d = [&](float ax, float ay, float az, float bx, float by, float bz)
+    { return std::sqrt(dist2d(ax, ay, bx, by) * dist2d(ax, ay, bx, by) +
+                       (az - bz) * (az - bz)); };
+
+    float const warlock2d = dist2d(HALL_X, HALL_Y, WARLOCK_X, WARLOCK_Y);
+    float const seether2d = dist2d(HALL_X, HALL_Y, SEETHER_X, SEETHER_Y);
+    float const warlock3d =
+        dist3d(HALL_X, HALL_Y, HALL_Z, WARLOCK_X, WARLOCK_Y, WARLOCK_Z);
+    float const seether3d =
+        dist3d(HALL_X, HALL_Y, HALL_Z, SEETHER_X, SEETHER_Y, SEETHER_Z);
+
+    // Straight overhead: almost all of the separation is vertical.
+    EXPECT_LT(warlock2d, 20.0f) << "the Warlock is nearly on top of the corridor in plan view";
+    EXPECT_GT(WARLOCK_Z - HALL_Z, 20.0f) << "...and a full floor above it";
+
+    // THE POINT: a distance metric cannot separate these. The mob a floor up is
+    // nearer than the pack on our own floor in 2D *and* in 3D, so switching the
+    // assist rank from GetExactDist2d to GetExactDist would not have prevented the
+    // ceiling walk. Only reachability tells them apart.
+    EXPECT_LT(warlock2d, seether2d) << "2D rank prefers the mob upstairs";
+    EXPECT_LT(warlock3d, seether3d) << "and so does 3D — the metric is not the fix";
+
+    // The gate does engage here: IsLevelReachable only short-circuits inside
+    // DC_Z_LEVEL_TOLERANCE, and this is five times that, so the probe runs and the
+    // detour bound gets its say.
+    EXPECT_GT(std::fabs(WARLOCK_Z - HALL_Z), DC_Z_LEVEL_TOLERANCE);
+
+    // ...and it says no by a wide margin. The real walk from the approach hall to
+    // the drake hall is the whole authored route — down the switchback, through
+    // both suppression rooms, over the Taskmaster ramp — against a bound of
+    // max(straight * 2, straight + 20) on a ~30yd straight line.
+    float const bound =
+        DcDetourBound(warlock3d, DC_TRASH_DETOUR_RATIO, DC_TRASH_DETOUR_SLACK);
+    EXPECT_LT(bound, 65.0f) << "a 30yd straight line buys at most ~60yd of detour";
+
+    std::vector<WaypointHint> const* route = DungeonClearRouteRegistry::Get(
+        MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+    ASSERT_NE(route, nullptr) << "the Broodlord approach route must be registered";
+    ASSERT_GT(route->size(), 1u);
+    float routeLen = 0.0f;
+    for (size_t i = 1; i < route->size(); ++i)
+        routeLen += dist3d((*route)[i - 1].x, (*route)[i - 1].y, (*route)[i - 1].z,
+                           (*route)[i].x, (*route)[i].y, (*route)[i].z);
+    EXPECT_GT(routeLen, 4.0f * bound)
+        << "the walkable route between these two floors dwarfs the detour bound";
+}
+
+// ---------------------------------------------------------------------------
+// The NO_STOP span over the approach hall (tp-20260828-175353-1).
+//
+// The hall from Vaelastrasz to the staging shelf runs ~24yd UNDER the upper
+// suppression room, and the trash up there aggros the raid through the floor,
+// cannot path down, and evades where it stands. The party cannot fight its way
+// out of that and must not try; the route says so with AnchorFlag::NO_STOP, and
+// these tests pin the span against the coordinates the five failed raids
+// actually died on, so a re-author cannot quietly drop the cover.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Where each of the five raids of tp-20260828-175353-1 was standing when the
+    // operator gave up on it. Every one must be inside the span.
+    struct StallSite { char const* run; float x, y, z; };
+    constexpr StallSite BWL_STALL_SITES[] = {
+        { "tr-20260828-175358-1", -7531.9f, -972.3f, 425.0f },
+        { "tr-20260828-175358-2", -7544.6f, -949.0f, 428.0f },
+        { "tr-20260828-175358-3", -7562.9f, -945.0f, 428.1f },
+        { "tr-20260828-175358-4", -7560.6f, -942.5f, 428.1f },
+        { "tr-20260828-175358-5", -7559.8f, -939.1f, 428.1f },
+    };
+
+    float NoStopDist3d(float ax, float ay, float az, float bx, float by, float bz)
+    {
+        float const dx = ax - bx, dy = ay - by, dz = az - bz;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    std::vector<WaypointHint> const& BroodlordRoute()
+    {
+        std::vector<WaypointHint> const* route = DungeonClearRouteRegistry::Get(
+            MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+        EXPECT_NE(route, nullptr) << "the Broodlord approach route must be registered";
+        static std::vector<WaypointHint> const empty;
+        return route ? *route : empty;
+    }
+}
+
+TEST(DungeonEventBlackwingLairTest, TheApproachHallCarriesANoStopSpan)
+{
+    std::vector<WaypointHint> const& route = BroodlordRoute();
+    ASSERT_GT(route.size(), 13u);
+
+    size_t flagged = 0;
+    size_t firstFlagged = route.size();
+    size_t lastFlagged = 0;
+    for (size_t i = 0; i < route.size(); ++i)
+        if (HasFlag(route[i].flags, AnchorFlag::NO_STOP))
+        {
+            ++flagged;
+            firstFlagged = std::min(firstFlagged, i);
+            lastFlagged = std::max(lastFlagged, i);
+        }
+
+    EXPECT_GT(flagged, 0u) << "the overhead-exposed hall must be flagged NO_STOP";
+
+    // The span is CONTIGUOUS. A hole in the middle is worse than no span at all:
+    // the pull system would re-arm inside the exposed band, plant a camp there,
+    // and the drag would pull the raid back into the hole it just crossed.
+    for (size_t i = firstFlagged; i <= lastFlagged; ++i)
+        EXPECT_TRUE(HasFlag(route[i].flags, AnchorFlag::NO_STOP))
+            << "anchor " << i << " punches a hole in the NO_STOP span";
+
+    // It lives entirely in the APPROACH half. The crossing half (anchor 20 on) is
+    // the suppression transit's business and is sliced away from this route by
+    // BwlTransitRoute; a NO_STOP flag there would be a second, silent driver.
+    EXPECT_LT(lastFlagged, static_cast<size_t>(DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX))
+        << "NO_STOP must not reach into the transit's half of the route";
+}
+
+TEST(DungeonEventBlackwingLairTest, TheNoStopSpanCoversWhereEveryFailedRaidDied)
+{
+    std::vector<WaypointHint> const& route = BroodlordRoute();
+    ASSERT_FALSE(route.empty());
+
+    for (StallSite const& s : BWL_STALL_SITES)
+        EXPECT_TRUE(DcNoStopZone::CoversPoint(route, s.x, s.y, s.z, DC_NO_STOP_CORRIDOR))
+            << s.run << " stalled at (" << s.x << ", " << s.y << ", " << s.z
+            << ") — the span that exists to stop that must cover it";
+}
+
+TEST(DungeonEventBlackwingLairTest, TheNoStopSpanDoesNotCageTheRestOfTheLeg)
+{
+    std::vector<WaypointHint> const& route = BroodlordRoute();
+    ASSERT_GT(route.size(), static_cast<size_t>(DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX));
+
+    // A zone that never releases is a run that never pulls anything again. The
+    // Death Talon pack (12463/12464/12465) sits on the party's OWN floor from
+    // anchor 14 on and is a perfectly good pull — the span must be off by then.
+    EXPECT_FALSE(DcNoStopZone::CoversPoint(route, route[14].x, route[14].y,
+                                           route[14].z, DC_NO_STOP_CORRIDOR))
+        << "the same-floor pack at anchors 14+ must still be pullable";
+
+    // And the staging shelf, where the suppression transit's own gather happens.
+    size_t const stage = static_cast<size_t>(DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX);
+    EXPECT_FALSE(DcNoStopZone::CoversPoint(route, route[stage].x, route[stage].y,
+                                           route[stage].z, DC_NO_STOP_CORRIDOR))
+        << "staging is clean ground — the span must have released well before it";
+
+    // Vaelastrasz's chamber, behind the switchback, is ordinary clearing ground.
+    EXPECT_FALSE(DcNoStopZone::CoversPoint(route, route[1].x, route[1].y,
+                                           route[1].z, DC_NO_STOP_CORRIDOR))
+        << "the chamber the raid arrives from is not part of the crossing";
+}
+
+TEST(DungeonEventBlackwingLairTest, NoStopCoverageIsACapsuleNotAnAnchorSphere)
+{
+    std::vector<WaypointHint> const& route = BroodlordRoute();
+    ASSERT_GT(route.size(), 12u);
+
+    // The midpoint of a flagged leg is the point furthest from both its anchors —
+    // an anchor-radius test would leave it uncovered on legs this long, which is
+    // exactly where run 1 was standing. Assert the geometry is segment-based by
+    // checking a midpoint that no anchor is within DC_NO_STOP_CORRIDOR of.
+    WaypointHint const& a = route[11];
+    WaypointHint const& b = route[12];
+    float const mx = (a.x + b.x) * 0.5f, my = (a.y + b.y) * 0.5f, mz = (a.z + b.z) * 0.5f;
+
+    float const toA = NoStopDist3d(mx, my, mz, a.x, a.y, a.z);
+    ASSERT_GT(toA, DC_NO_STOP_CORRIDOR * 0.5f)
+        << "pick a longer leg — this one cannot distinguish the two shapes";
+
+    EXPECT_TRUE(DcNoStopZone::CoversPoint(route, mx, my, mz, DC_NO_STOP_CORRIDOR))
+        << "mid-leg must be inside the zone, not just the anchors";
+
+    // Straight up through the ceiling is NOT in the zone: the span is about the
+    // ground the party walks, and the floor above it is where the hostiles are.
+    EXPECT_FALSE(DcNoStopZone::CoversPoint(route, mx, my, mz + 24.3f,
+                                           DC_NO_STOP_CORRIDOR))
+        << "the upper suppression room is not part of the approach span";
+}
+
+TEST(DungeonEventBlackwingLairTest, DistToSegmentClampsToTheEndpoints)
+{
+    // The projection has to clamp, or a point off the END of a leg reads as
+    // near-zero distance to the infinite line and the zone leaks arbitrarily far
+    // in both directions along the corridor.
+    WaypointHint const a{ 0.0f, 0.0f, 0.0f };
+    WaypointHint const b{ 10.0f, 0.0f, 0.0f };
+
+    EXPECT_NEAR(DcNoStopZone::DistSqToSegment(5.0f, 3.0f, 0.0f, a, b), 9.0f, 0.01f);
+    EXPECT_NEAR(DcNoStopZone::DistSqToSegment(-4.0f, 0.0f, 0.0f, a, b), 16.0f, 0.01f);
+    EXPECT_NEAR(DcNoStopZone::DistSqToSegment(17.0f, 0.0f, 0.0f, a, b), 49.0f, 0.01f);
+
+    // A degenerate leg (duplicate anchors) must not divide by zero.
+    EXPECT_NEAR(DcNoStopZone::DistSqToSegment(3.0f, 4.0f, 0.0f, a, a), 25.0f, 0.01f);
 }

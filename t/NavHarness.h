@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "G3D/Vector3.h"
 
@@ -48,6 +49,13 @@ namespace DcNavHarness
         float routeLength2d  = 0.0f;   // summed 2D segment length of the polyline
         float maxStepZ       = 0.0f;   // largest |dz| between consecutive points
         std::string failureReason;
+        // The raw corridor polyline, WoW-space, start point first. Carried out
+        // of the harness because AUTHORING a route needs the geometry itself,
+        // not a summary of it: the suppression-rooms hints (map 469) were
+        // derived by routing the leg here and decimating this polyline, and the
+        // probe test re-prints it so a future mmaps regen can be re-authored the
+        // same way instead of by hand.
+        std::vector<G3D::Vector3> points;
     };
 
     // Run BuildCoreFromMesh from (sx,sy,sz) to (tx,ty,tz) against `mesh` and
