@@ -792,10 +792,19 @@ inline constexpr std::size_t kDcSettingCount =
 
 // Linear lookup by key suffix; nullptr if the key is not registered. The table
 // is tiny, so a scan is cheaper than any map and keeps it constexpr-friendly.
+//
+// The first-character test is not a micro-optimisation for its own sake: `d.key`
+// is a `char const*`, so `key == d.key` builds a string_view from it, which is a
+// strlen — one per ROW, on every settings read, and settings are read several
+// times per bot per tick from the trigger ladder and the follower movers. The
+// guard skips the strlen for ~96% of the table and cannot change the result (a
+// row whose first byte differs can never compare equal).
 inline DcSettingDef const* FindDcSetting(std::string_view key)
 {
+    if (key.empty())
+        return nullptr;
     for (DcSettingDef const& d : kDcSettings)
-        if (key == d.key)
+        if (d.key[0] == key[0] && key == d.key)
             return &d;
     return nullptr;
 }

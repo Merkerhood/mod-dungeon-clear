@@ -562,6 +562,18 @@ bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
     if (!DcRun::Of(ctx).enabled)
         return false;
 
+    // NO EVENT RUNNING -> out before the anchor read. This is asked by follow-tank
+    // on every follower on every tick, and the NextDungeonBoss read below returns
+    // an optional<DungeonBossInfo> BY VALUE — a struct with a std::string in it, so
+    // a heap allocation per follower per tick for a question that is almost always
+    // "no". The check is strictly implied by the chain that follows: it demands
+    // prog.eventId == ev->id, and ev came from a non-zero next->eventId, so a zero
+    // progress id could never have matched.
+    DungeonEventProgress const& prog =
+        ctx->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+    if (!prog.eventId)
+        return false;
+
     // The leader's active anchored-event step must be a DropInHole.
     std::optional<DungeonBossInfo> const next =
         ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
@@ -572,8 +584,6 @@ bool DcLeaderSignal::IsLeaderDroppingInHole(Player* bot)
     if (!ev)
         return false;
 
-    DungeonEventProgress const& prog =
-        ctx->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
     if (prog.eventId != ev->id || prog.stepIndex >= ev->steps.size())
         return false;
 
@@ -1079,7 +1089,8 @@ bool DcLeaderSignal::IsLeaderDynamicScouting(Player* bot)
     }
     return true;
 }
-bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out)
+bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out,
+                                             bool probeReachable)
 {
     if (!bot)
         return false;
@@ -1121,6 +1132,15 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     // LAZILY: only the point at/past the lag distance is probed, and the pre-lag
     // crumbs only as a farthest-first fallback when nothing at the lag was reachable
     // (trail shorter than the lag, or every far point across a seam).
+    //
+    // ...and skipped entirely when the caller only MEASURES the point (see the
+    // header). With probing off the walk stops at the first exact-lag point, which
+    // is what the probed walk returns whenever the trail is reachable — i.e. the
+    // answer is identical on the path this is used for, at zero Detour cost.
+    auto accept = [&](Position const& p)
+    {
+        return !probeReachable || (IsNavReachable(bot, p) && !TrailOverZoneLine(bot, p));
+    };
     std::vector<std::pair<float, Position>> preLag;  // (along, crumb), nearest-first
     bool found = false;
     DungeonClearMath::WalkTrailBack(
@@ -1143,13 +1163,13 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
             // the map. The interpolated point sits on a contiguous walked segment,
             // so it is reachable whenever the bracketing crumb is; fall back to the
             // crumb if the snap missed, else keep walking back.
-            if (IsNavReachable(bot, target) && !TrailOverZoneLine(bot, target))
+            if (accept(target))
             {
                 out = target;
                 found = true;
                 return false;
             }
-            if (IsNavReachable(bot, s.crumb) && !TrailOverZoneLine(bot, s.crumb))
+            if (accept(s.crumb))
             {
                 out = s.crumb;
                 found = true;
@@ -1165,7 +1185,7 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     // closer until more trail accrues).
     for (auto it = preLag.rbegin(); it != preLag.rend(); ++it)
     {
-        if (IsNavReachable(bot, it->second) && !TrailOverZoneLine(bot, it->second))
+        if (accept(it->second))
         {
             out = it->second;
             return true;
@@ -1454,14 +1474,26 @@ bool DcLeaderSignal::IsLeaderTransitDriving(Player* bot)
 
 bool DcLeaderSignal::GetTransitAnchor(Player* bot, Position& out)
 {
+    // CHEAPEST DISCRIMINATOR FIRST. This is asked by the transit pack trigger on
+    // every bot in both engines, and by follow-tank on every follower in every
+    // dungeon. FindLeaderTank is memoised but sits behind one process-wide mutex
+    // shared by every DC bot on every map, so it is not free enough to be the
+    // first thing a five-man pays for a question only a raid can answer yes to.
     if (!bot)
+        return false;
+    Map const* const map = bot->GetMap();
+    if (!map || !map->IsRaid())
         return false;
 
     // Resolving through the leader is what makes this answerable by a FOLLOWER:
     // every bot carries its own DcRunState and a follower's stays at defaults, so
     // a bare read of the asker's own copy would say "not driving" for the whole
     // raid.
-    Player* leader = FindLeaderTank(bot);
+    return GetTransitAnchorFrom(FindLeaderTank(bot), out);
+}
+
+bool DcLeaderSignal::GetTransitAnchorFrom(Player* leader, Position& out)
+{
     if (!leader)
         return false;
 

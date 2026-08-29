@@ -8,6 +8,8 @@
 
 #include "Define.h"
 
+#include <vector>
+
 class Player;
 
 // The LIVE half of DcHazardRegistry: "is this spot / this leg standing in a
@@ -117,6 +119,70 @@ namespace DcHazard
     //
     // MAP THREAD ONLY, same as everything else here.
     bool PointIsInVacateBand(Player* bot, float x, float y, float z);
+
+    // ---- the sampled form of all four predicates above ---------------------
+    //
+    // Each Player* entry point resolves the whole live hazard world from scratch:
+    // three AiObjectContext value lookups (a std::string per key, a hash-map find
+    // and a dynamic_cast apiece) and then one ObjectAccessor resolution per guid.
+    // That is the right shape for a caller that asks ONCE. It is the wrong shape
+    // for the two callers that ask about a POOL of candidate points inside a
+    // single tick:
+    //
+    //   * DungeonClearHazardVacateAction fans ten bearings and asks PointIsHot +
+    //     PointIsInVacateBand about each — twenty full re-resolutions of the same
+    //     unchanged world per Execute, on top of the NearestVacate the trigger
+    //     already ran that tick;
+    //   * DcPullPlanner::ComputeSafeCamp asks about every breadcrumb it walks
+    //     back over, and again about every shrinking projection fallback.
+    //
+    // Nothing those loops do can move an emitter: the guid lists are 500ms-cached
+    // and the map thread is not advancing the world underneath them. So sample the
+    // world ONCE and answer from the sample. `LiveSet` is exactly what the walkers
+    // used to rebuild per call, flattened so the three emitter kinds stop being
+    // three separate passes.
+    struct LiveHazard
+    {
+        float x{0.0f}, y{0.0f}, z{0.0f};
+
+        // Placement keep-out — what PointIsHot / SegmentIsHot judge against.
+        float radius{0.0f};
+        float zBand{0.0f};
+
+        // Active-vacate band — what NearestVacate / PointIsInVacateBand judge
+        // against. 0 means this row is not a vacate row and those two skip it.
+        float vacateRadius{0.0f};
+        float holdBand{0.0f};
+        float retreatSlack{VacateRetreatSlack};
+
+        // Creature liveness at sample time. The vacate half has always required
+        // it (a dead emitter has stopped pulsing, so there is nothing to flee);
+        // the placement half has always ignored it (a corpse still sits where the
+        // 500ms-stale guid list said it did, and a camp planted on one is still a
+        // camp planted on the row). Pools and traps have no liveness flag at all
+        // — resolving the guid IS the check — so they sample as alive.
+        bool alive{true};
+    };
+
+    using LiveSet = std::vector<LiveHazard>;
+
+    // Resolve every live hazard around `bot` into one flat set, in registry order
+    // (creature emitters, then ground pools, then traps) so NearestVacate's
+    // nearest-wins tie-break is unchanged. Empty — and free — on a map with no
+    // rows. MAP THREAD ONLY, like everything else here.
+    LiveSet Sample(Player* bot);
+
+    // The four predicates above, answered from a sample. Identical results to
+    // their Player* forms called at the moment the sample was taken.
+    bool PointIsHot(LiveSet const& live, float x, float y, float z);
+    bool SegmentIsHot(LiveSet const& live, float ax, float ay, float az,
+                      float bx, float by, float bz);
+    bool PointIsInVacateBand(LiveSet const& live, float x, float y, float z);
+
+    // Takes the query point explicitly rather than reading it off a Player, so
+    // the retreat can ask "which pulse am I in" and "which pulse would I be in
+    // there" against the same sample.
+    VacateEmitter NearestVacate(LiveSet const& live, float px, float py, float pz);
 }
 
 #endif

@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
 
 #include "Creature.h"
 #include "GameObject.h"
@@ -24,6 +23,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
@@ -126,22 +126,11 @@ namespace
             DcMovement::ResolveEscortConflict(bot);
         }
 
-        {
-            struct LastIssue { float x, y, z; uint32 ms; };
-            thread_local std::unordered_map<uint32, LastIssue> lastIssue;
-            uint32 const guid = bot->GetGUID().GetCounter();
-            auto it = lastIssue.find(guid);
-            if (it != lastIssue.end())
-            {
-                LastIssue const& li = it->second;
-                float const ddx = li.x - tx, ddy = li.y - ty, ddz = li.z - tz;
-                bool const sameDest =
-                    std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz) <= ORB_REPATH_EPSILON;
-                if (sameDest && GetMSTimeDiffToNow(li.ms) < ORB_REISSUE_MS)
-                    return true;
-            }
-            lastIssue[guid] = { tx, ty, tz, getMSTime() };
-        }
+        // Same-destination re-issue floor, on the bot's own run state — see
+        // Util/DcThrottle.h for why not in a file-scope thread_local map.
+        if (DcRun::Of(botAI).ThrottledIssue(DcThrottle::RazorgoreOrbIssue, tx, ty, tz,
+                                            ORB_REPATH_EPSILON, ORB_REISSUE_MS))
+            return true;
 
         if (dist > ORB_LONG_HAUL)
         {

@@ -6,7 +6,6 @@
 #include "ObjectiveHookRegistry.h"
 
 #include <atomic>
-#include <unordered_map>
 #include <utility>
 
 #include "Creature.h"
@@ -26,6 +25,8 @@
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "PlayerbotAI.h"
+
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
@@ -568,7 +569,7 @@ namespace
     // without re-pathing every tick.
     constexpr uint32 DTK_REISSUE_MS = 1000;
 
-    ObjectiveArriveResult HoldNovosCamp(Player* bot, AiObjectContext* /*context*/,
+    ObjectiveArriveResult HoldNovosCamp(Player* bot, AiObjectContext* context,
                                         DungeonBossInfo const& /*info*/)
     {
         Creature* novos = bot->FindNearestCreature(DcDrakTharonKeep::NOVOS,
@@ -597,15 +598,10 @@ namespace
         // Throttled re-issue. A point move inside one chamber is at most ~56yd
         // (the stairs), well inside what MovePoint's PathGenerator delivers, so
         // there is no long-haul spline branch to take here.
-        {
-            struct LastIssue { uint32 ms; };
-            thread_local std::unordered_map<uint32, LastIssue> lastIssue;
-            uint32 const guid = bot->GetGUID().GetCounter();
-            auto it = lastIssue.find(guid);
-            if (it != lastIssue.end() && GetMSTimeDiffToNow(it->second.ms) < DTK_REISSUE_MS)
-                return ObjectiveArriveResult::Running;  // still walking home
-            lastIssue[guid] = { getMSTime() };
-        }
+        // On the bot's own run state — see Util/DcThrottle.h for why not in a
+        // file-scope thread_local map keyed by GUID.
+        if (DcRun::Of(context).Throttled(DcThrottle::DtkCampIssue, DTK_REISSUE_MS))
+            return ObjectiveArriveResult::Running;  // still walking home
 
         // Drop any escort glide first: a coast-past from the advance ladder is
         // aimed somewhere else entirely and would ride out over this point move.

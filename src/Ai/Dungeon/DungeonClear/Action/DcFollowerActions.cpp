@@ -12,7 +12,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -61,6 +60,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
@@ -442,8 +442,14 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
         // the reported "hugging walls / falling off ledges in dynamic pull". Trail
         // points are reachability-gated centered crumbs, so the move stays on the
         // safe route the tank already cleared.
+        // probeReachable=false: this resolve exists to MEASURE the crumb (the
+        // arrival hold below), and the two branches that then move — the glide and
+        // the single-point step — each run their own reachability gate on the
+        // ground they actually use. Probing here bought a second full Detour query
+        // per follower per tick whose answer was thrown away.
         Position trailPoint;
-        if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint))
+        if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint,
+                                                     /*probeReachable=*/false))
         {
             // ARRIVAL HOLD. The hold gate above measures STRAIGHT-LINE distance to
             // the tank (toTank <= lag), but the trail point is the crumb at `lag`
@@ -484,8 +490,13 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // normal_only: reject (don't straight-line to) a point that isn't
             // reachable over a real navmesh path. Crumbs are already gated for
             // reachability, but keep the guard as a belt-and-braces backstop.
-            // Reached only when the glide window was too short / unreachable.
-            if (DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
+            // Reached only when the glide window was too short / unreachable —
+            // which is where the PROBED resolve belongs: this is the one branch
+            // that walks the follower to the crumb, so it re-resolves with the
+            // reachability / zone-line gate on (falling back to a farther-back
+            // crumb when the exact-lag point is across a seam, exactly as before).
+            if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint) &&
+                DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
                        trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
                        false, false, /*normal_only=*/true))
             {
@@ -590,7 +601,12 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
             // issuing MoveTo to a point we're basically on micro-steps in place
             // (the scout-lag "two steps forward, two back" dance). Let Follow()
             // take it — it early-outs cleanly when in range.
-            if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint) &&
+            //
+            // probeReachable=false: same reason as the scout-lag resolve above —
+            // this answer is only MEASURED here, and both movers below gate their
+            // own ground. This ran on every trailing tick of every follower.
+            if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint,
+                                                         /*probeReachable=*/false) &&
                 bot->GetExactDist(&trailPoint) > kTrailArrival)
             {
                 // Keep the teardown / orphan-reaper bookkeeping live; the point-
@@ -617,8 +633,11 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
                 // normal_only: never straight-line to a crumb that isn't reachable
                 // over a real navmesh path (belt-and-braces — crumbs are already
                 // reachability-gated in GetLeaderScoutTrailPoint). Reached only
-                // when the glide window was too short / unreachable.
-                if (DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
+                // when the glide window was too short / unreachable — the one
+                // branch here that MOVES to the crumb, so it re-resolves with the
+                // probe on.
+                if (DcLeaderSignal::GetLeaderScoutTrailPoint(bot, lag, trailPoint) &&
+                    DcMoveTo(bot->GetMapId(), trailPoint.GetPositionX(),
                            trailPoint.GetPositionY(), trailPoint.GetPositionZ(),
                            false, false, /*normal_only=*/true))
                 {
@@ -1089,7 +1108,7 @@ namespace
     // them apart, and this is the one place in the module that was missing it: the
     // ledge fix (fix/ledge-target-path-distance) wired IsLevelReachable into all
     // four DcTargeting pickers and none of the followers' own.
-    Unit* PickPartyFightTarget(Player* bot, Player* leader)
+    Unit* PickPartyFightTarget(Player* bot, AiObjectContext* context, Player* leader)
     {
         Unit* best = nullptr;
         float bestDist = 0.0f;
@@ -1103,11 +1122,17 @@ namespace
             if (best && d >= bestDist)
                 return;
             // CHEAPEST LAST: only a candidate that would actually WIN the rank pays
-            // for the probe, and IsLevelReachable short-circuits on
-            // dz <= DC_Z_LEVEL_TOLERANCE before it touches PathGenerator — so a
+            // for the probe, and the same-level answer is one float compare — so a
             // fight on one floor, which is nearly every fight in nearly every
-            // dungeon, costs one float compare and never probes at all.
-            if (!DcEngageGeometry::IsLevelReachable(bot, u))
+            // dungeon, never reaches PathGenerator at all.
+            //
+            // MEMOISED, because the expensive case is not the rare one: the loop
+            // below ranks every attacker of every groupmate within 1.5x
+            // PartyMaxSpread, and in the state this probe was added for — a mob
+            // formation overhead flagging a forty-man through the floor — that is a
+            // dozen Detour queries, on every follower, on every tick, for the same
+            // dozen candidates. The answer cannot change inside one tick.
+            if (!DcTickMemoAccess::LevelReachable(bot, context, u))
                 return;
             best = u;
             bestDist = d;
@@ -1171,7 +1196,7 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
             bot->IsValidAttackTarget(cur) &&
             cur->GetExactDist2d(leader) <=
                 DcSettings::GetFloat(bot, "PartyMaxSpread") * 1.5f &&
-            DcEngageGeometry::IsLevelReachable(bot, cur))
+            DcTickMemoAccess::LevelReachable(bot, context, cur))
             target = cur;
     }
 
@@ -1184,7 +1209,7 @@ bool DungeonClearAssistCampActionBase::Execute(Event /*event*/)
     // attacker list populates.
     if (!target)
     {
-        target = PickPartyFightTarget(bot, leader);
+        target = PickPartyFightTarget(bot, context, leader);
         if (!target)
             return false;
 
@@ -1498,9 +1523,20 @@ bool DungeonClearHealRepositionAction::Execute(Event /*event*/)
 
 bool DungeonClearHazardVacateAction::Execute(Event /*event*/)
 {
+    // Sample the live hazard world ONCE and answer every question below from it.
+    // Each DcHazard Player* entry point resolves three AiObjectContext values and
+    // one ObjectAccessor lookup per guid; the fan loop below asks two of them per
+    // candidate, so the unsampled form re-resolved the same unchanged world up to
+    // twenty times per Execute on top of the NearestVacate the trigger just ran.
+    // Nothing in this function can move an emitter, so one sample is the whole
+    // tick's truth.
+    DcHazard::LiveSet const live = DcHazard::Sample(bot);
+
     // The nearest emitter whose pulse the bot is in. Re-read here (trigger/action
     // gap); bail if it despawned or the bot cleared in between.
-    DcHazard::VacateEmitter const danger = DcHazard::NearestVacate(bot);
+    DcHazard::VacateEmitter const danger =
+        DcHazard::NearestVacate(live, bot->GetPositionX(), bot->GetPositionY(),
+                                bot->GetPositionZ());
     if (!danger.ok)
     {
         _fleeToValid = false;
@@ -1535,7 +1571,7 @@ bool DungeonClearHazardVacateAction::Execute(Event /*event*/)
     if (_fleeToValid && bot->isMoving() &&
         GetMSTimeDiffToNow(_fleeSetAtMs) < DC_VACATE_COMMIT_MAX_MS &&
         bot->GetExactDist2d(&_fleeTo) > 3.0f &&
-        !DcHazard::PointIsInVacateBand(bot, _fleeTo.GetPositionX(), _fleeTo.GetPositionY(),
+        !DcHazard::PointIsInVacateBand(live, _fleeTo.GetPositionX(), _fleeTo.GetPositionY(),
                                        _fleeTo.GetPositionZ()))
         return true;
 
@@ -1604,7 +1640,7 @@ bool DungeonClearHazardVacateAction::Execute(Event /*event*/)
         // sludge pack is nothing but overlap. PointIsHot covers every live
         // emitter's PLACEMENT keep-out (the fled emitter's own is only its raw
         // pulse, which this point already clears)...
-        if (DcHazard::PointIsHot(bot, snap.x, snap.y, snap.z))
+        if (DcHazard::PointIsHot(live, snap.x, snap.y, snap.z))
             continue;
 
         // ...and this covers every live emitter's DANGER band, which is the one
@@ -1613,7 +1649,7 @@ bool DungeonClearHazardVacateAction::Execute(Event /*event*/)
         // (Creeping Sludge: 11 vs 8) passes the first and fails the second. Landing
         // on such a point means fleeing again on arrival — forever. Reject it here
         // and let the fan keep looking.
-        if (DcHazard::PointIsInVacateBand(bot, snap.x, snap.y, snap.z))
+        if (DcHazard::PointIsInVacateBand(live, snap.x, snap.y, snap.z))
             continue;
 
         // Reachable AND actually near: the path to this point must be commensurate
@@ -1731,7 +1767,7 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
             float const d = bot->GetExactDist2d(a);
             if (target && d >= bestTargetDist)
                 continue;
-            if (!DcEngageGeometry::IsLevelReachable(bot, a))
+            if (!DcTickMemoAccess::LevelReachable(bot, context, a))
                 continue;
             target = a;
             bestTargetDist = d;
@@ -1741,7 +1777,7 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
             Unit* const victim = member->GetVictim();
             if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId() &&
                 bot->IsValidAttackTarget(victim) &&
-                DcEngageGeometry::IsLevelReachable(bot, victim))
+                DcTickMemoAccess::LevelReachable(bot, context, victim))
             {
                 target = victim;
                 bestTargetDist = bot->GetExactDist2d(victim);
@@ -1888,16 +1924,13 @@ namespace
     //
     // INFO, not trace, because the question it answers is the first one asked of a
     // run that ends "couldn't get X resurrected in time". Throttled per bot — the
-    // rung retries at tick rate — with the thread-local pattern VhTravelLog uses (a
-    // map's bots update on one thread, so each thread owns its table).
+    // rung retries at tick rate — on the bot's own run state; see
+    // Util/DcThrottle.h for why not in a file-scope thread_local map keyed by GUID.
     void RezRefusalDiag(PlayerbotAI* botAI, Player* bot, Player* target,
                         char const* rezAction)
     {
-        thread_local std::unordered_map<uint32, uint32> lastMs;
-        uint32& prev = lastMs[bot->GetGUID().GetCounter()];
-        if (prev && GetMSTimeDiffToNow(prev) < 3000)
+        if (DcRun::Of(botAI).Throttled(DcThrottle::RezRefusalLog, 3000))
             return;
-        prev = getMSTime();
 
         uint32 const spellId =
             botAI->GetAiObjectContext()->GetValue<uint32>("spell id", rezAction)->Get();

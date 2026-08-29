@@ -6,7 +6,6 @@
 #include "ObjectiveHookRegistry.h"
 
 #include <list>
-#include <unordered_map>
 #include <algorithm>
 #include <unordered_set>
 #include <vector>
@@ -445,11 +444,8 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
     // a charm that never appears means the click is being swallowed.
     DcRazorgore::Step const step = DcRazorgore::Decide(v);
     {
-        thread_local std::unordered_map<uint32, uint32> lastMs;
-        uint32& prev = lastMs[bot->GetGUID().GetCounter()];
-        if (!prev || GetMSTimeDiffToNow(prev) > 3000)
+        if (!st.Throttled(DcThrottle::RazorgoreLog, 3000))
         {
-            prev = getMSTime();
             LOG_DEBUG("playerbots.dungeonclear",
                       "DungeonClear: Razorgore — step {}, eggs {}/{}, guards {}, charmed {}, "
                       "runner {} (atOrb {}, canClick {}), egg {:.1f}yd, skipped {}",
@@ -667,9 +663,16 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
 
 namespace
 {
-    // The authored route, as the kernel's plain-arithmetic view of it. Rebuilt per
-    // call rather than cached: it is twenty structs, the registry read is a hash
-    // lookup, and a cache would be one more thing to invalidate on a route edit.
+    // The authored route, as the kernel's plain-arithmetic view of it.
+    //
+    // BUILT ONCE. This was rebuilt per call — twenty WaypointHints copied out of
+    // the registry and a twenty-element Anchor vector projected from them, two heap
+    // allocations on every tick of a leg that can run for minutes — on the
+    // reasoning that the row is small and a cache is one more thing to invalidate.
+    // Nothing invalidates it: the registry is seeded once from a static table and
+    // never written again, so the slice is a constant and belongs in one. The copy
+    // (rather than a pointer into the registry) is what keeps that true even if the
+    // store is ever rehashed.
     //
     // SLICED AT THE STAGING POINT. The registry row is the whole Vaelastrasz ->
     // Broodlord walk, and its first twenty anchors are the approach — the ordinary
@@ -680,21 +683,31 @@ namespace
     // unsliced row and every one of those means something different — the gather
     // would form up in Vaelastrasz's chamber and the crossing would report itself
     // complete at the staging point.
-    bool BwlTransitRoute(std::vector<WaypointHint>& hints,
-                         std::vector<DcSuppressionTransit::Anchor>& out)
+    struct BwlTransitRoute
     {
-        std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
-            MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
-        if (!row || row->size() < TRANSIT_STAGE_ANCHOR_INDEX + 2)
-            return false;
+        std::vector<WaypointHint> hints;                    // anchor 20 onward
+        std::vector<DcSuppressionTransit::Anchor> anchors;  // ...the same, projected
+    };
 
-        hints.assign(row->begin() + TRANSIT_STAGE_ANCHOR_INDEX, row->end());
+    // nullptr when the row is missing or too short to slice — the caller reports
+    // Done and the leg falls back to an ordinary clear.
+    BwlTransitRoute const* TransitRoute()
+    {
+        static BwlTransitRoute const route = []
+        {
+            BwlTransitRoute r;
+            std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
+                MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+            if (!row || row->size() < TRANSIT_STAGE_ANCHOR_INDEX + 2)
+                return r;
 
-        out.clear();
-        out.reserve(hints.size());
-        for (WaypointHint const& h : hints)
-            out.push_back({ h.x, h.y, h.z });
-        return true;
+            r.hints.assign(row->begin() + TRANSIT_STAGE_ANCHOR_INDEX, row->end());
+            r.anchors.reserve(r.hints.size());
+            for (WaypointHint const& h : r.hints)
+                r.anchors.push_back({ h.x, h.y, h.z });
+            return r;
+        }();
+        return route.hints.empty() ? nullptr : &route;
     }
 
     // How far the FURTHEST living member is from a point, and how many are inside
@@ -829,16 +842,13 @@ namespace
     // nothing about WHICH of the four mechanisms is still biting — the whole point
     // of measuring the leg was to be able to tell "the pack never formed" from
     // "the devices were never disarmed" from "the driver never got a tick".
-    void BwlTransitLog(Player* bot, DcSuppressionTransit::Inputs const& in,
+    void BwlTransitLog(Player* bot, DcRunState& st, DcSuppressionTransit::Inputs const& in,
                        DcSuppressionTransit::Verdict const& v, BwlPackView const& pack,
                        uint32 anchorCount)
     {
-        thread_local std::unordered_map<uint32, uint32> lastMs;
-        uint32 const guid = bot->GetGUID().GetCounter();
-        uint32& prev = lastMs[guid];
-        if (prev && GetMSTimeDiffToNow(prev) < TRANSIT_TELEMETRY_MS)
+        // Throttle state on the bot's own run state — see Util/DcThrottle.h.
+        if (st.Throttled(DcThrottle::TransitLog, TRANSIT_TELEMETRY_MS))
             return;
-        prev = getMSTime();
 
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] BWL transit — cursor {}/{} ({:.1f}yd), pack {}/{} near{}, "
@@ -876,9 +886,8 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
         return ObjectiveArriveResult::Done;
     }
 
-    std::vector<WaypointHint> hints;
-    std::vector<DcSuppressionTransit::Anchor> route;
-    if (!BwlTransitRoute(hints, route))
+    BwlTransitRoute const* const rt = TransitRoute();
+    if (!rt)
     {
         // No authored route: there is nothing to run a cursor down, and inventing
         // one across this geometry is how a raid ends up in a wall. Yield and let
@@ -888,6 +897,9 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
     }
 
     uint32 const now = getMSTime();
+    std::vector<WaypointHint> const& hints = rt->hints;
+    std::vector<DcSuppressionTransit::Anchor> const& route = rt->anchors;
+
     uint32 const anchorCount = static_cast<uint32>(route.size());
     uint32 const lastAnchor = anchorCount - 1;
 
@@ -1002,7 +1014,7 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
 
     DcSuppressionTransit::Verdict const v = DcSuppressionTransit::Decide(in);
 
-    BwlTransitLog(bot, in, v, pack, anchorCount);
+    BwlTransitLog(bot, st, in, v, pack, anchorCount);
 
     // --- act ---------------------------------------------------------------
     if (v.openGatherGate)

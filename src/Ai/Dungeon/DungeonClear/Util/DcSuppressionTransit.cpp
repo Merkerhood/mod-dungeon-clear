@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
 
 #include "MotionMaster.h"
 #include "Player.h"
@@ -16,6 +15,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
@@ -80,24 +80,13 @@ bool DcTransit::TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, floa
     }
 
     // Same-destination re-issue floor: the test above cannot see a glide the
-    // combat engine has since layered MoveChase over. PER BOT, thread_local — a
-    // map's bots are updated on one map-update thread, so each thread owns its
-    // table and no lock is involved.
-    {
-        struct LastIssue { float x, y, z; uint32 ms; };
-        thread_local std::unordered_map<uint32, LastIssue> lastIssue;
-        uint32 const guid = bot->GetGUID().GetCounter();
-        auto it = lastIssue.find(guid);
-        if (it != lastIssue.end())
-        {
-            LastIssue const& li = it->second;
-            float const ddx = li.x - x, ddy = li.y - y, ddz = li.z - z;
-            if (std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz) <= epsilon &&
-                GetMSTimeDiffToNow(li.ms) < TRANSIT_REISSUE_MS)
-                return true;
-        }
-        lastIssue[guid] = { x, y, z, getMSTime() };
-    }
+    // combat engine has since layered MoveChase over.
+    //
+    // Kept on the BOT'S OWN run state — see Util/DcThrottle.h for why not in a
+    // file-scope thread_local map keyed by GUID.
+    if (DcRun::Of(botAI).ThrottledIssue(DcThrottle::TransitIssue, x, y, z,
+                                       epsilon, TRANSIT_REISSUE_MS))
+        return true;
 
     if (dist > TRANSIT_LONG_HAUL)
     {

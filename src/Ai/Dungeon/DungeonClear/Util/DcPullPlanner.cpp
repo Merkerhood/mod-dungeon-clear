@@ -112,12 +112,21 @@ namespace
     // LegIsHot rejects a clean camp whose drag-back route walks the tank and the
     // pack straight through one on the way. Cheap on maps with no rows (one
     // registry bool), so it sits beside CampBlockedByDoor at every site.
-    bool CampInHazard(Player* bot, Position const& c)
+    //
+    // Takes a SAMPLED hazard world rather than resolving one per call: the caller
+    // asks this about every breadcrumb it walks back over and again about every
+    // shrinking projection fallback, and the unsampled entry points cost three
+    // AiObjectContext value lookups plus an ObjectAccessor resolution per guid
+    // EACH — twice over, once for the point and once for the leg. The sample is
+    // taken once at the top of the search; nothing inside it can move an emitter.
+    bool CampInHazard(Player* bot, DcHazard::LiveSet const& live, Position const& c)
     {
         if (!bot)
             return false;
-        return DcHazard::PointIsHot(bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ()) ||
-               DcHazard::LegIsHot(bot, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ());
+        return DcHazard::PointIsHot(live, c.GetPositionX(), c.GetPositionY(), c.GetPositionZ()) ||
+               DcHazard::SegmentIsHot(live,
+                                      bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                                      c.GetPositionX(), c.GetPositionY(), c.GetPositionZ());
     }
 
     // True when a candidate camp sits on — or the walk to it crosses — the
@@ -942,6 +951,13 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
                                     VMAP::ModelIgnoreFlags::Nothing, LINEOFSIGHT_CHECK_VMAP);
     };
 
+    // Resolve the live hazard world once, for the same reason the hostiles below
+    // are resolved once: CampInHazard is asked about every breadcrumb this search
+    // walks back over and about every projection fallback it shrinks through, and
+    // an unsampled ask costs three value lookups and a guid resolution per emitter
+    // — twice, for the point and the leg. Nothing below moves an emitter.
+    DcHazard::LiveSet const live = DcHazard::Sample(bot);
+
     // Resolve the other-pack hostiles once (alive, hostile, not the target, not a
     // packmate). Same candidate set the pull / trash scans use.
     GuidVector const& farTargets =
@@ -1027,7 +1043,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             // short-circuiting here is the difference between rejecting them for
             // free and paying a path build apiece to reject them anyway.
             if (CampOverZoneLine(bot, c) || !IsNavReachable(bot, c) ||
-                CampBlockedByDoor(bot, c) || CampInHazard(bot, c))
+                CampBlockedByDoor(bot, c) || CampInHazard(bot, live, c))
                 return true;
             float const clear = clearanceAt(c);
             float const drag = tankPos.GetExactDist(&c);
@@ -1106,7 +1122,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
         {
             Position cand(back->x, back->y, back->z);
             if (IsNavReachable(bot, cand) && !CampBlockedByDoor(bot, cand) &&
-                !CampInHazard(bot, cand) && !CampOverZoneLine(bot, cand))
+                !CampInHazard(bot, live, cand) && !CampOverZoneLine(bot, cand))
             {
                 clearanceOut = clearanceAt(cand);
                 dragOut = tankPos.GetExactDist(&cand);
@@ -1157,7 +1173,7 @@ std::optional<Position> DcPullPlanner::ComputeSafeCamp(PlayerbotAI* botAI, Unit*
             // complete generated path reaches it, so the move never straight-lines
             // through the geometry in between — and never across/into a shut door.
             if (!IsNavReachable(bot, cand) || CampBlockedByDoor(bot, cand) ||
-                CampInHazard(bot, cand) || CampOverZoneLine(bot, cand))
+                CampInHazard(bot, live, cand) || CampOverZoneLine(bot, cand))
                 continue;
             float const c = clearanceAt(cand);
             float const drag = tankPos.GetExactDist(&cand);

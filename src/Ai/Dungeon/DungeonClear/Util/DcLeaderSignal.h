@@ -225,7 +225,18 @@ public:
     // the LEADER's crumbs cross-bot (only the tank records them) and only returns a
     // crumb `bot` can reach over a complete generated path. False if there is no
     // leader, the trail is empty, or no reachable point lies far enough back.
-    static bool GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out);
+    //
+    // `probeReachable` buys the reachability/zone-line gate, and it is the whole
+    // cost of the call: a full PathGenerator build (plus a zone-line raycast) per
+    // candidate crumb. Pass FALSE when the answer is only being MEASURED — the
+    // arrival-hold and "am I already on this crumb?" tests in
+    // DungeonClearFollowTankAction, which either stop the bot where it stands or
+    // hand the tick to Follow(), and so can never walk anyone across a navmesh
+    // seam. Those two tests ran on every trailing tick of every follower and were
+    // paying for a Detour query whose result they threw away. Keep it TRUE (the
+    // default) on any path that then MOVES to the returned point.
+    static bool GetLeaderScoutTrailPoint(Player* bot, float lag, Position& out,
+                                         bool probeReachable = true);
 
     // Multi-point variant of GetLeaderScoutTrailPoint: the centered breadcrumb
     // POLYLINE a follower should glide to catch up to the tank, rather than the
@@ -366,6 +377,12 @@ public:
     // point to camp at. Returns false whenever the transit is not driving, so one
     // call answers both "is there a pack to hold" and "hold it where".
     static bool GetTransitAnchor(Player* bot, Position& out);
+
+    // The same read for a caller that has ALREADY resolved the leader. The wrapper
+    // above is on two per-tick, per-bot paths and FindLeaderTank costs a
+    // process-wide mutex acquisition; a caller that needs the leader for its own
+    // reasons must not pay for a second one.
+    static bool GetTransitAnchorFrom(Player* leader, Position& out);
 };
 
 #endif  // _DC_LEADER_SIGNAL_H

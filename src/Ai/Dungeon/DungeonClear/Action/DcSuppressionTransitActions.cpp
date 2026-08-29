@@ -49,7 +49,13 @@ bool DungeonClearTransitPackTrigger::IsActive()
 
     // The leader IS the anchor. Exempting it here rather than inside the signal
     // keeps GetTransitAnchor answerable by the driver itself.
-    if (DcLeaderSignal::FindLeaderTank(bot) == bot)
+    //
+    // Resolved ONCE and handed on. This used to call FindLeaderTank and then
+    // GetTransitAnchor, which calls it again — two acquisitions of the one
+    // process-wide leader-election mutex, per bot, per engine, per tick, on the
+    // map where forty of them are ticking.
+    Player* const leader = DcLeaderSignal::FindLeaderTank(bot);
+    if (!leader || leader == bot)
         return false;
 
     // One call answers both "is there a crossing in progress" and "where is its
@@ -57,7 +63,7 @@ bool DungeonClearTransitPackTrigger::IsActive()
     // rung releases within two AI ticks of the crossing ending by every exit the
     // leg has.
     Position anchor;
-    if (!DcLeaderSignal::GetTransitAnchor(bot, anchor))
+    if (!DcLeaderSignal::GetTransitAnchorFrom(leader, anchor))
         return false;
 
     // INERT inside the HOLD POINT's radius — never "own the tick and return

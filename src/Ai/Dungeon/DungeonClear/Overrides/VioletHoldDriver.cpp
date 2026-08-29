@@ -8,7 +8,6 @@
 #include <cmath>
 #include <list>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "CombatManager.h"
@@ -28,6 +27,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
@@ -280,20 +280,17 @@ namespace
     constexpr float VH_GOSSIP_REACH = 4.5f;
     constexpr float VH_GOSSIP_LEASH = 1.5f;
 
-    // PER-BOT throttled travel log. thread_local keyed by GUID, not a single
-    // global static: with several instances running concurrently a global would
-    // make every consecutive line come from a DIFFERENT bot, which makes the one
-    // measurement that matters ("is this bot's distance falling tick over tick?")
-    // impossible to read. Race-free without a lock because a map's bots are
-    // updated on one map-update thread, so each thread owns its table.
+    // PER-BOT throttled travel log, not a single global static: with several
+    // instances running concurrently a global would make every consecutive line
+    // come from a DIFFERENT bot, which makes the one measurement that matters
+    // ("is this bot's distance falling tick over tick?") impossible to read.
+    // The slot lives on the bot's own run state — see Util/DcThrottle.h for why
+    // not in a file-scope thread_local map keyed by GUID.
     void VhTravelLog(Player* bot, char const* what, float dist, std::string const& detail)
     {
-        thread_local std::unordered_map<uint32, uint32> lastMs;
-        uint32 const guid = bot->GetGUID().GetCounter();
-        uint32& prev = lastMs[guid];
-        if (prev && GetMSTimeDiffToNow(prev) < 3000)
+        PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot);
+        if (!botAI || DcRun::Of(botAI).Throttled(DcThrottle::VhTravelLog, 3000))
             return;
-        prev = getMSTime();
         LOG_DEBUG("playerbots.dungeonclear",
                  "DungeonClear: Violet Hold — {} travel: {} (dist {:.1f}yd){}{}",
                  bot->GetName(), what, dist, detail.empty() ? "" : " — ", detail);
@@ -339,22 +336,10 @@ namespace
 
         // Same-destination re-issue floor (see VH_REISSUE_MS): the check above
         // cannot see a glide the combat engine has since layered MoveChase over.
-        {
-            struct LastIssue { float x, y, z; uint32 ms; };
-            thread_local std::unordered_map<uint32, LastIssue> lastIssue;
-            uint32 const guid = bot->GetGUID().GetCounter();
-            auto it = lastIssue.find(guid);
-            if (it != lastIssue.end())
-            {
-                LastIssue const& li = it->second;
-                float const ddx = li.x - x, ddy = li.y - y, ddz = li.z - z;
-                bool const sameDest =
-                    std::sqrt(ddx * ddx + ddy * ddy + ddz * ddz) <= epsilon;
-                if (sameDest && GetMSTimeDiffToNow(li.ms) < VH_REISSUE_MS)
-                    return;
-            }
-            lastIssue[guid] = { x, y, z, getMSTime() };
-        }
+        if (PlayerbotAI* const issuer = GET_PLAYERBOT_AI(bot))
+            if (DcRun::Of(issuer).ThrottledIssue(DcThrottle::VhTravelIssue, x, y, z,
+                                                 epsilon, VH_REISSUE_MS))
+                return;
 
         if (dist > VH_LONG_HAUL)
         {
@@ -637,20 +622,22 @@ namespace
     // next opens on the far rim, and without the lock a tank two yards from a
     // corpse would immediately be re-aimed 84yd away.
     //
-    // thread_local for the same reason as VhTravelLog: one map-update thread owns
-    // its table, so it is race-free without a lock.
+    // The latch lives on the bot's own run state. It used to be a file-scope
+    // thread_local map keyed by GUID, and a LOCK is the worst thing to put there:
+    // when a map moves between MapUpdater pool threads the table reads empty, the
+    // lock silently lapses, and the very re-selection this exists to prevent
+    // happens anyway. See Util/DcThrottle.h.
     Creature* VhSelectKeeper(Player* bot)
     {
-        thread_local std::unordered_map<uint32, ObjectGuid> locked;
-        uint32 const guid = bot->GetGUID().GetCounter();
+        PlayerbotAI* const botAI = GET_PLAYERBOT_AI(bot);
+        ObjectGuid* locked = botAI ? &DcRun::Of(botAI).vhKeeperLock : nullptr;
 
-        auto it = locked.find(guid);
-        if (it != locked.end())
+        if (locked && !locked->IsEmpty())
         {
-            if (Creature* held = ObjectAccessor::GetCreature(*bot, it->second))
+            if (Creature* held = ObjectAccessor::GetCreature(*bot, *locked))
                 if (held->IsAlive())
                     return held;
-            locked.erase(it);
+            locked->Clear();
         }
 
         // ARENA-WIDE rather than banded around a portal, deliberately. Only ONE
@@ -676,8 +663,8 @@ namespace
                 bestDist = d;
             }
         }
-        if (best)
-            locked[guid] = best->GetGUID();
+        if (best && locked)
+            *locked = best->GetGUID();
         return best;
     }
 
@@ -953,11 +940,9 @@ namespace
                 // overrides nothing, so a persistent miss means the select
                 // already landed (or something else cleared the flag) — either
                 // way the run wants to know which.
-                thread_local std::unordered_map<uint32, uint32> lastFlagMs;
-                uint32& flagPrev = lastFlagMs[bot->GetGUID().GetCounter()];
-                if (!flagPrev || GetMSTimeDiffToNow(flagPrev) > 10000)
+                PlayerbotAI* const flagAI = GET_PLAYERBOT_AI(bot);
+                if (flagAI && !DcRun::Of(flagAI).Throttled(DcThrottle::VhSinclariFlagLog, 10000))
                 {
-                    flagPrev = getMSTime();
                     LOG_DEBUG("playerbots.dungeonclear",
                              "DungeonClear: Violet Hold — {} is in reach of Sinclari "
                              "({:.1f}yd) but she has no gossip flag; holding",
@@ -976,11 +961,9 @@ namespace
         // throttle interleaves their lines, which makes the one measurement that
         // matters — is THIS bot's distance falling tick over tick? — unreadable.
         {
-            thread_local std::unordered_map<uint32, uint32> lastMs;
-            uint32& prev = lastMs[bot->GetGUID().GetCounter()];
-            if (!prev || GetMSTimeDiffToNow(prev) > 10000)
+            PlayerbotAI* const walkAI = GET_PLAYERBOT_AI(bot);
+            if (walkAI && !DcRun::Of(walkAI).Throttled(DcThrottle::VhSinclariWalkLog, 10000))
             {
-                prev = getMSTime();
                 LOG_DEBUG("playerbots.dungeonclear",
                          "DungeonClear: Violet Hold — walking {} to Lieutenant Sinclari to "
                          "start the siege (dist {:.1f}yd, reach {:.1f}yd, gossip {})",
@@ -1056,11 +1039,9 @@ namespace
 
         if (status == NOT_STARTED)
         {
-            thread_local std::unordered_map<uint32, uint32> lastRestartLog;
-            uint32& prev = lastRestartLog[bot->GetGUID().GetCounter()];
-            if (!prev || GetMSTimeDiffToNow(prev) > 15000)
+            PlayerbotAI* const restartAI = GET_PLAYERBOT_AI(bot);
+            if (restartAI && !DcRun::Of(restartAI).Throttled(DcThrottle::VhRestartLog, 15000))
             {
-                prev = getMSTime();
                 LOG_INFO("playerbots.dungeonclear",
                          "DungeonClear: Violet Hold — instance is back at NOT_STARTED during "
                          "'{}' (wave {}); the seal failed or the party wiped. Re-starting from "
@@ -1228,11 +1209,9 @@ namespace
         // counter standing still with a keeper alive means the party never
         // reached it.
         {
-            thread_local std::unordered_map<uint32, uint32> lastMs;
-            uint32& prev = lastMs[bot->GetGUID().GetCounter()];
-            if (!prev || GetMSTimeDiffToNow(prev) > 3000)
+            PlayerbotAI* const waveAI = GET_PLAYERBOT_AI(bot);
+            if (waveAI && !DcRun::Of(waveAI).Throttled(DcThrottle::VhWaveLog, 3000))
             {
-                prev = getMSTime();
                 LOG_DEBUG("playerbots.dungeonclear",
                          "DungeonClear: Violet Hold — {} wave {}/18: draining {}, pulled {}, "
                          "portal {:.0f}yd, keeper {}, atKeeper {}, boss {}, assist {} {:.0f}yd",

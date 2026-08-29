@@ -8,9 +8,12 @@
 
 #include <string>
 
-#include "ObjectGuid.h"
-
 #include <vector>
+
+#include "ObjectGuid.h"
+#include "Timer.h"
+
+#include "Ai/Dungeon/DungeonClear/Util/DcThrottle.h"
 
 // The authoritative, leader-owned state of one dungeon-clear RUN — the run's
 // identity/mode, its current manual-override objective, and the two cross-bot
@@ -214,6 +217,7 @@ struct DcRunState
     // Grethok's boss anchor and the muster is topping it off — and a camp rung
     // armed underneath that would fight the pipeline for every bot.
     uint32     razorDrivingMs = 0;
+
     ObjectGuid razorRunnerGuid;            // elected orb runner (empty = none yet)
     uint32     razorRunnerPickedMs = 0;    // getMSTime() of the last election (throttle)
     ObjectGuid razorEggGuid;               // the egg currently being driven at
@@ -269,6 +273,70 @@ struct DcRunState
     // this is what makes the WARN fire once per release instead of once per tick.
     bool   transitHoldTimedOut = false;
 
+    // The Violet Hold keeper / Black Morass rift a bot has COMMITTED to, held
+    // across the portal-death boundary so a tank two yards from a corpse is not
+    // instantly re-aimed at the next spawn tens of yards away. Empty = nothing
+    // committed; the driver re-validates (alive, still resolvable) on every read
+    // and clears it in place, so there is no staleness for a run teardown to
+    // handle. Here rather than in a file-scope thread_local map for the reason in
+    // Util/DcThrottle.h, and it matters more for a lock than for a log: a lapsed
+    // lock re-selects, which is precisely the behaviour it exists to prevent.
+    ObjectGuid vhKeeperLock;
+    ObjectGuid bmRiftLock;
+
+    // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
+
+    DcThrottleSlot throttles[kDcThrottleCount]{};
+
+    // True while `slot` is still inside its window — the caller SUPPRESSES. One
+    // call both asks and arms: a false return stamps the slot, so there is no way
+    // to ask without recording the answer, which is the slip the
+    // `uint32& prev = map[guid]` idiom made easy.
+    bool Throttled(DcThrottle slot, uint32 windowMs)
+    {
+        DcThrottleSlot& s = throttles[static_cast<std::size_t>(slot)];
+        if (s.ms && GetMSTimeDiffToNow(s.ms) < windowMs)
+            return true;
+        StampThrottle(s);
+        return false;
+    }
+
+    // The movement variant: true while the SAME destination (within `epsilon`)
+    // was issued inside the window. A different destination always passes and
+    // re-stamps, so a bot being re-aimed is never held back by a floor that only
+    // exists to stop it being re-ordered to where it is already going.
+    bool ThrottledIssue(DcThrottle slot, float x, float y, float z,
+                        float epsilon, uint32 windowMs)
+    {
+        DcThrottleSlot& s = throttles[static_cast<std::size_t>(slot)];
+        if (s.ms && GetMSTimeDiffToNow(s.ms) < windowMs)
+        {
+            float const dx = s.x - x, dy = s.y - y, dz = s.z - z;
+            if (dx * dx + dy * dy + dz * dz <= epsilon * epsilon)
+                return true;
+        }
+        s.x = x;
+        s.y = y;
+        s.z = z;
+        StampThrottle(s);
+        return false;
+    }
+
+    void ClearThrottle(DcThrottle slot)
+    {
+        throttles[static_cast<std::size_t>(slot)] = DcThrottleSlot{};
+    }
+
+    // getMSTime() legitimately returns 0 once per wrap, and 0 is this slot's
+    // "never stamped". Bump it by a millisecond rather than let a throttle open
+    // for one tick every 49 days.
+    static void StampThrottle(DcThrottleSlot& s)
+    {
+        s.ms = getMSTime();
+        if (!s.ms)
+            s.ms = 1;
+    }
+
     // Drop the whole transit block. Called when the crossing ends and from the run
     // teardown: the leg is Repeatable and a leader shoved back into the gauntlet
     // re-arms it, so coming back holding a stale cursor — or a gather gate that
@@ -285,6 +353,8 @@ struct DcRunState
         transitHoldSinceMs = 0;
         transitHoldReason = 0;
         transitHoldTimedOut = false;
+        ClearThrottle(DcThrottle::TransitIssue);
+        ClearThrottle(DcThrottle::TransitLog);
     }
 
     // Drop the whole Razorgore block. Called when phase 1 ends and on the run
@@ -294,6 +364,8 @@ struct DcRunState
     void ClearRazorgore()
     {
         razorDrivingMs = 0;
+        ClearThrottle(DcThrottle::RazorgoreOrbIssue);
+        ClearThrottle(DcThrottle::RazorgoreLog);
         razorRunnerGuid.Clear();
         razorRunnerPickedMs = 0;
         razorEggGuid.Clear();

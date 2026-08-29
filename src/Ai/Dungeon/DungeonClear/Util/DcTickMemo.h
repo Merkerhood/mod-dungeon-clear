@@ -6,10 +6,12 @@
 #ifndef _DC_TICK_MEMO_H
 #define _DC_TICK_MEMO_H
 
+#include <cstddef>
 #include <cstdint>
 
 class AiObjectContext;
 class Player;
+class Unit;
 struct DungeonBossInfo;
 struct ScriptedPullStage;
 
@@ -57,6 +59,29 @@ struct DcTickMemo
     // trigger on the same tick.
     std::int8_t noStopZone = -1;
 
+    // CROSS-LEVEL reachability probes taken this tick, keyed by the candidate's
+    // raw GUID. Each miss is a full PathGenerator query, and the follower assist
+    // pickers re-ask for the SAME candidates every tick: they rank every attacker
+    // of every groupmate within 1.5x PartyMaxSpread, probing each one that would
+    // win the rank. In the state the probe was added for — a mob formation
+    // overhead flagging a forty-man through the floor — that is a dozen Detour
+    // queries per follower per tick.
+    //
+    // A FIXED ARRAY, not a vector: this lives in a value that is wholesale
+    // reassigned once per tick, and a heap buffer there would trade one query for
+    // one allocation. Overflow simply falls back to probing, which is what the
+    // code did before the memo existed.
+    //
+    // Same-level candidates never take a slot — that answer is one fabs.
+    static constexpr std::size_t kLevelReachableSlots = 16;
+    struct LevelReachableEntry
+    {
+        std::uint64_t guid = 0;
+        std::uint8_t  reachable = 0;
+    };
+    LevelReachableEntry levelReachable[kLevelReachableSlots]{};
+    std::uint8_t levelReachableCount = 0;
+
     static constexpr std::uint32_t kMemoWindowMs = 50;
 
     // True while a memo stamped at `stampMs` is still within the current tick's
@@ -84,6 +109,13 @@ public:
     // registry entry point is the uncached one. (Rows are static table entries, so
     // the pointer is stable for the process lifetime.)
     static ScriptedPullStage const* ScriptedStage(Player* bot, AiObjectContext* ctx);
+
+    // DcEngageGeometry::IsLevelReachable, memoised per candidate for this tick.
+    // Same-level candidates short-circuit without touching the memo; only the
+    // off-level ones — the ones that cost a Detour query — are remembered.
+    // Call this rather than IsLevelReachable from anything that ranks a POOL of
+    // candidates; the geometry entry point is the uncached one.
+    static bool LevelReachable(Player* bot, AiObjectContext* ctx, Unit* u);
 };
 
 #endif  // _DC_TICK_MEMO_H

@@ -254,8 +254,14 @@ namespace
         // CORNER points, not a densified line — an open-room skirt leg is often
         // just {start, end}, so a per-vertex scan would only ever check the
         // destination and wave through a leg that walks clean across an emitter.
+        //
+        // Sampled once for the whole polyline: the unsampled entry point resolves
+        // three AiObjectContext values and every emitter guid PER SEGMENT, and a
+        // corridor skirt can be a dozen corners. Nothing in this loop moves an
+        // emitter.
+        DcHazard::LiveSet const live = DcHazard::Sample(bot);
         for (size_t i = 1; i < path.size(); ++i)
-            if (DcHazard::SegmentIsHot(bot,
+            if (DcHazard::SegmentIsHot(live,
                                        path[i - 1].x, path[i - 1].y, path[i - 1].z,
                                        path[i].x, path[i].y, path[i].z))
                 return false;

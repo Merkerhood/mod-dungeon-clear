@@ -147,6 +147,30 @@ namespace
         return false;
     }
 
+    // "Is there a corpse at all?" — EvaluateImpl's very first question, answered
+    // from the group list instead of from the two vectors BuildSnapshot allocates
+    // to ask it. IsElectedRezzer runs on every rez-class follower on every tick
+    // (it gates the follower movers' stand-down), and outside a recovery the whole
+    // snapshot was built only to conclude "nobody is dead".
+    //
+    // Ungrouped bots return true so they still fall through to EvaluateImpl, whose
+    // no-group snapshot is over the resolved run OWNER, not over `bot`.
+    bool AnySameMapMemberDead(Player* bot)
+    {
+        Group* group = bot->GetGroup();
+        if (!group)
+            return true;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || member->GetMapId() != bot->GetMapId())
+                continue;
+            if (member->isDead())
+                return true;
+        }
+        return false;
+    }
+
     DcRezRecovery::Plan EvaluateImpl(Player* bot, bool mutate)
     {
         DcRezRecovery::Plan plan;
@@ -505,6 +529,12 @@ namespace DcRezRecovery
         // pending clock for exactly as long as anyone is engaged, so the budget this
         // defers is not being spent.
         if (AnySameMapMemberEngaged(bot))
+            return false;
+
+        // NO CORPSE -> no recovery to be elected for. EvaluateImpl reaches the same
+        // answer (its no-deaths plan is Outcome::None, which fails the Hold test
+        // below) after allocating and filling the snapshot; ask it the cheap way.
+        if (!AnySameMapMemberDead(bot))
             return false;
 
         // mutate=false: see the header. The trigger owns the clock; this is the
