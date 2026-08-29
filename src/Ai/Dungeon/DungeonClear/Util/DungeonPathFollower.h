@@ -101,6 +101,13 @@ public:
     // across a wall into the wrong corridor.
     static constexpr float RESNAP_RADIUS = 45.0f;
 
+    // SeedCursor's early-out: a freshly built route whose first point is this
+    // close to the bot started where the bot stands, so cursor 0 is already
+    // right and the projection (and its raycasts) can be skipped. Sized to
+    // cover ordinary navmesh snap drift on the start point without reaching
+    // the next polyline vertex.
+    static constexpr float SEED_AT_START_RADIUS = 10.0f;
+
     // Upper bound on control points fed to a single continuous-spline
     // issuance (see BuildSplineWindow). Caps spline/packet size on very
     // long routes; the bot pauses ~one tick at the boundary and the next
@@ -212,6 +219,14 @@ public:
     // RESNAP_RADIUS — caller should rebuild from current position.
     // Clears offPathTicks on success.
     static bool Resnap(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state);
+
+    // Seed a follower cursor for a route that has JUST been installed: reset it,
+    // then — when the route does not start where the bot stands, i.e. an
+    // authored anchor route — project the bot onto the polyline and take the
+    // nearest VISIBLE point as the cursor. See the definition for why a flat
+    // reset to 0 walked the BWL raid backwards through the suppression gauntlet.
+    static void SeedCursor(Player* bot, ChunkedPathfinder::Result const& path,
+                           DungeonFollowerState& state);
 
     // Returns a point on the ALREADY-TRAVELED route roughly `distance` yards
     // behind the follower's current cursor, measured along the polyline from

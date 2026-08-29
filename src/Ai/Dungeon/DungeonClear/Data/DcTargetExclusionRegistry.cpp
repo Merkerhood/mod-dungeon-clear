@@ -8,9 +8,13 @@
 #include "GameObject.h"
 #include "InstanceScript.h"
 #include "Player.h"
+#include "PlayerbotAI.h"
+#include "Script/Playerbots.h"
+#include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 
 #include <list>
+#include <unordered_set>
 
 namespace
 {
@@ -40,10 +44,7 @@ namespace
         return false;
     }
 
-    // Blackwing Lair: the drake hall, while Broodlord stands AND the bot is on the
-    // wrong floor for it.
-    //
-    // TWO CLAUSES, and the second is what keeps the bar from outliving its reason.
+    // Blackwing Lair: the drake hall bosses, while Broodlord stands.
     //
     // Broodlord's state comes from the instance's own boss slot rather than a
     // scan: Firemaw is the near end of a hall the raid does not reach for another
@@ -52,22 +53,47 @@ namespace
     // roster (see the note on that constant). No instance script — never in a real
     // run of this map — reads as "still standing", the safe direction.
     //
-    // THE FLOOR TEST IS THE ONE THAT MATTERS. What makes this pull wrong is not
-    // distance — approach anchor 7 is 24.7yd from Firemaw, closer than most
-    // legitimate pulls — it is that the 24.6yd of it are VERTICAL, with a floor in
-    // between and no navmesh route across. A bot below the drake hall's floor
-    // cannot be in a real fight with anything standing on it. A bot ON that floor
-    // can, so the bar lifts there whatever the boss states say: that is what keeps
-    // a run whose operator typed `dc skip` on Broodlord from arriving in the hall
-    // to find nobody willing to shoot.
-    constexpr float BWL_DRAKE_HALL_FLOOR_Z = 445.0f;  // hall 449.1; approach tops out at 438.6
+    // THE SECOND CLAUSE IS AN OPERATOR ESCAPE, AND IT USED TO BE GEOMETRY. It was
+    // `bot->GetPositionZ() >= 445`: below the drake hall's floor you cannot be in a
+    // real fight with something standing on it, so the bar lifted once the raid was
+    // up there and could not outlive its reason if an operator typed `dc skip` on
+    // Broodlord. That reasoning is right about the APPROACH — anchors 6-11 run at
+    // z 424.5, 24.6yd directly beneath Firemaw — and wrong about everything after
+    // it, because the geometry does not separate the cases the way it looked:
+    //
+    //   Firemaw    (-7520.2, -1025.8, 449.1)
+    //   Broodlord  (-7574.0, -1034.4, 449.3)   <- 54yd away, SAME FLOOR
+    //   Chromaggus (-7515.3, -1029.6, 476.7)   <- 27yd straight up from Firemaw
+    //
+    // The upper suppression room and Broodlord's own standoff are z 449 too, so
+    // the raid spends the entire legitimate second half of the gauntlet above the
+    // threshold with the bar lifted and Firemaw 54yd away. Measured on
+    // tp-20260828-132333-1: two of five raids killed him out of order from there.
+    // No z threshold can work here, and no plan-view bound can either at 54yd.
+    //
+    // So the escape is asked directly instead: has the OPERATOR skipped Broodlord?
+    // `dc skip` inserts the boss entry into DcKey::Skipped, which is exactly the
+    // question the floor test was approximating. It also degrades safely — a bot
+    // with no AI context reads "not skipped", keeping the bar up.
+    bool BroodlordSkipped(Player* bot)
+    {
+        PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot);
+        if (!botAI)
+            return false;
+        AiObjectContext* ctx = botAI->GetAiObjectContext();
+        if (!ctx)
+            return false;
+        std::unordered_set<uint32> const& skipped =
+            ctx->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
+        return skipped.find(DcBlackwingLair::NPC_BROODLORD_LASHLAYER) != skipped.end();
+    }
 
     bool BwlDrakeHallOutOfOrder(Player* bot)
     {
         if (!bot)
             return false;
 
-        if (bot->GetPositionZ() >= BWL_DRAKE_HALL_FLOOR_Z)
+        if (BroodlordSkipped(bot))
             return false;
 
         InstanceScript* inst = bot->GetInstanceScript();
@@ -101,9 +127,9 @@ namespace
         // `alsoTank` on all four: the tank answering a boss two rooms ahead is
         // precisely how the raid ends up there.
         //
-        // The window closes when Broodlord dies OR when the raid is standing on
-        // the hall's own floor — so this can never block the kills it is
-        // sequencing, by either route into them.
+        // The window closes when Broodlord dies OR when an operator skips him —
+        // so this can never block the kills it is sequencing, by either route
+        // into them.
         { 469, DcBlackwingLair::NPC_FIREMAW,    &BwlDrakeHallOutOfOrder, /*alsoTank*/ true },
         { 469, DcBlackwingLair::NPC_EBONROC,    &BwlDrakeHallOutOfOrder, /*alsoTank*/ true },
         { 469, DcBlackwingLair::NPC_FLAMEGOR,   &BwlDrakeHallOutOfOrder, /*alsoTank*/ true },

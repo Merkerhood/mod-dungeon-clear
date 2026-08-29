@@ -12,6 +12,7 @@
 #include "MoveSplineInitArgs.h"
 #include "Position.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 class Player;
 class Unit;
@@ -54,11 +55,17 @@ public:
     // FindBlockingTrashCorridor for long routes that fan across multiple chunks.
     // With DungeonClear.DynamicAggroRange on the band is each candidate's real
     // aggro range (clamped to the trash floor/cap); off it is `corridorWidth`.
+    //
+    // `cursor` is the caller's live follower cursor: the scan starts THERE, not
+    // at segment 0. Route behind the cursor is route already walked, and on an
+    // authored anchor route reading it as forward corridor is what sent the BWL
+    // raid up through Firemaw's floor — see BuildRouteWindow.
     static Unit* FindBlockingTrashOnPath(Player* bot,
                                          std::vector<PathSegment> const& segments,
                                          float maxLookAhead,
                                          float corridorWidth,
-                                         GuidVector const& candidates);
+                                         GuidVector const& candidates,
+                                         DungeonFollowerState const& cursor);
 
     // EN-ROUTE PACK SWEEP. The pack whose aggro sphere the next `maxLookAhead`
     // yards of route ENTERS FIRST, or nullptr.
@@ -96,7 +103,8 @@ public:
     // behind the 250ms sticky value.
     static Unit* FindEnRouteAggroPack(Player* bot, AiObjectContext* ctx,
                                       std::vector<PathSegment> const& segments,
-                                      float maxLookAhead);
+                                      float maxLookAhead,
+                                      DungeonFollowerState const& cursor);
 
     // The trash pack the advanced-pull maneuver should grab, or nullptr. Mirrors
     // the blocking-trash trigger's primary detection (corridor scan along the

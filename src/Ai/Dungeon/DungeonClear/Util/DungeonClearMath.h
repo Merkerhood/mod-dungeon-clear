@@ -790,6 +790,33 @@ namespace DungeonClearMath
     std::size_t PathProgressCursor(std::vector<G3D::Vector3> const& route,
                                    float botX, float botY, float botZ);
 
+    // True when the straight leg from (px,py,pz) to route[cursor] may be treated
+    // as CORRIDOR rather than as a bee-line through geometry.
+    //
+    // Every consumer that scans "the route ahead of the bot" has to chain from
+    // the bot's own position to the cursor vertex, because the cached route was
+    // built from wherever the last rebuild happened and does not start under the
+    // bot's feet. That joining leg is SYNTHESISED — nothing pathfound it — so it
+    // is only route-like while the bot is actually standing on the route. Once
+    // the bot is far off it, the leg is a straight line through whatever the map
+    // happens to contain, and a consumer that reads geometry off it reads the
+    // wrong rooms.
+    //
+    // The bound is DungeonPathFollower::RESNAP_RADIUS by construction, which is
+    // the module's existing answer to the same question: how far may a bot be
+    // from a route vertex and still be considered ON that route (Resnap will
+    // re-anchor its cursor there) rather than needing a rebuild from where it
+    // stands. Callers pass it in so this stays a leaf header, and add the LOS
+    // half of Resnap's own gate themselves — see DungeonClearBlockingDoorValue,
+    // where the distance half alone would still have let a folded-back dungeon
+    // synthesise a joining leg straight through a mountain.
+    //
+    // False for an empty route or an out-of-range cursor: with no vertex to join
+    // to there is no corridor to read.
+    bool PathCursorIsJoinable(std::vector<G3D::Vector3> const& route,
+                              std::size_t cursor,
+                              float px, float py, float pz, float maxGap);
+
     // Index of the LATEST crumb within `rejoinRadius` (3D) of `cur`, or
     // TrailRejoinNone if none qualifies. Used by the breadcrumb recorder: on a
     // >kJump discontinuity (a drag-back / drop-down), rather than wiping the

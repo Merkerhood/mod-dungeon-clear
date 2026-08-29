@@ -56,6 +56,7 @@
 #include "World.h"
 #include "Ai/Dungeon/DungeonClear/Data/BossPullbackRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcNeverTargetRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcTargetExclusionRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
@@ -205,6 +206,10 @@ namespace
         minX -= broadWidth; maxX += broadWidth;
         minY -= broadWidth; maxY += broadWidth;
 
+        // One map-keyed gate for the whole scan; free on every map with no rows.
+        uint32 const mapId = bot->GetMapId();
+        bool const excluded = DcTargetExclusionRegistry::HasRowsFor(mapId);
+
         Unit* best = nullptr;
         float bestDistFromBot = std::numeric_limits<float>::max();
         // Scan-cost telemetry for the heroic band widening (plan §C.4): how many
@@ -231,6 +236,19 @@ namespace
             // this scan falls back to the stock `possible targets` value when
             // FarTargets is empty, so the check is repeated here.
             if (DcNeverTargetRegistry::IsNeverTarget(bot->GetMapId(), u->GetEntry()))
+                continue;
+            // Nor is a creature the run is currently BARRED from engaging. The
+            // exclusion registry reached the stock combat engine's target pickers
+            // (DungeonClearCombatStrategy::AppendTargetExclusions) but not this
+            // scan, so on map 469 the bar stopped the raid SHOOTING Firemaw while
+            // this scan still nominated him as the corridor blocker and the pull
+            // pipeline walked the tank into his aggro — which is the whole harm
+            // the row exists to prevent (tp-20260828-132333-1). Asked as a TANK
+            // pick because that is what this scan decides: whether to walk over
+            // there. Only rows carrying `alsoTank` — the "do not go there" ones —
+            // answer yes, so Razorgore's hold-him carve-out is untouched.
+            if (excluded && DcTargetExclusionRegistry::IsExcluded(bot, mapId, u->GetEntry(),
+                                                                 /*forTank*/ true))
                 continue;
 
             float const ux = u->GetPositionX();
@@ -301,6 +319,24 @@ namespace
     // the reason FindBlockingTrashOnPath documents at length: the mesh is baked
     // without doors, so the corridor otherwise runs straight through them.
     //
+    // FROM THE FOLLOWER CURSOR, not from segment 0. On a route the pathfinder
+    // built from the bot's own position the two are the same thing, which is why
+    // reading from index 0 went unnoticed for so long. On an AUTHORED ANCHOR
+    // route they are not: segment 0 is a fixed world point, hundreds of yards
+    // behind a raid deep into the route. Starting there synthesises a leg from
+    // the bot BACK to the route start and scans it as if it were the way
+    // forward.
+    //
+    // On map 469, whose route folds back over itself, that phantom leg runs from
+    // the upper suppression room down to Vaelastrasz's chamber and passes ~10yd
+    // from Firemaw, well inside DC_CORRIDOR_Z_BAND of it. So the scan named
+    // FIREMAW as the corridor blocker, the pull pipeline committed him, and the
+    // tank walked at a boss it had no navmesh route to — straight up through the
+    // ceiling (tp-20260828-132333-1, runs 2 and 5). Same defect the at-boss
+    // trigger carried on map 601; see the note in AzjolNerubEvents.cpp.
+    // DungeonPathFollower::SeedCursor is the other half of the same fix: it
+    // keeps the cursor itself off segment 0 after a rebuild.
+    //
     // CRITICAL: chain each segment's `polyline` points, NOT the segment endpoints
     // (`seg.ex/ey`). The primary producer (LongRangePathfinder) emits the ENTIRE
     // winding route as ONE PathSegment whose ex/ey is only the final endpoint, so
@@ -314,10 +350,16 @@ namespace
     // cost a whole point of geometry.
     std::vector<G3D::Vector3> BuildRouteWindow(Player* bot,
                                                std::vector<PathSegment> const& segments,
-                                               float maxLookAhead)
+                                               float maxLookAhead,
+                                               DungeonFollowerState const& cursor)
     {
         std::vector<G3D::Vector3> window;
         if (!bot || segments.empty())
+            return window;
+
+        // A cursor past the end means the route is finished; there is no forward
+        // corridor left to scan.
+        if (cursor.segmentIdx >= segments.size())
             return window;
 
         auto const doors =
@@ -329,8 +371,9 @@ namespace
 
         float accumulated = 0.0f;
         bool stop = false;
-        for (PathSegment const& seg : segments)
+        for (size_t segIdx = cursor.segmentIdx; segIdx < segments.size(); ++segIdx)
         {
+            PathSegment const& seg = segments[segIdx];
             // Anchored segments collapse to a single polyline point; non-anchored
             // segments carry the full smoothed corridor. Fall back to the endpoint
             // only if a segment somehow has no polyline at all — built lazily so
@@ -340,8 +383,14 @@ namespace
                 fallback.emplace_back(seg.ex, seg.ey, seg.ez);
             std::vector<G3D::Vector3> const& pts = seg.polyline.empty() ? fallback : seg.polyline;
 
-            for (G3D::Vector3 const& pt : pts)
+            // Only the cursor's OWN segment starts partway in; every later one is
+            // walked whole.
+            size_t const firstPt = (segIdx == cursor.segmentIdx && !seg.polyline.empty())
+                                       ? std::min<size_t>(cursor.pointIdx, pts.size())
+                                       : 0;
+            for (size_t p = firstPt; p < pts.size(); ++p)
             {
+                G3D::Vector3 const& pt = pts[p];
                 // By VALUE: push_back below reallocates, and a reference into
                 // the vector would dangle the moment it does.
                 G3D::Vector3 const prev = window.back();
@@ -512,28 +561,32 @@ Unit* DcTargeting::FindBlockingTrashOnPath(Player* bot,
                                                 std::vector<PathSegment> const& segments,
                                                 float maxLookAhead,
                                                 float corridorWidth,
-                                                GuidVector const& candidates)
+                                                GuidVector const& candidates,
+                                                DungeonFollowerState const& cursor)
 {
     if (!bot || segments.empty() || candidates.empty())
         return nullptr;
 
-    // The scanned corridor is the first `maxLookAhead` yards of the smoothed
-    // route, truncated at the first closed door — see BuildRouteWindow for why
-    // both of those matter and why it chains polyline points rather than
-    // segment endpoints.
-    return PickBlockingTrash(bot, WindowSegments(BuildRouteWindow(bot, segments, maxLookAhead)),
+    // The scanned corridor is the next `maxLookAhead` yards of the smoothed
+    // route FROM THE CURSOR, truncated at the first closed door — see
+    // BuildRouteWindow for why each of those matters and why it chains polyline
+    // points rather than segment endpoints.
+    return PickBlockingTrash(bot,
+                             WindowSegments(BuildRouteWindow(bot, segments, maxLookAhead, cursor)),
                              corridorWidth, candidates);
 }
 Unit* DcTargeting::FindEnRouteAggroPack(Player* bot, AiObjectContext* ctx,
                                         std::vector<PathSegment> const& segments,
-                                        float maxLookAhead)
+                                        float maxLookAhead,
+                                        DungeonFollowerState const& cursor)
 {
     if (!bot || !ctx || segments.empty())
         return nullptr;
     if (!DcEngageGeometry::EnRouteSweepApplies(bot))
         return nullptr;
 
-    std::vector<G3D::Vector3> const window = BuildRouteWindow(bot, segments, maxLookAhead);
+    std::vector<G3D::Vector3> const window =
+        BuildRouteWindow(bot, segments, maxLookAhead, cursor);
     if (window.size() < 2)
         return nullptr;
 
@@ -703,9 +756,11 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
     Unit* trash = nullptr;
     ChunkedPathfinder::Result const& path =
         context->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
+    DungeonFollowerState const& cursor =
+        context->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
     if (path.reachable && !path.segments.empty())
     {
-        trash = FindBlockingTrashOnPath(bot, path.segments, kLookAhead, kWidth, candidates);
+        trash = FindBlockingTrashOnPath(bot, path.segments, kLookAhead, kWidth, candidates, cursor);
         // En-route sweep: prefer the pack the route's aggro reaches FIRST over the
         // one merely standing on the centre line. Returns null in heroics, so
         // this is the historical pick unless swept.
@@ -717,7 +772,8 @@ Unit* DcTargeting::FindPullTarget(PlayerbotAI* botAI, DungeonBossInfo const& nex
         // (its aggro is spent — nothing to avoid). Letting a fresh sweep pick
         // outrank it would walk the tank off toward a quiet room while a follower
         // is being clawed behind it.
-        if (Unit* const swept = FindEnRouteAggroPack(bot, context, path.segments, kLookAhead))
+        if (Unit* const swept =
+                FindEnRouteAggroPack(bot, context, path.segments, kLookAhead, cursor))
             if (!trash || !trash->IsInCombat())
                 trash = swept;
     }

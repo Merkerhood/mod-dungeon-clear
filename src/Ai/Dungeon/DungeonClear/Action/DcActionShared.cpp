@@ -415,12 +415,22 @@ namespace DcActionShared
                  path.reachable ? "" : (" UNREACHABLE: " + path.failureReason));
 
         ctx->GetValue<uint32>(DcKey::CurrentHop)->Set(0u);
-        ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get() = DungeonFollowerState{};
 
-        // Re-baseline the TTL-defer progress cursor to the freshly-reset follower
-        // (segment 0, point 0) so the first real advance reads as progress.
-        appr.lastProgressSegmentIdx = 0;
-        appr.lastProgressPointIdx = 0;
+        // SEED the follower rather than flatly resetting it. For a route built
+        // from the bot's own position the two are identical (SeedCursor early-
+        // outs at segment 0 without a raycast); for an AUTHORED ANCHOR route,
+        // whose segment 0 is a fixed world point, a flat reset aims the follower
+        // at the route's START — which is how a BWL raid standing at Broodlord
+        // was ordered back down the gauntlet to Vaelastrasz's chamber on every
+        // rebuild, ~3Hz, for minutes. See DungeonPathFollower::SeedCursor.
+        DungeonFollowerState& follower =
+            ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
+        DungeonPathFollower::SeedCursor(bot, path, follower);
+
+        // Re-baseline the TTL-defer progress cursor to the freshly-seeded
+        // follower so the first real advance reads as progress.
+        appr.lastProgressSegmentIdx = follower.segmentIdx;
+        appr.lastProgressPointIdx = follower.pointIdx;
     }
 
 

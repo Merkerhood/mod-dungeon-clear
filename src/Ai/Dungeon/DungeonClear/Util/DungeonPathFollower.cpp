@@ -356,16 +356,90 @@ namespace
                                     bot->GetPhaseMask(), LINEOFSIGHT_CHECK_VMAP,
                                     VMAP::ModelIgnoreFlags::Nothing);
     }
+
+    // Shared body of Resnap and SeedCursor: walk `maxSteps` flattened polyline
+    // points forward from `from`, keep the ones inside RESNAP_RADIUS, and take
+    // the nearest that the bot can actually SEE. Writes the winner into `state`
+    // and returns true; leaves `state` untouched and returns false when nothing
+    // qualifies.
+    //
+    // BotCanSee is a static-VMAP raycast — the expensive part of this routine.
+    // Rather than raycast every windowed point, collect candidates, sort by
+    // distance, and raycast in nearest-first order: the first point that passes
+    // LOS is the closest visible one, so we usually run 1-2 raycasts instead of
+    // the full window. Forward bias on ties (later flat index wins) keeps the
+    // pick from replaying corridor we already cleared.
+    bool PickNearestVisibleForward(Player* bot, ChunkedPathfinder::Result const& path,
+                                   FlatIndex from, size_t maxSteps,
+                                   DungeonFollowerState& state)
+    {
+        struct Candidate
+        {
+            uint32 seg;
+            uint32 pt;
+            G3D::Vector3 pos;
+            float dist2;
+            uint64 flatIdx;  // seg * 100000 + pt — monotonic along the route
+        };
+
+        float const px = bot->GetPositionX();
+        float const py = bot->GetPositionY();
+        float const pz = bot->GetPositionZ();
+
+        float const radius2 = DungeonPathFollower::RESNAP_RADIUS * DungeonPathFollower::RESNAP_RADIUS;
+        std::vector<Candidate> candidates;
+        candidates.reserve(std::min<size_t>(maxSteps, 2 * DungeonPathFollower::RESNAP_WINDOW) + 1);
+
+        auto consider = [&](uint32 seg, uint32 pt)
+        {
+            std::optional<G3D::Vector3> p = PointAt(path, seg, pt);
+            if (!p.has_value())
+                return;
+            float const d2 = Dist3DSq(px, py, pz, *p);
+            if (d2 > radius2)
+                return;  // out of snap range — never a valid pick
+            candidates.push_back(Candidate{seg, pt, *p, d2,
+                                           static_cast<uint64>(seg) * 100000ULL + pt});
+        };
+
+        FlatIndex fwd = from;
+        for (size_t step = 0; step <= maxSteps; ++step)
+        {
+            consider(fwd.seg, fwd.pt);
+            if (!StepFlatForward(path, fwd))
+                break;
+        }
+
+        if (candidates.empty())
+            return false;
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](Candidate const& a, Candidate const& b)
+                  {
+                      if (std::fabs(a.dist2 - b.dist2) > 1e-5f)
+                          return a.dist2 < b.dist2;
+                      return a.flatIdx > b.flatIdx;  // forward bias on ties
+                  });
+
+        for (Candidate const& cand : candidates)
+        {
+            if (!BotCanSee(bot, cand.pos))
+                continue;
+            // Sorted nearest-first: first visible candidate is the closest one.
+            state.segmentIdx = cand.seg;
+            state.pointIdx = cand.pt;
+            state.offPathTicks = 0;
+            return true;
+        }
+
+        return false;
+    }
 }
 
 bool DungeonPathFollower::Resnap(Player* bot, ChunkedPathfinder::Result const& path, DungeonFollowerState& state)
 {
     if (!bot || path.segments.empty() || state.segmentIdx >= path.segments.size())
         return false;
-
-    float const px = bot->GetPositionX();
-    float const py = bot->GetPositionY();
-    float const pz = bot->GetPositionZ();
 
     // Gather a window of polyline points AT OR AHEAD of the current cursor, then
     // pick the one closest to the bot in 3D that the bot can actually see in a
@@ -384,71 +458,57 @@ bool DungeonPathFollower::Resnap(Player* bot, ChunkedPathfinder::Result const& p
     // search to the cursor and forward eliminates the backtrack: the bot is
     // standing among the points it just swept past, so the nearest forward point
     // is right where it is, and the resume goes the way we're headed.
-    //
-    // BotCanSee is a static-VMAP raycast — the expensive part of this routine.
-    // Rather than raycast every windowed point, collect candidates, sort by
-    // distance, and raycast in nearest-first order: the first point that passes
-    // LOS is the closest visible one, so we usually run 1–2 raycasts instead of
-    // the full window. Forward bias on ties (later flat index wins) keeps the
-    // resnap from replaying corridor we already cleared.
-    struct Candidate
-    {
-        uint32 seg;
-        uint32 pt;
-        G3D::Vector3 pos;
-        float dist2;
-        uint64 flatIdx;  // seg * 100000 + pt — monotonic along the route
-    };
+    return PickNearestVisibleForward(bot, path, FlatIndex{state.segmentIdx, state.pointIdx},
+                                     RESNAP_WINDOW, state);
+}
 
-    float const radius2 = RESNAP_RADIUS * RESNAP_RADIUS;
-    std::vector<Candidate> candidates;
-    candidates.reserve(2 * RESNAP_WINDOW + 1);
+// Where on a FRESHLY BUILT route does the bot stand? Called once per install
+// (DcActionShared::InstallLongPath), in place of the flat `state = {}` that
+// every rebuild used to do.
+//
+// For a route the pathfinder built from the bot's own position — every chunked /
+// long-range build — segment 0 IS where the bot stands, and the early-out below
+// keeps the old behaviour for free, without a single raycast.
+//
+// For an AUTHORED ANCHOR route it is not. Those are fixed world polylines
+// (StridedPathfinder emits every registered anchor from index 0 regardless of
+// where the bot is), so a reset to 0 aims the follower at the route's START.
+// On map 469 that is Vaelastrasz's chamber, 40 anchors and two floors behind a
+// raid standing in the upper suppression room — and Resnap cannot repair it,
+// because it is forward-only and its 24-point window from anchor 0 reaches only
+// the approach hall, whose points fail LOS from up there. The result was a
+// closed loop running at ~3Hz for minutes:
+//
+//     off-path 3 ticks, Resnap FAILED (>45yd) -> rebuild
+//     path rebuilt -> Broodlord Lashlayer (sync (anchor route)): segs=41
+//     off-line 41.3yd -> rejoining route ... to (-7506.7,-1014.1,408.7) (seg 0 pt 0)
+//
+// — the raid walked backwards through the whole gauntlet, over and over
+// (tp-20260828-132333-1: 180 such rejoins in one run, 81 in another).
+//
+// The projection is Resnap's own machinery over the WHOLE route rather than a
+// 24-point window, which is the right search at install time precisely because
+// there is no prior cursor to be forward of. It keeps the LOS gate, so the
+// fold-back hazard the window was protecting against is still covered: a point
+// on the far arm of a bend is walled off and loses to a visible one. If nothing
+// qualifies the cursor stays at 0 — no worse than before.
+void DungeonPathFollower::SeedCursor(Player* bot, ChunkedPathfinder::Result const& path,
+                                     DungeonFollowerState& state)
+{
+    state = DungeonFollowerState{};
+    if (!bot || path.segments.empty())
+        return;
 
-    auto consider = [&](uint32 seg, uint32 pt)
-    {
-        std::optional<G3D::Vector3> p = PointAt(path, seg, pt);
-        if (!p.has_value())
-            return;
-        float const d2 = Dist3DSq(px, py, pz, *p);
-        if (d2 > radius2)
-            return;  // out of snap range — never a valid pick
-        candidates.push_back(Candidate{seg, pt, *p, d2,
-                                       static_cast<uint64>(seg) * 100000ULL + pt});
-    };
+    // Route already starts where we are: nothing to project.
+    std::optional<G3D::Vector3> const first = PointAt(path, 0, 0);
+    if (!first.has_value())
+        return;
+    if (Dist3DSq(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), *first) <=
+        SEED_AT_START_RADIUS * SEED_AT_START_RADIUS)
+        return;
 
-    // Forward walk only (starts at the current point, includes it). No backward
-    // walk: snapping behind the cursor is the backtrack we are eliminating.
-    FlatIndex fwd{state.segmentIdx, state.pointIdx};
-    for (size_t step = 0; step <= RESNAP_WINDOW; ++step)
-    {
-        consider(fwd.seg, fwd.pt);
-        if (!StepFlatForward(path, fwd))
-            break;
-    }
-
-    if (candidates.empty())
-        return false;
-
-    std::sort(candidates.begin(), candidates.end(),
-              [](Candidate const& a, Candidate const& b)
-              {
-                  if (std::fabs(a.dist2 - b.dist2) > 1e-5f)
-                      return a.dist2 < b.dist2;
-                  return a.flatIdx > b.flatIdx;  // forward bias on ties
-              });
-
-    for (Candidate const& cand : candidates)
-    {
-        if (!BotCanSee(bot, cand.pos))
-            continue;
-        // Sorted nearest-first: first visible candidate is the closest one.
-        state.segmentIdx = cand.seg;
-        state.pointIdx = cand.pt;
-        state.offPathTicks = 0;
-        return true;
-    }
-
-    return false;
+    PickNearestVisibleForward(bot, path, FlatIndex{0, 0},
+                              std::numeric_limits<size_t>::max(), state);
 }
 
 std::vector<G3D::Vector3> DungeonPathFollower::BuildSplineWindow(Player* bot,

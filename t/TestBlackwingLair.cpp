@@ -22,6 +22,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Strategy/DcRelevance.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRazorgoreDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 
 // Blackwing Lair (map 469) — Razorgore's orb and egg run.
 //
@@ -637,30 +638,79 @@ TEST(DungeonEventBlackwingLairTest, TheDrakeHallIsBarredWhileBroodlordStands)
         DcTargetExclusionRegistry::IsExcluded(nullptr, MAP_ID, NPC_BROODLORD_LASHLAYER));
 }
 
-TEST(DungeonEventBlackwingLairTest, TheDrakeHallBarKeysOnTheFloorNotTheDistance)
+TEST(DungeonEventBlackwingLairTest, NoFloorHeightCanSeparateTheDrakeHallFromTheGauntlet)
 {
-    // The property the row's second clause exists for, pinned as geometry because
-    // the clause itself needs a live bot to evaluate.
+    // Why the out-of-order bar cannot key on z, pinned as geometry.
     //
-    // Distance cannot separate the two cases: approach anchor 7 is 24.7yd from
-    // Firemaw — closer than plenty of legitimate pulls — while the drake hall's
-    // own floor is 449.1. What separates them is that the approach's 24.6yd are
-    // VERTICAL. So the bar keys on z, and every approach anchor must sit below the
-    // threshold while the hall sits above it, or the clause is decoration.
+    // The clause used to be `bot->GetPositionZ() >= 445` — below the drake hall's
+    // floor you cannot be fighting something standing on it, so the bar lifted
+    // once the raid was legitimately up there. That is right about the APPROACH
+    // (anchors 0..TRANSIT_STAGE-1 run 24.6yd directly BENEATH Firemaw) and wrong
+    // about the crossing, because the upper suppression room and Broodlord's own
+    // standoff are on FIREMAW'S OWN FLOOR. The raid therefore spends the whole
+    // legitimate second half of the gauntlet above any such threshold with the
+    // bar lifted and Firemaw a short walk away — which is how two of five raids
+    // killed him out of order in tp-20260828-132333-1.
     std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
         MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
     ASSERT_NE(row, nullptr);
     ASSERT_GT(row->size(), DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX);
 
-    constexpr float kThresholdZ = 445.0f;  // BWL_DRAKE_HALL_FLOOR_Z
     constexpr float kFiremawZ = 449.1f;
 
-    EXPECT_GT(kFiremawZ, kThresholdZ) << "the hall must read as ON its own floor";
-
+    // The half the old clause got right: every approach anchor is well below the
+    // hall, so a threshold anywhere between them covers the approach.
     for (std::size_t i = 0; i < DcBlackwingLair::TRANSIT_STAGE_ANCHOR_INDEX; ++i)
-        EXPECT_LT((*row)[i].z, kThresholdZ)
-            << "approach anchor " << i << " reads as standing in the drake hall, "
-               "so the out-of-order bar would be off exactly where it is needed";
+        EXPECT_LT((*row)[i].z, kFiremawZ - 5.0f)
+            << "approach anchor " << i << " should run beneath the drake hall";
+
+    // The half it got wrong: the crossing ENDS on Firemaw's floor. Any threshold
+    // low enough to cover the approach is also low enough to be cleared here, so
+    // no single z can be both. That is the whole reason the clause is now an
+    // operator-skip question instead.
+    WaypointHint const& standoff = row->back();
+    EXPECT_NEAR(standoff.z, kFiremawZ, 5.0f)
+        << "the Broodlord standoff shares the drake hall's floor";
+
+    // ...and it is not distance either: Broodlord and Firemaw are ~54yd apart,
+    // well inside the band a corridor scan or an aggro radius would call near.
+    float const dx = standoff.x - (-7520.2f);
+    float const dy = standoff.y - (-1025.8f);
+    EXPECT_LT(std::sqrt(dx * dx + dy * dy), 80.0f)
+        << "no plan-view bound can separate the standoff from Firemaw either";
+}
+
+TEST(DungeonEventBlackwingLairTest, ARouteCursorResetToZeroIsUnrecoverableOnThisRoute)
+{
+    // Why InstallLongPath must SEED the follower cursor by projection instead of
+    // flatly resetting it to 0 (DungeonPathFollower::SeedCursor).
+    //
+    // Resnap is forward-only and searches RESNAP_WINDOW flattened points from the
+    // cursor. Anchored segments collapse to ONE polyline point each, so on this
+    // route a window of 24 reaches anchor 24 of ~40 — it cannot see the crossing
+    // at all from anchor 0. A raid standing at the standoff whose cursor was just
+    // reset therefore gets "Resnap FAILED -> rebuild -> reset to 0" forever, and
+    // the rejoin walks it back to Vaelastrasz's chamber. 180 such rejoins in one
+    // run of tp-20260828-132333-1.
+    std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
+        MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+    ASSERT_NE(row, nullptr);
+
+    EXPECT_GT(row->size(), DungeonPathFollower::RESNAP_WINDOW)
+        << "if the whole route fitted in one Resnap window a cursor reset would "
+           "self-heal and SeedCursor would be unnecessary";
+
+    // And the reset is not merely slow to recover — the route START is far enough
+    // from the crossing that no candidate is even inside RESNAP_RADIUS, so the
+    // fallback (walk to the cursor) heads all the way back.
+    WaypointHint const& start = row->front();
+    WaypointHint const& standoff = row->back();
+    float const dx = standoff.x - start.x;
+    float const dy = standoff.y - start.y;
+    float const dz = standoff.z - start.z;
+    EXPECT_GT(std::sqrt(dx * dx + dy * dy + dz * dz), DungeonPathFollower::RESNAP_RADIUS)
+        << "the route start must be out of resnap range of the far end, or the "
+           "reset would be harmless";
 }
 
 TEST(DungeonEventBlackwingLairTest, TheTankCarveOutIsPerRowNotBlanket)

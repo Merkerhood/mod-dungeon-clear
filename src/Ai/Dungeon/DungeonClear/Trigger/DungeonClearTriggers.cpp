@@ -595,17 +595,19 @@ bool DungeonClearBlockingTrashTrigger::IsActive()
         // trash beyond a single PathGenerator call is still detected.
         ChunkedPathfinder::Result const& path =
             AI_VALUE(ChunkedPathfinder::Result&, DcKey::LongPath);
+        DungeonFollowerState const& cursor =
+            AI_VALUE(DungeonFollowerState&, DcKey::FollowerState);
         if (path.reachable && !path.segments.empty())
         {
             trash = DcTargeting::FindBlockingTrashOnPath(
-                bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
+                bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates, cursor);
             // En-route sweep — pull the room the walk is about to wake instead of
             // the mob standing on the centre line. Returns null in heroics.
             // An already-in-combat corridor pick outranks it; see the twin comment
             // in DcTargeting::FindPullTarget for why the two scans disagree about
             // in-combat units and which disagreement wins.
             if (Unit* const swept = DcTargeting::FindEnRouteAggroPack(
-                    bot, context, path.segments, DC_CORRIDOR_LOOKAHEAD))
+                    bot, context, path.segments, DC_CORRIDOR_LOOKAHEAD, cursor))
                 if (!trash || !trash->IsInCombat())
                     trash = swept;
         }

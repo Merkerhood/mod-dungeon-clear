@@ -538,6 +538,21 @@ std::size_t DungeonClearMath::PathProgressCursor(std::vector<G3D::Vector3> const
     return cursor;
 }
 
+bool DungeonClearMath::PathCursorIsJoinable(std::vector<G3D::Vector3> const& route,
+                                            std::size_t cursor,
+                                            float px, float py, float pz, float maxGap)
+{
+    if (cursor >= route.size())
+        return false;
+
+    float const dx = route[cursor].x - px;
+    float const dy = route[cursor].y - py;
+    float const dz = route[cursor].z - pz;
+    // 3D, for the same reason PathProgressCursor is: a vertex a storey overhead
+    // is not one this bot can be joined to, however near it looks in plan view.
+    return dx * dx + dy * dy + dz * dz <= maxGap * maxGap;
+}
+
 std::size_t DungeonClearMath::FindTrailRejoin(std::vector<Position> const& crumbs,
                                               Position const& cur, float rejoinRadius)
 {

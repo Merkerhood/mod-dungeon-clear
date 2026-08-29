@@ -663,7 +663,8 @@ bool DungeonClearEngageTrashAction::Execute(Event /*event*/)
         if (path.reachable && !path.segments.empty())
         {
             fresh = DcTargeting::FindBlockingTrashOnPath(
-                bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates);
+                bot, path.segments, DC_CORRIDOR_LOOKAHEAD, DC_CORRIDOR_WIDTH, candidates,
+                AI_VALUE(DungeonFollowerState&, DcKey::FollowerState));
         }
         else
         {
@@ -2867,10 +2868,41 @@ bool DungeonClearDoorBlockedAction::Execute(Event event)
     // distAlongToDoor is FLT_MAX when the scan couldn't place the door on the
     // route at all (its band is past the look-ahead, or reads as already behind
     // the progress cursor); report that as -1 rather than a nonsense distance.
+    bool const unplaced = distAlongToDoor >= std::numeric_limits<float>::max();
+
     LOG_DEBUG("playerbots.dungeonclear",
               "[DC:{}] door-blocked: walk-in made no progress ({}) {:.1f}yd from door, "
-              "{:.1f}yd along path (-1 = unplaced) -> parking",
+              "{:.1f}yd along path (-1 = unplaced) -> {}",
               bot->GetName(), outcomeName, distToDoor,
-              distAlongToDoor >= std::numeric_limits<float>::max() ? -1.0f : distAlongToDoor);
+              unplaced ? -1.0f : distAlongToDoor,
+              (unplaced && !atDoor) ? "holding (door not on this corridor)" : "parking");
+
+    // UNPLACED and not at it: the door is not on this corridor by the walk-in's
+    // own reckoning, and we are further from it than a player could click. Hold
+    // and report; never auto-pause.
+    //
+    // parkAndStall's not-openable branch pauses the RUN, unconditionally and at
+    // any distance, and a passage door (lockId 0 — the Broodlord portcullis, the
+    // Uldaman seal) is not-openable by definition. So a single mis-flag from up
+    // to the value's 80yd look-ahead ends the run outright, on a door the party
+    // never walked to and never touched, with no path back: tr-20260828-103056-1
+    // paused a 40-bot Blackwing Lair raid at 3/8 bosses exactly this way. It is
+    // the same lesson the blocked-state watchdog already learned in Scholomance
+    // (the atDoor note above) — travel time and approach failures must not spend
+    // a budget meant for time spent AT the doorway — applied to the branch that
+    // has no budget at all.
+    //
+    // Holding is the honest outcome and costs nothing real: a genuine blocker is
+    // reached by the walk-in and pauses from there as before, while a phantom
+    // clears the moment the blocking-door value re-evaluates. If neither happens,
+    // the run's own no-progress watchdog ends it with a verdict that names the
+    // stall instead of a door that was never in the way.
+    if (unplaced && !atDoor)
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+        StallDungeonClear(botAI, waitReason);
+        return true;
+    }
+
     return parkAndStall(atDoor);
 }

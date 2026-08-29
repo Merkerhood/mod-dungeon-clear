@@ -2054,6 +2054,116 @@ TEST(DungeonClearPathCursorTest, FlatRouteIsUnaffectedByTheZTerm)
     EXPECT_EQ(DungeonClearMath::PathProgressCursor(flat, 19.0f, -3.0f, 100.5f), 2u);
 }
 
+// ---------------------------------------------------------------------------
+// PathCursorIsJoinable — may the bot -> cursor leg be read as corridor?
+//
+// The cursor answers "which vertex is nearest"; it cannot answer "and is the
+// bot anywhere near this route at all". Consumers that chain a synthesised leg
+// from the bot to that vertex need the second answer too, because the leg is a
+// straight line through whatever the map contains — see the Blackwing Lair
+// regression at the bottom of this block, and CRITICAL #4 in
+// DungeonClearBlockingDoorValue.cpp.
+
+namespace
+{
+    // Resnap's own limit, the bound the door scan passes in. Mirrored here as a
+    // literal so the test still means something if the follower's constant moves
+    // for a movement reason: this block is about the RULE, not the number.
+    float constexpr kResnapRadius = 45.0f;
+}
+
+TEST(DungeonClearPathCursorTest, JoinableWhileTheBotIsOnItsRoute)
+{
+    std::vector<G3D::Vector3> const route{
+        G3D::Vector3(0.0f, 0.0f, 100.0f),
+        G3D::Vector3(20.0f, 0.0f, 100.0f),
+        G3D::Vector3(40.0f, 0.0f, 100.0f),
+    };
+    // Dead on the line, and drifted a few yards off it: both are the ordinary
+    // case the joining leg exists to cover.
+    EXPECT_TRUE(DungeonClearMath::PathCursorIsJoinable(route, 1u, 20.0f, 0.0f, 100.0f,
+                                                       kResnapRadius));
+    EXPECT_TRUE(DungeonClearMath::PathCursorIsJoinable(route, 1u, 18.0f, 5.0f, 100.0f,
+                                                       kResnapRadius));
+    // A sparse authored route's own leg length (the BWL anchors run to ~24yd)
+    // must not read as off-route.
+    EXPECT_TRUE(DungeonClearMath::PathCursorIsJoinable(route, 1u, -4.0f, 0.0f, 100.0f,
+                                                       kResnapRadius));
+}
+
+TEST(DungeonClearPathCursorTest, NotJoinableBeyondTheResnapRadius)
+{
+    std::vector<G3D::Vector3> const route{
+        G3D::Vector3(0.0f, 0.0f, 100.0f),
+        G3D::Vector3(20.0f, 0.0f, 100.0f),
+    };
+    EXPECT_FALSE(DungeonClearMath::PathCursorIsJoinable(route, 0u, -46.0f, 0.0f, 100.0f,
+                                                        kResnapRadius));
+    // Measured in 3D, like the cursor pick itself: a vertex the bot is nearly
+    // under in plan view but a tower's worth of Z away is not one to join to.
+    EXPECT_FALSE(DungeonClearMath::PathCursorIsJoinable(route, 0u, 1.0f, 1.0f, 150.0f,
+                                                        kResnapRadius));
+}
+
+TEST(DungeonClearPathCursorTest, NotJoinableWithNoVertexToJoinTo)
+{
+    std::vector<G3D::Vector3> const route{ G3D::Vector3(0.0f, 0.0f, 100.0f) };
+    EXPECT_FALSE(DungeonClearMath::PathCursorIsJoinable({}, 0u, 0.0f, 0.0f, 0.0f,
+                                                        kResnapRadius));
+    EXPECT_FALSE(DungeonClearMath::PathCursorIsJoinable(route, 1u, 0.0f, 0.0f, 100.0f,
+                                                        kResnapRadius));
+}
+
+// The live case, with the run's real coordinates: Blackwing Lair, the raid
+// standing on Vaelastrasz's floor the moment it turns for Broodlord Lashlayer
+// (run tr-20260828-103056-1).
+//
+// The authored Broodlord route is registered as an ANCHOR route, so the path is
+// its twenty waypoints and nothing between them ("segs=21 firstSegPts=1"). Its
+// FIRST anchor, the staging shelf, is 150yd away — but BWL folds back on itself,
+// so its LAST anchor, the Broodlord standoff, is only 82yd away through solid
+// rock and therefore wins the nearest-vertex pick. Chaining a joining leg to it
+// draws an 82yd line through the mountain that leaves the map's walkable space
+// entirely and passes within half a yard of the Broodlord passage portcullis,
+// 342yd away along the real walk.
+//
+// Both halves of the regression are asserted: the cursor really does land on the
+// route's END (so nothing here depends on a cursor change), and the joinability
+// gate really does refuse that leg.
+TEST(DungeonClearPathCursorTest, BlackwingLairFoldbackIsNotJoinable)
+{
+    // The three anchors that matter, in registry order (see
+    // RegisterBlackwingLairRoute): staging, the Taskmaster ramp, the standoff.
+    std::vector<G3D::Vector3> const bwl{
+        G3D::Vector3(-7630.9f, -915.5f, 437.3f),     // 0  staging
+        G3D::Vector3(-7627.03f, -926.86f, 440.63f),  // 1
+        G3D::Vector3(-7650.86f, -999.24f, 440.61f),  // 6  mid lower room
+        G3D::Vector3(-7707.85f, -1075.17f, 445.96f), // 11 the ramp
+        G3D::Vector3(-7590.51f, -1041.64f, 449.85f), // 18
+        G3D::Vector3(-7573.8f, -1033.5f, 449.3f),    // 19 the Broodlord standoff
+    };
+    // The tank's real position at teardown.
+    float constexpr tankX = -7507.6f;
+    float constexpr tankY = -1003.9f;
+    float constexpr tankZ = 409.9f;
+
+    // The fold-back: the nearest vertex is the LAST one, not the one the raid is
+    // about to walk to.
+    EXPECT_EQ(DungeonClearMath::PathProgressCursor(bwl, tankX, tankY, tankZ),
+              bwl.size() - 1);
+
+    // ...and it is 82yd away through a mountain, so no corridor may be read off
+    // the leg that reaches it. This is what stops GO 179365 being flagged.
+    EXPECT_FALSE(DungeonClearMath::PathCursorIsJoinable(bwl, bwl.size() - 1,
+                                                        tankX, tankY, tankZ,
+                                                        kResnapRadius));
+
+    // The route's own start — where the raid was actually headed — is further
+    // still, which is exactly why the cursor did not pick it.
+    EXPECT_FALSE(DungeonClearMath::PathCursorIsJoinable(bwl, 0u, tankX, tankY, tankZ,
+                                                        kResnapRadius));
+}
+
 // --- PullTagStopDistance (where the tag walk-in stops) ---------------------
 using DungeonClearMath::PullTagStopDistance;
 
