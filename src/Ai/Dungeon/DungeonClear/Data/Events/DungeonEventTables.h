@@ -850,6 +850,200 @@ namespace DcBlackwingLair
     // continuously for the whole budget — i.e. when a hold's own watchdog has
     // failed to release, which is the one shape nothing else here can see.
     constexpr uint32 TRANSIT_TIMEOUT_MS = 600000;
+
+    // --- Chromaggus (boss 7) — the cage, and the lever that opens it -------
+    //
+    // The second boss on this map a raid does not pull. Chromaggus stands behind
+    // a shut portcullis (GO 179116) and boss_chromaggus's constructor holds him
+    // with `SetImmuneToAll(true)` — a core hack-fix that stops him being pulled
+    // through the floor from the corridor below. NOTHING clears that immunity but
+    // the lever: go_chromaggus_lever's GossipHello opens the portcullis, walks him
+    // out on waypoint path 140200, and hands his AI the clicker's GUID via
+    // SetGUID(GUID_LEVER_USER), which is what calls SetImmuneToAll(false) and,
+    // when the path ends, SetInCombatWith(the clicker).
+    //
+    // So the lever is the pull, and the bot that pulls it is the bot Chromaggus
+    // engages. That is the tank, because a conditional event is performed by the
+    // leader.
+    constexpr uint32 NPC_CHROMAGGUS_CAGE_DOOR = 179116;   // GO, guid 75161
+    constexpr uint32 GO_CHROMAGGUS_LEVER      = 179148;   // GO, guid 56161
+
+    // The lever's spawn (gameobject guid 56161, map 469), on the south wall of
+    // the chamber. Also the event's proximity gate.
+    constexpr float CHROMA_LEVER_X = -7510.98f;
+    constexpr float CHROMA_LEVER_Y = -1094.69f;
+    constexpr float CHROMA_LEVER_Z = 476.555f;
+
+    // WHERE CHROMAGGUS FIGHTS, and the roster anchor DC replaces his spawn with.
+    //
+    // boss_chromaggus::homePos: the script SetHomePosition()s him here the moment
+    // the lever is pulled and runs waypoint path 140200 (four points, all
+    // (-7488.41, -1074.58, 476.544)) to walk him out of the cage into the chamber.
+    // That is the ground the encounter is actually fought on; his DB spawn
+    // (-7515.34, -1029.62, 476.73) is a holding pen behind a shut portcullis.
+    //
+    // WHAT THIS DOES AND DOES NOT BUY. Once his grid is loaded the advance routes
+    // at the LIVE creature, not at the anchor (DcAdvanceAction takes bossX/Y/Z off
+    // GetLiveBoss), so this does NOT move where the tank ends up standing off —
+    // that is one BossEngageRange short of the cage, which is fine: nothing shares
+    // his floor within 60yd. What it does buy is the FAR approach, which routes to
+    // the anchor while the grid is still streaming in, and every distance readout
+    // in the panel and the diag roster. Aiming the long walk at a point sealed
+    // inside a cage, directly above a corridor of z-449 trash, is the wrong-floor
+    // path-cursor shape this map has already produced once (see the Firemaw note
+    // above); aiming it at the open chamber the party walks through is not.
+    constexpr float CHROMA_HOME_X = -7491.1587f;
+    constexpr float CHROMA_HOME_Y = -1069.718f;
+    constexpr float CHROMA_HOME_Z = 476.59094f;
+
+    // How far from the LEVER the leader may be and still read the cage as due.
+    // Wide enough to cover the whole chamber — the standoff the approach parks
+    // the tank at is ~47yd out, by the cage door, the muster spread adds to that,
+    // and the UseGO step walks the last yards in itself — and short of the drake
+    // hall behind it (Flamegor is 130yd away).
+    constexpr float CHROMA_DUE_RANGE = 90.0f;
+
+    // ...and the FLOOR the leader has to be standing on to be "at the lever".
+    //
+    // The range gate is 2D, and 2D is a lie on this part of map 469: the whole
+    // Broodlord floor sits 27yd DIRECTLY BELOW the chamber, and the Suppression
+    // Rooms transit corridor passes within 36yd (2D) of the lever at z 449. The
+    // muster gate already makes it impossible for the cage event to be due down
+    // there — the next boss during the crossing is Broodlord, not Chromaggus —
+    // but this map has produced the wrong-floor bug twice already (the Firemaw
+    // approach, the drake-hall/Broodlord overlap), and a 2D radius that spans two
+    // floors is exactly how. Half-band, applied around the chamber's floor.
+    constexpr float CHROMA_FLOOR_Z    = 476.6f;
+    constexpr float CHROMA_FLOOR_BAND = 15.0f;
+
+    // Search radius handed to the UseGO step. The step's own default is 20yd,
+    // which would never see the lever from the standoff; this has to reach from
+    // anywhere the due range admits.
+    constexpr float CHROMA_LEVER_SEARCH = 100.0f;
+
+    // Grid-scan radius for Chromaggus himself, from the bot. Only has to cover
+    // the cage from the chamber — his spawn is 47yd from the home anchor and
+    // 66yd from the lever, and the bot may be anywhere between them.
+    constexpr float CHROMA_SCAN = 100.0f;
+
+    // instance_blackwing_lair's DATA_CHROMAGGUS. Same index space as
+    // BROODLORD_ENCOUNTER_INDEX above (the script's DATA_ enum, which on this map
+    // happens to match the DBC bits).
+    constexpr uint32 CHROMAGGUS_ENCOUNTER_INDEX = 6;
+
+    // The event row. Ids are per-map: 1 Razorgore, 2 Vaelastrasz, 3 the transit.
+    constexpr uint32 EVENT_CHROMAGGUS_CAGE = 4;
+
+    // WHERE CHROMAGGUS IS IN HIS OWN OPENING — the two facts the event predicate
+    // and the boss-engage hold must never disagree about, read in ONE scan for
+    // the same reason OrbGuards and Vaelastrasz do it.
+    //
+    //   * `caged` — he is alive and still carries UNIT_FLAG_IMMUNE_TO_PC. Only
+    //     the lever clears it (SetGUID -> SetImmuneToAll(false)), and nothing
+    //     re-applies it short of a full respawn, so this is exactly "the cage has
+    //     never been opened in this instance" and it survives a wipe correctly:
+    //     after a failed attempt he evades home ATTACKABLE, and the raid re-pulls
+    //     him the ordinary way with no lever involved.
+    //   * `leverReady` — the lever is spawned, GO_STATE_READY and still
+    //     selectable. go_chromaggus_lever's GossipHello stamps
+    //     GO_FLAG_NOT_SELECTABLE | GO_FLAG_IN_USE and GO_STATE_ACTIVE on itself,
+    //     unconditionally and permanently (nothing in the script ever resets it),
+    //     so this is the one-way latch the click cannot double-fire through.
+    //
+    // Free everywhere else — the map compare rejects before anything is scanned.
+    struct ChromaggusState
+    {
+        bool present{false};    // alive, in or out of the cage
+        bool caged{false};      // ...and still immune, i.e. the lever is unpulled
+        bool leverReady{false}; // ...and the lever is still there to pull
+    };
+    ChromaggusState Chromaggus(Player* bot);
+
+    // --- Nefarian (boss 8) — starting the encounter ------------------------
+    //
+    // The third boss here a raid does not pull, and the only one that does not
+    // EXIST until the raid asks for him. Lord Victor Nefarius (10162) sits
+    // friendly and passive on his balcony offering a gossip; answering it runs
+    // boss_victor_nefarius::sGossipSelect -> BeginEvent, which flips him hostile,
+    // engages the raid and starts the drakonid waves. Nefarian himself (11583) is
+    // summoned only after MAX_DRAKONID_KILLED (42) adds die, flies in on waypoint
+    // path 11583 and lands at the far end of the room.
+    //
+    // DC's entire job here is the gossip. Everything after it — the wave fight,
+    // the transformation, the class calls — belongs to mod-playerbots' raid
+    // strategy, exactly as Razorgore's adds and Vaelastrasz's burn do.
+    constexpr uint32 NPC_VICTOR_NEFARIUS = 10162;
+    constexpr uint32 NPC_NEFARIAN        = 11583;
+
+    // Victor's spawn (creature guid 85785, map 469) — the gossip target and the
+    // event's proximity gate.
+    constexpr float NEFARIUS_X = -7587.76f;
+    constexpr float NEFARIUS_Y = -1261.43f;
+    constexpr float NEFARIUS_Z = 482.21f;
+
+    // WHERE NEFARIAN LANDS, and the roster anchor for him.
+    //
+    // He has NO creature spawn row at all, so BossSpawnIndex cannot derive him
+    // and the auto-roster ends at Chromaggus — the run would report itself
+    // finished one boss short. This is the last point of waypoint path 11583
+    // (the intro flight from (-7348.85, -1495.13, 552.52) down into the lair),
+    // i.e. the ground he is standing on the moment he becomes a boss anybody can
+    // fight. 86yd from Victor, which the event's due range has to span.
+    constexpr float NEFARIAN_X = -7502.0f;
+    constexpr float NEFARIAN_Y = -1256.5f;
+    constexpr float NEFARIAN_Z = 476.758f;
+
+    // His real DungeonEncounter bit (DBC row 617, encounterIndex 7) — read off
+    // DungeonEncounter.dbc, not guessed from the instance script's DATA_ enum.
+    // MakeBossWithBit takes it directly because there is no derived row to
+    // inherit a bit from.
+    constexpr uint32 NEFARIAN_ENCOUNTER_INDEX = 7;
+
+    // THE GOSSIP CHAIN. creature_template.gossip_menu_id is 21330; its lone
+    // option opens 21331, whose lone option opens 21332, whose lone option
+    // ("Please do.") is the one boss_victor_nefarius::sGossipSelect answers
+    // (`sender == 21332 && action == 0`). Every level offers exactly one option
+    // at OptionID 0 and none of the three carries a `conditions` row, so
+    // DungeonEventExecutor::SelectGossip — which selects the authored option and
+    // then keeps selecting option 0 of whatever submenu opens until the menu
+    // closes — walks the whole chain from a single authored 0.
+    constexpr int32 NEFARIUS_GOSSIP_OPTION = 0;
+
+    // How far from VICTOR the leader may be and still read the start as due, and
+    // how far out the Gossip step may acquire him.
+    //
+    // The due range is a WINDOW, not just a floor, and both ends are load-bearing.
+    // It must clear the 86yd from Nefarian's landing (the raid anchor) to Victor
+    // with slack for wherever the at-boss hold actually parks the tank — or the
+    // event could never arm from the place the advance delivers the raid to. And
+    // it must NOT reach back to the lair's entrance portcullis, which is 149yd
+    // from Victor: an event due at the door would preempt the advance there and
+    // walk the tank the length of the room while the raid was still filing in
+    // behind it. 120 sits between the two with room either side.
+    //
+    // The scan is deliberately much wider — it only has to RESOLVE him once the
+    // range gate has already said yes.
+    constexpr float NEFARIUS_DUE_RANGE = 120.0f;
+    constexpr float NEFARIUS_SCAN      = 200.0f;
+
+    // The event row. Ids are per-map: 1 Razorgore, 2 Vaelastrasz, 3 the transit,
+    // 4 Chromaggus' cage.
+    constexpr uint32 EVENT_NEFARIAN_START = 5;
+
+    // WHETHER THE ENCOUNTER HAS BEEN STARTED, read off Victor himself.
+    //
+    // `offersStart` is UNIT_NPC_FLAG_GOSSIP, and it is the same one-way latch the
+    // Vaelastrasz rouse uses: sGossipSelect removes the flag before anything
+    // else, so the predicate goes false on the click and a second select would
+    // reach no script anyway. It also comes BACK on its own — a failed attempt
+    // schedules EVENT_RESPAWN_NEFARIUS 15min out and Reset() re-adds the flag —
+    // which is why the event is Repeatable: the raid gets to start him again.
+    struct NefariusState
+    {
+        bool present{false};     // alive, on his balcony
+        bool offersStart{false}; // ...and still waiting to be talked to
+    };
+    NefariusState Nefarius(Player* bot);
 }
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);

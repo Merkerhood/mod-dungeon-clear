@@ -15,6 +15,7 @@
 #include "CombatManager.h"
 #include "Creature.h"
 #include "GameObject.h"
+#include "GameObjectAI.h"
 #include "GameObjectData.h"
 #include "GossipDef.h"
 #include "Group.h"
@@ -525,6 +526,21 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                           "— click would be swallowed, holding",
                           bot->GetName(), go->GetGUID().ToString(), go->GetName());
                 return StepResult::Running;
+            }
+            // REPORT-USE variant: hand the click to the GO's script the way the
+            // report-use opcode does, and do NOT also call Use(). GameObject::Use()
+            // passes reportUse=false, which for a script that keys its work off the
+            // flag is at best a no-op and at worst destructive — BWL's Chromaggus
+            // lever marks itself spent outside the `if (reportUse)` block, so a
+            // Use() would burn the lever without opening the cage. See
+            // EventStep::reportUse.
+            if (step.reportUse)
+            {
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[dungeon-clear] {} event-step ReportUse GO {} '{}'",
+                          bot->GetName(), go->GetGUID().ToString(), go->GetName());
+                go->AI()->GossipHello(bot, /*reportUse*/ true);
+                return StepResult::Done;
             }
             LOG_DEBUG("playerbots.dungeonclear",
                       "[dungeon-clear] {} event-step Use GO {} '{}'",

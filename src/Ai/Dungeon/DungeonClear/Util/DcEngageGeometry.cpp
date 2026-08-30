@@ -11,6 +11,7 @@
 #include "DungeonClearMath.h"
 #include "DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Data/BossPullbackRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RoomAggroRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/RouteSweepRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcApproachState.h"
@@ -1275,6 +1276,49 @@ bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
         from->GetPositionX(), from->GetPositionY(), from->GetPositionZ() + 2.0f,
         tx, ty, tz + 2.0f, from->GetPhaseMask(),
         LINEOFSIGHT_CHECK_GOBJECT_ALL, VMAP::ModelIgnoreFlags::Nothing);
+}
+bool DcEngageGeometry::OnlyEventGatesBetween(WorldObject* from, float tx, float ty,
+                                            float tz)
+{
+    if (!from)
+        return false;
+    Map* map = from->GetMap();
+    if (!map)
+        return false;
+
+    float const ax = from->GetPositionX();
+    float const ay = from->GetPositionY();
+    float const az = from->GetPositionZ();
+
+    // Same floor test the other door predicates use, taken across the WHOLE
+    // chord: a gate at either end's level counts, one on the deck above or the
+    // corridor below does not.
+    float const loZ = std::min(az, tz) - DC_DOOR_Z_BAND;
+    float const hiZ = std::max(az, tz) + DC_DOOR_Z_BAND;
+    float const bandSq = DC_EVENT_GATE_BAND * DC_EVENT_GATE_BAND;
+
+    bool sawGate = false;
+    for (ObjectGuid const guid : DcDoorIndex::Get(map))
+    {
+        GameObject* go = map->GetGameObject(guid);
+        if (!IsDoorClosed(go))
+            continue;
+
+        float const gz = go->GetPositionZ();
+        if (gz < loZ || gz > hiZ)
+            continue;
+
+        if (DungeonClearMath::DistSqToSegment2D(go->GetPositionX(), go->GetPositionY(),
+                                               ax, ay, tx, ty) > bandSq)
+            continue;
+
+        // One ordinary shut door on the line is enough to keep the veto: the
+        // caller's original answer was right and there is nothing to excuse.
+        if (!DcEventDoorRegistry::IsNavigationIgnored(go->GetEntry()))
+            return false;
+        sawGate = true;
+    }
+    return sawGate;
 }
 bool DcEngageGeometry::ClosedDoorNear(WorldObject* ref, float x, float y, float z,
                                       float radius)

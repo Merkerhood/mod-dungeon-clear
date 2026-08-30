@@ -204,6 +204,29 @@ struct EventStep
     // "still walking in / just outside the gossip search radius" (keep approaching).
     bool   skipIfMissing{false};
 
+    // UseGameObject only. Deliver the click as a REPORT-USE
+    // (CMSG_GAMEOBJ_REPORT_USE -> GameObjectAI::GossipHello(player, /*reportUse*/
+    // true)) instead of GameObject::Use().
+    //
+    // The two are not interchangeable, and for a scripted lever the difference is
+    // the whole mechanic. GameObject::Use() calls AI()->GossipHello(player,
+    // FALSE); only the report-use opcode passes true. A GameObjectAI that keys its
+    // work off `reportUse` therefore does NOTHING on a plain Use() — and a real
+    // client always sends both opcodes, so scripts are written assuming it.
+    //
+    // Blackwing Lair's Chromaggus lever (GO 179148, go_chromaggus_lever) is the
+    // case that forced this, and it is worse than a no-op there: the door-opening
+    // half of its GossipHello is inside `if (reportUse)`, while the "this lever is
+    // spent" half (GO_FLAG_NOT_SELECTABLE | GO_FLAG_IN_USE, GO_STATE_ACTIVE) is
+    // OUTSIDE it. A plain Use() would burn the lever without opening the cage —
+    // Chromaggus stays immune behind a shut portcullis with nothing left to click,
+    // i.e. an unrecoverable run.
+    //
+    // So this is not "also send report-use": it REPLACES the Use() call. Set it
+    // only for a GO whose script reads the flag; everything else stays on Use(),
+    // which is the path that fires loot, traps, summons and spell targets.
+    bool   reportUse{false};
+
     // Gossip only. When set, the step WAITS (Running) while the target creature is
     // still moving, so the bot never talks to an NPC mid-walk. Used when a scripted
     // NPC walks to a final position before its gossip is meaningful (ZulFarrak's
@@ -570,6 +593,10 @@ public:
     EventBuilder& WhileHolding(uint32 hookId);
     EventBuilder& UseGO(uint32 goEntry, float searchRadius = 0.0f,
                         float x = 0.0f, float y = 0.0f, float z = 0.0f);
+    // Deliver the LAST-added UseGO step's click as a report-use rather than a
+    // GameObject::Use() (see EventStep::reportUse). Chain after the step:
+    //   .UseGO(GO_LEVER, 80).ReportUse()
+    EventBuilder& ReportUse();
     // Leader casts `spellId` on itself (triggered: no cost/cooldown/reagent/cast
     // time). For a scripted "use a quest item" spell whose effect a bot cannot
     // otherwise reach — e.g. Sunken Temple's "Awaken the Soulflayer" (12346),

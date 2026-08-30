@@ -368,6 +368,42 @@ TEST(DcDoorPolicyTest, MoltenCoreFireDoodadsAreNavigationIgnored)
     }
 }
 
+// Blackwing Lair's Chromaggus cage. The portcullis (179116) is opened ONLY by
+// the Lever (179148) 65yd away on the raid's side of it: go_chromaggus_lever's
+// GossipHello clears his IMMUNE_TO_PC, walks him out and calls HandleGameObject
+// on the gate. It is not in instance_blackwing_lair's doorData, so no encounter
+// state opens it either — and it is lock-free, so BotCanOpenDoorLikePlayer
+// refuses to force it.
+//
+// Left flagged it DEADLOCKS the run rather than merely mis-parking it: the flag
+// stands the at-boss trigger down, so the raid muster never stages, so
+// ChromaggusCageDue (which waits on muster Ready) is never true, so neither the
+// door-blocked trigger's due-event yield nor the lever click can ever happen.
+// Nine BWL runs ended parked ~21yd from it — tr-20260828-183508-1/-2/-3,
+// -195344-2/-4/-5, -215521-15, -235310-4 and tr-20260829-195231-1, the last at
+// 8/9 bosses with no "raid muster: staging at Chromaggus" line ever reached.
+TEST(DcDoorPolicyTest, ChromaggusCagePortcullisIsNavigationIgnored)
+{
+    EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(179116));
+
+    // The lever is NOT ignored — it is the thing the cage event must reach and
+    // click, exactly as with Blackrock's Shadowforge Lock above.
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(179148));
+
+    // Nor is the EXIT portcullis: it is doorData DOOR_TYPE_PASSAGE on
+    // DATA_CHROMAGGUS, so his death opens it, and a raid still standing at it
+    // afterwards has a real stall worth pausing on.
+    EXPECT_FALSE(DcEventDoorRegistry::IsNavigationIgnored(179117));
+
+    // No other list claims the cage: NOT IsScriptOnly in particular, which only
+    // refuses the click and would leave the auto-pause — the half that kills the
+    // run — fully armed.
+    EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(179116));
+    EXPECT_FALSE(DcEventDoorRegistry::IsSelfClearing(179116));
+    EXPECT_FALSE(DcEventDoorRegistry::IsKeyExempt(179116));
+    EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(179116));
+}
+
 // --- Self-clearing script barriers ------------------------------------------
 //
 // Stratholme's two gate traps. instance_stratholme watches (3612.3,-3335.4)

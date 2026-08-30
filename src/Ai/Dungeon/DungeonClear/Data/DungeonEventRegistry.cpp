@@ -133,6 +133,13 @@ EventBuilder& EventBuilder::WaitTargetStill()
     return *this;
 }
 
+EventBuilder& EventBuilder::ReportUse()
+{
+    if (!_ev.steps.empty())
+        _ev.steps.back().reportUse = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::MoveTo(float x, float y, float z, float radius)
 {
     EventStep& s = Add(EventStepKind::MoveTo);

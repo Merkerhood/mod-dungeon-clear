@@ -290,7 +290,21 @@ bool DungeonClearAtBossTrigger::IsActive()
     float const bx = liveBoss ? liveBoss->GetPositionX() : next->x;
     float const by = liveBoss ? liveBoss->GetPositionY() : next->y;
     float const bz = liveBoss ? liveBoss->GetPositionZ() : next->z;
-    if (DcEngageGeometry::ClosedDoorBetween(bot, bx, by, bz))
+    //
+    // EXCEPT an interact-through GATE (DcEventDoorRegistry::IsNavigationIgnored).
+    // The ray is entry-blind, and for that handful of doors standing down is the
+    // exact wrong answer: nothing DC does opens them, the objective behind one is
+    // performed from THIS side, and the rung this stand-down hands the tick to
+    // cannot open it either. Blackwing Lair's Chromaggus cage is the deadlock —
+    // the portcullis sits on the tank->boss line, so this returned false, the
+    // raid muster (ticked at the bottom of this function) never staged, and
+    // ChromaggusCageDue waits on muster Ready, so the lever that opens the cage
+    // was never pulled. tr-20260829-204120-2 idled 30yd out to teardown with
+    // every watchdog clear and zero "raid muster: staging at Chromaggus" lines.
+    // The boss-engage rung holds the tank on the anchor meanwhile (it reads
+    // `caged`), so letting this through does not walk anyone into the gate.
+    if (DcEngageGeometry::ClosedDoorBetween(bot, bx, by, bz) &&
+        !DcEngageGeometry::OnlyEventGatesBetween(bot, bx, by, bz))
         return false;
 
     // When the long-path cache is anchored (registered route), make sure the

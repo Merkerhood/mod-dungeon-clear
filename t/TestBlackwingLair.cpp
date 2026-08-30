@@ -1277,3 +1277,288 @@ TEST(DungeonEventBlackwingLairTest, DistToSegmentClampsToTheEndpoints)
     // A degenerate leg (duplicate anchors) must not divide by zero.
     EXPECT_NEAR(DcNoStopZone::DistSqToSegment(3.0f, 4.0f, 0.0f, a, a), 25.0f, 0.01f);
 }
+
+// --- Chromaggus' cage (the lever) -----------------------------------------
+
+TEST(DungeonEventBlackwingLairTest, ChromaggusCageIsASingleReportUseClick)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(MAP_ID, EVENT_CHROMAGGUS_CAGE);
+    ASSERT_NE(ev, nullptr) << "Blackwing Lair (469) event 4 (open the cage) is missing";
+
+    EXPECT_EQ(ev->activation, EventActivation::Conditional);
+    EXPECT_TRUE(static_cast<bool>(ev->condition))
+        << "the muster gate predicate must be bound, or the raid never pulls the lever";
+
+    // The rouse's flag set, for the rouse's reasons: the party is out of combat,
+    // no encounter is in progress (the instance only flips DATA_CHROMAGGUS when
+    // he engages), and the step's walk-in is an ordinary MoveTo.
+    EXPECT_FALSE(ev->drivesInCombat);
+    EXPECT_FALSE(ev->encounterActive);
+    EXPECT_FALSE(ev->stepsOwnMovement);
+    EXPECT_TRUE(ev->required);
+    EXPECT_FALSE(ev->repeatable)
+        << "the lever is a permanent one-way latch; after a wipe the cage is open "
+           "and the raid re-pulls him the ordinary way";
+
+    ASSERT_EQ(ev->steps.size(), 1u);
+    EventStep const& click = ev->steps[0];
+    EXPECT_EQ(click.kind, EventStepKind::UseGameObject);
+    EXPECT_EQ(click.goEntry, GO_CHROMAGGUS_LEVER);
+
+    // THE flag. GameObject::Use() passes reportUse=false, and
+    // go_chromaggus_lever's GossipHello opens the portcullis only under
+    // reportUse=true while stamping itself spent (NOT_SELECTABLE | IN_USE,
+    // GO_STATE_ACTIVE) either way. A plain Use() therefore burns the lever
+    // without freeing Chromaggus — an immune boss behind a shut door with
+    // nothing left to click.
+    EXPECT_TRUE(click.reportUse)
+        << "a plain Use() would spend the lever without opening the cage";
+
+    // The search radius has to reach the lever from anywhere the due range
+    // admits; the step's own 20yd default would never see it from the standoff.
+    EXPECT_FLOAT_EQ(click.radius, CHROMA_LEVER_SEARCH);
+    EXPECT_GE(CHROMA_LEVER_SEARCH, CHROMA_DUE_RANGE);
+}
+
+TEST(DungeonEventBlackwingLairTest, ChromaggusCageNeverClaimsToSummonHim)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(MAP_ID, EVENT_CHROMAGGUS_CAGE);
+    ASSERT_NE(ev, nullptr);
+
+    // Same trap as the rouse: panelGatesBossEntry is not cosmetic —
+    // DcTargeting::HasPendingSummonEvent keys the "must be SUMMONED" hold off it
+    // and IsHoldingForSummonEvent stands the pull down within 80yd. Chromaggus is
+    // a world spawn sitting in his cage from map load, and his chamber still has
+    // Death Talon packs to clear.
+    EXPECT_EQ(ev->panelGatesBossEntry, 0u)
+        << "setting this would suppress the dynamic pull across his whole chamber";
+    EXPECT_EQ(ev->panelSortAfterBossEntry, NPC_FLAMEGOR)
+        << "the cage belongs between Flamegor and Chromaggus in the panel";
+}
+
+TEST(DungeonEventBlackwingLairTest, ChromaggusAuthoredIdsMatchTheWorldData)
+{
+    // gameobject guid 56161 / entry 179148 ('Lever', ScriptName
+    // go_chromaggus_lever) and guid 75161 / entry 179116 (the cage portcullis),
+    // read off the live world DB.
+    EXPECT_EQ(GO_CHROMAGGUS_LEVER, 179148u);
+    EXPECT_EQ(NPC_CHROMAGGUS_CAGE_DOOR, 179116u);
+    EXPECT_EQ(NPC_CHROMAGGUS, 14020u);
+    EXPECT_FLOAT_EQ(CHROMA_LEVER_X, -7510.98f);
+    EXPECT_FLOAT_EQ(CHROMA_LEVER_Y, -1094.69f);
+    EXPECT_FLOAT_EQ(CHROMA_LEVER_Z, 476.555f);
+
+    // boss_chromaggus::homePos — where the lever's waypoint walk puts him.
+    EXPECT_FLOAT_EQ(CHROMA_HOME_X, -7491.1587f);
+    EXPECT_FLOAT_EQ(CHROMA_HOME_Y, -1069.718f);
+    EXPECT_FLOAT_EQ(CHROMA_HOME_Z, 476.59094f);
+
+    // instance_blackwing_lair's DATA_CHROMAGGUS, and the DBC bit it coincides
+    // with on this map.
+    EXPECT_EQ(CHROMAGGUS_ENCOUNTER_INDEX, 6u);
+
+    // Per-map event ids stay unique.
+    EXPECT_EQ(EVENT_CHROMAGGUS_CAGE, 4u);
+    EXPECT_NE(EVENT_CHROMAGGUS_CAGE, EVENT_RAZORGORE_ORB);
+    EXPECT_NE(EVENT_CHROMAGGUS_CAGE, EVENT_VAELASTRASZ_ROUSE);
+    EXPECT_NE(EVENT_CHROMAGGUS_CAGE, EVENT_SUPPRESSION_TRANSIT);
+    EXPECT_NE(EVENT_CHROMAGGUS_CAGE, EVENT_NEFARIAN_START);
+
+    // The due range is measured from the LEVER and has to contain the anchor the
+    // raid musters at (31.9yd away) with the muster spread on top, while stopping
+    // well short of the drake hall behind it (Flamegor is ~130yd back).
+    float const leverToHome = std::hypot(CHROMA_LEVER_X - CHROMA_HOME_X,
+                                         CHROMA_LEVER_Y - CHROMA_HOME_Y);
+    EXPECT_NEAR(leverToHome, 31.9f, 1.0f);
+    EXPECT_GT(CHROMA_DUE_RANGE, leverToHome + 40.0f);
+    EXPECT_LT(CHROMA_DUE_RANGE, 130.0f);
+    // ...and the creature scan must outreach the cage from anywhere in it.
+    EXPECT_GT(CHROMA_SCAN, CHROMA_DUE_RANGE * 0.5f);
+
+    // THE FLOOR BAND. A 90yd 2D radius around the lever also covers the Broodlord
+    // floor 27yd below it — the Suppression Rooms corridor passes within 36yd
+    // (2D) — so the band must be tight enough to exclude z 449 while still
+    // admitting the whole chamber (the lever at 476.6, the cage door sill at
+    // 480.0 and Chromaggus' own spawn at 476.7).
+    EXPECT_LT(CHROMA_FLOOR_BAND, std::fabs(CHROMA_FLOOR_Z - 449.3f));
+    EXPECT_GT(CHROMA_FLOOR_BAND, std::fabs(CHROMA_FLOOR_Z - 480.03f));
+    EXPECT_LT(std::fabs(CHROMA_LEVER_Z - CHROMA_FLOOR_Z), CHROMA_FLOOR_BAND);
+}
+
+TEST(DungeonEventBlackwingLairTest, ChromaggusIsAnchoredWhereTheLeverSendsHimNotInTheCage)
+{
+    // His DB spawn is a holding pen sealed behind the portcullis, sitting
+    // directly above the z-449 Broodlord floor; boss_chromaggus::homePos is where
+    // his scripted walk-out ends and where the fight happens. The advance routes
+    // at the LIVE creature once his grid is up, so this governs the far approach
+    // and every panel/diag distance — which is exactly the reading that must not
+    // aim a 130yd walk at a point inside a cage on the wrong floor.
+    std::vector<DungeonBossInfo> base;
+    uint32 const entries[] = {12435, 13020, 12017, 11983, 14601, 11981, 14020, 11583};
+    for (uint32 i = 0; i < 8; ++i)
+    {
+        DungeonBossInfo b;
+        b.entry = entries[i];
+        b.encounterIndex = i;
+        b.mapId = MAP_ID;
+        // The derived coords for Chromaggus are his creature-table spawn.
+        if (b.entry == NPC_CHROMAGGUS)
+        {
+            b.x = -7515.34f;
+            b.y = -1029.62f;
+            b.z = 476.73f;
+        }
+        base.push_back(b);
+    }
+
+    auto const out = BossRosterRegistry::Apply(MAP_ID, DcDiffKey::Raid(0), base);
+
+    auto const chroma = std::find_if(out.begin(), out.end(), [](DungeonBossInfo const& b)
+                                     { return b.entry == NPC_CHROMAGGUS; });
+    ASSERT_NE(chroma, out.end());
+    EXPECT_EQ(std::count_if(out.begin(), out.end(), [](DungeonBossInfo const& b)
+                            { return b.entry == NPC_CHROMAGGUS; }), 1)
+        << "remove + re-add, never two anchors for one boss";
+
+    EXPECT_EQ(chroma->kind, DungeonAnchorKind::Boss)
+        << "he must stay a BOSS anchor: that is what arms the raid muster the "
+           "cage event waits on";
+    // The anchor must sit on the CHAMBER floor the due gate admits, not on the
+    // cage's or the one below it.
+    EXPECT_LT(std::fabs(chroma->z - CHROMA_FLOOR_Z), CHROMA_FLOOR_BAND);
+    EXPECT_FLOAT_EQ(chroma->x, CHROMA_HOME_X);
+    EXPECT_FLOAT_EQ(chroma->y, CHROMA_HOME_Y);
+    EXPECT_FLOAT_EQ(chroma->z, CHROMA_HOME_Z);
+    EXPECT_EQ(BossOrderKey(*chroma), 7u) << "Flamegor 6, Chromaggus 7";
+
+    // The re-add must keep his REAL kill-bit — a dropped inheritance would leave
+    // encounterIndex 0 and complete him off Razorgore's death.
+    EXPECT_EQ(chroma->encounterIndex, 6u);
+    EXPECT_EQ(chroma->inheritCompletionFrom, 0u)
+        << "the inheritance must be resolved by Apply, not carried into the run";
+}
+
+// --- Nefarian (starting the encounter) ------------------------------------
+
+TEST(DungeonEventBlackwingLairTest, NefarianStartIsARepeatableSummonGate)
+{
+    DungeonEvent const* ev = DungeonEventRegistry::Find(MAP_ID, EVENT_NEFARIAN_START);
+    ASSERT_NE(ev, nullptr) << "Blackwing Lair (469) event 5 (start Nefarian) is missing";
+
+    EXPECT_EQ(ev->activation, EventActivation::Conditional);
+    EXPECT_TRUE(static_cast<bool>(ev->condition));
+
+    // REPEATABLE carries two jobs here. Victor's gossip flag comes back after a
+    // failed attempt (EVENT_RESPAWN_NEFARIUS, 15min), so the raid gets to start
+    // him again; and a repeatable conditional event is never latched, which is
+    // what keeps DcTargeting::HasPendingSummonEvent answering true.
+    EXPECT_TRUE(ev->repeatable)
+        << "a latched event would let TryBossNotPresentStall abort the run the "
+           "moment the advance reached a Nefarian who does not exist yet";
+
+    // ...and PanelBeforeBoss is what that pending-summon lookup keys on. This is
+    // the one row on this map that WANTS the pull suppression it brings: the
+    // lair holds no trash, and the same flag is what suppresses the not-spawned
+    // stall.
+    EXPECT_EQ(ev->panelGatesBossEntry, NPC_NEFARIAN);
+    EXPECT_EQ(ev->panelSortAfterBossEntry, 0u);
+
+    EXPECT_FALSE(ev->drivesInCombat)
+        << "DC's part ends at the click; the wave fight is the raid strategy's";
+    EXPECT_FALSE(ev->encounterActive);
+    EXPECT_FALSE(ev->stepsOwnMovement);
+
+    ASSERT_EQ(ev->steps.size(), 1u);
+    EventStep const& talk = ev->steps[0];
+    EXPECT_EQ(talk.kind, EventStepKind::Gossip);
+    EXPECT_EQ(talk.creatureEntry, NPC_VICTOR_NEFARIUS);
+    EXPECT_EQ(talk.gossipOption, NEFARIUS_GOSSIP_OPTION);
+    EXPECT_FALSE(talk.skipIfMissing)
+        << "a missing Victor is not an optional NPC to walk past — he is the "
+           "encounter, and the predicate already refuses to fire without him";
+
+    // The step has to ACQUIRE him from the raid anchor, which is 86yd away.
+    float const anchorToVictor = std::hypot(NEFARIAN_X - NEFARIUS_X,
+                                            NEFARIAN_Y - NEFARIUS_Y);
+    EXPECT_NEAR(anchorToVictor, 85.9f, 1.0f);
+    EXPECT_GT(talk.radius, anchorToVictor);
+
+    // The due range is a window. Wide enough to arm from the anchor the advance
+    // parks the raid at (86yd, plus slack for the at-boss hold's standoff)...
+    EXPECT_GT(NEFARIUS_DUE_RANGE, anchorToVictor + 20.0f);
+    // ...and short of the lair's entrance portcullis (GO 176966 at
+    // (-7488.1, -1150.7, 476.5)), 149yd from Victor: an event due at the door
+    // preempts the advance there and marches the tank across the room while the
+    // raid is still filing in behind it.
+    float const doorToVictor = std::hypot(-7488.1f - NEFARIUS_X,
+                                          -1150.7f - NEFARIUS_Y);
+    EXPECT_NEAR(doorToVictor, 148.9f, 1.0f);
+    EXPECT_LT(NEFARIUS_DUE_RANGE, doorToVictor);
+}
+
+TEST(DungeonEventBlackwingLairTest, NefarianAuthoredIdsMatchTheWorldData)
+{
+    // creature_template 10162 (gossip_menu_id 21330, ScriptName
+    // boss_victor_nefarius) / creature guid 85785, read off the live world DB.
+    EXPECT_EQ(NPC_VICTOR_NEFARIUS, 10162u);
+    EXPECT_EQ(NPC_NEFARIAN, 11583u);
+    EXPECT_FLOAT_EQ(NEFARIUS_X, -7587.76f);
+    EXPECT_FLOAT_EQ(NEFARIUS_Y, -1261.43f);
+    EXPECT_FLOAT_EQ(NEFARIUS_Z, 482.21f);
+
+    // waypoint_data path 11583, final point — where his intro flight lands.
+    EXPECT_FLOAT_EQ(NEFARIAN_X, -7502.0f);
+    EXPECT_FLOAT_EQ(NEFARIAN_Y, -1256.5f);
+    EXPECT_FLOAT_EQ(NEFARIAN_Z, 476.758f);
+
+    // DungeonEncounter.dbc row 617: mapId 469, encounterIndex 7. NOT the
+    // instance script's DATA_ enum, which only happens to agree on this map.
+    EXPECT_EQ(NEFARIAN_ENCOUNTER_INDEX, 7u);
+
+    // 21330 -> 21331 -> 21332, one option each at OptionID 0, no conditions rows.
+    // SelectGossip drills the chain from the single authored 0.
+    EXPECT_EQ(NEFARIUS_GOSSIP_OPTION, 0);
+
+    EXPECT_EQ(EVENT_NEFARIAN_START, 5u);
+    EXPECT_GT(NEFARIUS_SCAN, NEFARIUS_DUE_RANGE);
+}
+
+TEST(DungeonEventBlackwingLairTest, NefarianIsAddedToARosterThatCannotDeriveHim)
+{
+    // He has a kill-credit row (instance_encounters 617) but NO creature spawn,
+    // and BossSpawnIndex walks the spawn table — so the derived list really does
+    // stop at Chromaggus and the run would declare itself finished one boss
+    // short. This base is the honest one: seven bosses, no Nefarian.
+    std::vector<DungeonBossInfo> base;
+    uint32 const entries[] = {12435, 13020, 12017, 11983, 14601, 11981, 14020};
+    for (uint32 i = 0; i < 7; ++i)
+    {
+        DungeonBossInfo b;
+        b.entry = entries[i];
+        b.encounterIndex = i;
+        b.mapId = MAP_ID;
+        base.push_back(b);
+    }
+
+    auto const out = BossRosterRegistry::Apply(MAP_ID, DcDiffKey::Raid(0), base);
+    // Grethok + the seven derived + Nefarian.
+    ASSERT_EQ(out.size(), 9u);
+
+    auto const nef = std::find_if(out.begin(), out.end(), [](DungeonBossInfo const& b)
+                                  { return b.entry == NPC_NEFARIAN; });
+    ASSERT_NE(nef, out.end()) << "the clear must not end at Chromaggus";
+    EXPECT_EQ(nef->kind, DungeonAnchorKind::Boss);
+    EXPECT_EQ(nef->encounterIndex, NEFARIAN_ENCOUNTER_INDEX)
+        << "completion rides GetCompletedEncounterMask bit 7, so the bit must be "
+           "the real DBC one and not a default 0 that would read as Razorgore";
+    EXPECT_EQ(nef->doneBossStateIndex, -1)
+        << "he has a real DungeonEncounter row; this is not the boss-state case";
+    EXPECT_EQ(nef->inheritCompletionFrom, 0u);
+    EXPECT_FLOAT_EQ(nef->x, NEFARIAN_X);
+    EXPECT_FLOAT_EQ(nef->y, NEFARIAN_Y);
+    EXPECT_FLOAT_EQ(nef->z, NEFARIAN_Z);
+
+    // He sorts LAST, behind Chromaggus.
+    EXPECT_EQ(BossOrderKey(*nef), 8u);
+    EXPECT_EQ(out.back().entry, NPC_NEFARIAN);
+}

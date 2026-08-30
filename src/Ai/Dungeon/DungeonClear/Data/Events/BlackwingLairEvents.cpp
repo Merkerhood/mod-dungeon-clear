@@ -18,6 +18,7 @@
 #include "Player.h"
 #include "Playerbots.h"
 
+#include <cmath>
 #include <list>
 
 // --- Blackwing Lair (map 469) — Razorgore the Untamed, phase 1 -------------
@@ -227,6 +228,108 @@ namespace
         InstanceScript* inst = bot->GetInstanceScript();
         return !inst || inst->GetBossState(BROODLORD_ENCOUNTER_INDEX) != DONE;
     }
+
+    // DUE while Chromaggus is still caged AND the raid is ready to fight him.
+    //
+    // The same four-gate shape as the Vaelastrasz rouse above, for the same
+    // reason: pulling the lever IS the pull, so it must not happen before the
+    // raid is staged, topped and buffed.
+    //
+    //   1. the map, and the leader's proximity to the LEVER — measured from the
+    //      lever rather than from the boss because that is what the step has to
+    //      walk to, and because a leader still up in the drake hall must not read
+    //      as "at Chromaggus". The radius is 2D and is therefore paired with a
+    //      FLOOR band: the Broodlord floor runs 27yd directly under this chamber
+    //      and the Suppression Rooms corridor passes within 36yd (2D) of the
+    //      lever;
+    //   2. the encounter bit, which reads DONE on a killed Chromaggus and is the
+    //      authoritative end of this event even after the corpse decays;
+    //   3. Chromaggus himself — caged (still IMMUNE_TO_PC) with the lever still
+    //      selectable. Both halves matter and neither implies the other: a wiped
+    //      attempt leaves him ATTACKABLE with the lever long since spent, and a
+    //      click whose GossipHello reached the script leaves the lever spent on
+    //      the tick before his immunity drops;
+    //   4. THE MUSTER, read exactly as the rouse reads it. The gate is false
+    //      while the muster runs, so the boss-engage rung (one rung below this
+    //      one) keeps the tick and keeps advancing it; the tick it reaches Ready
+    //      this flips true and the lever is pulled with the raid formed up.
+    //
+    // NOT gated on combat: there is none. He is walled off and immune, and the
+    // instance only flips his encounter to IN_PROGRESS when he engages — which
+    // is itself a trap this predicate is built to avoid, because
+    // go_chromaggus_lever REFUSES to open the cage while the encounter reads
+    // IN_PROGRESS. See the boss-engage hold in DcEngageActions.
+    bool ChromaggusCageDue(Player* bot, AiObjectContext* context)
+    {
+        if (!bot || bot->GetMapId() != MAP_ID)
+            return false;
+        if (bot->GetExactDist2d(CHROMA_LEVER_X, CHROMA_LEVER_Y) > CHROMA_DUE_RANGE)
+            return false;
+        if (std::fabs(bot->GetPositionZ() - CHROMA_FLOOR_Z) > CHROMA_FLOOR_BAND)
+            return false;
+
+        InstanceScript* inst = bot->GetInstanceScript();
+        if (inst && inst->GetBossState(CHROMAGGUS_ENCOUNTER_INDEX) == DONE)
+            return false;
+
+        ChromaggusState const chroma = DcBlackwingLair::Chromaggus(bot);
+        if (!chroma.present || !chroma.caged || !chroma.leverReady)
+            return false;
+
+        if (!context)
+            return false;
+        DcRunState const& run = DcRun::Of(context);
+        return run.musterBossEntry == NPC_CHROMAGGUS &&
+               run.musterPhase ==
+                   static_cast<uint8>(DcRaidMusterDecision::Phase::Ready);
+    }
+
+    // DUE while Lord Victor Nefarius is still waiting to be talked to.
+    //
+    // Three gates, and deliberately NOT the muster gate the other two opening
+    // events use. The muster arms only for a BOSS anchor whose boss the engage
+    // rung can RESOLVE (a live creature), and the anchor here is Nefarian, who
+    // does not exist yet and will not until 42 drakonids have died. Waiting on a
+    // muster that can never arm would mean never starting the encounter at all.
+    //
+    // What replaces it is the anchor itself: the raid walks to Nefarian's landing
+    // as one body under the ordinary advance before this can be due from there,
+    // and the party-spread machinery keeps it together on the way. That is a
+    // weaker readiness claim than a muster and it is the honest one — this event
+    // starts a fight, it does not fight it.
+    //
+    //   1. the map, and the leader's proximity to VICTOR (120yd: past the raid
+    //      anchor 86yd from him, short of the lair door 149yd from him, and the
+    //      Gossip step walks the rest in itself);
+    //   2. the encounter bit — DONE means Nefarian is already dead, which on a
+    //      re-entered instance is the one state where Victor is still standing
+    //      there offering the same gossip;
+    //   3. Victor himself, alive and still bearing UNIT_NPC_FLAG_GOSSIP. That
+    //      flag is the one-way latch (sGossipSelect strips it first), and it is
+    //      also what comes BACK after a failed attempt, which is why the event is
+    //      Repeatable.
+    //
+    // NOT gated on combat, and it does not need to be: he is friendly and passive
+    // until the gossip lands, and after it every DC behaviour on this map goes
+    // inert behind the raid boss stand-down.
+    bool NefarianStartDue(Player* bot, AiObjectContext* /*context*/)
+    {
+        if (!bot || bot->GetMapId() != MAP_ID)
+            return false;
+        // 2D, and deliberately without the floor band the cage event needs:
+        // Nefarian's lair is the one chamber on this map with nothing above or
+        // below it. The nearest creature of any kind to Victor is 130yd away, on
+        // any axis, so there is no second floor for a flat radius to leak onto.
+        if (bot->GetExactDist2d(NEFARIUS_X, NEFARIUS_Y) > NEFARIUS_DUE_RANGE)
+            return false;
+
+        InstanceScript* inst = bot->GetInstanceScript();
+        if (inst && inst->GetBossState(NEFARIAN_ENCOUNTER_INDEX) == DONE)
+            return false;
+
+        NefariusState const victor = DcBlackwingLair::Nefarius(bot);
+        return victor.present && victor.offersStart;
+    }
 }
 
 // Grethok the Controller and the two Blackwing Guardsmen who hold the orb
@@ -320,6 +423,63 @@ DcBlackwingLair::VaelastraszState DcBlackwingLair::Vaelastrasz(Player* bot)
     st.present = true;
     st.offersRouse = vael->IsGossip();
     st.dormant = !bot->IsHostileTo(vael);
+    return st;
+}
+
+// See the header for what the three flags mean and why they are read together.
+// One grid scan and one GO scan; the map compare in front of them is the answer
+// on every other map, so the two callers that ask this every tick (the event's
+// activation predicate and the boss-engage hold) pay nothing off 469.
+//
+// `caged` is the IMMUNE_TO_PC flag rather than the cage door's GOState because
+// the door is not the mechanic — the immunity is. boss_chromaggus sets it in its
+// constructor so he cannot be pulled through the floor from the corridor below,
+// and go_chromaggus_lever's SetGUID(GUID_LEVER_USER) is the only thing in the
+// core that clears it. A raid that somehow walked into an open cage would still
+// find him unpullable; a raid that has wiped on an opened one finds him
+// attackable with the lever long spent, and this reads both correctly.
+DcBlackwingLair::ChromaggusState DcBlackwingLair::Chromaggus(Player* bot)
+{
+    ChromaggusState st;
+    if (!bot || bot->GetMapId() != MAP_ID)
+        return st;
+
+    Creature* chroma = bot->FindNearestCreature(NPC_CHROMAGGUS, CHROMA_SCAN, /*alive*/ true);
+    if (!chroma)
+        return st;
+
+    st.present = true;
+    st.caged = chroma->HasUnitFlag(UNIT_FLAG_IMMUNE_TO_PC);
+
+    GameObject* lever = bot->FindNearestGameObject(GO_CHROMAGGUS_LEVER, CHROMA_LEVER_SEARCH);
+    st.leverReady = lever && lever->isSpawned() &&
+                    lever->GetGoState() == GO_STATE_READY &&
+                    !lever->HasGameObjectFlag(GO_FLAG_NOT_SELECTABLE);
+    return st;
+}
+
+// See the header for what the flag means. One grid scan behind a map compare,
+// for the one caller that asks it (the event's activation predicate) — there is
+// no boss-engage hold to keep in step with here, because the anchor this event
+// gates is Nefarian, whom the engage rung cannot resolve until he lands.
+//
+// Deliberately the NPC flag and not the instance boss state. GetBossState reads
+// IN_PROGRESS only from BeginEvent, four seconds AFTER the click, so a predicate
+// keyed on it would stay true across those four seconds and offer the gossip a
+// second time; and it reads NOT_STARTED again on a wipe, before Victor has
+// respawned, so it would offer a gossip to a corpse.
+DcBlackwingLair::NefariusState DcBlackwingLair::Nefarius(Player* bot)
+{
+    NefariusState st;
+    if (!bot || bot->GetMapId() != MAP_ID)
+        return st;
+
+    Creature* victor = bot->FindNearestCreature(NPC_VICTOR_NEFARIUS, NEFARIUS_SCAN, /*alive*/ true);
+    if (!victor)
+        return st;
+
+    st.present = true;
+    st.offersStart = victor->IsGossip();
     return st;
 }
 
@@ -500,6 +660,95 @@ void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out)
             .Custom(HOOK_SUPPRESSION_TRANSIT)
                 .Timeout(TRANSIT_TIMEOUT_MS)
             .Build());
+
+    // OPEN CHROMAGGUS' CAGE — one lever click, and nothing else.
+    //
+    // Shaped exactly like the Vaelastrasz rouse, because it is the same kind of
+    // thing: an opening the raid performs out of combat, gated on the muster, that
+    // hands the fight straight to the raid strategy. The differences are all in
+    // the step, not the row.
+    //
+    // REPORT-USE, and this is the whole reason EventStep::reportUse exists.
+    // GameObject::Use() would hand go_chromaggus_lever a GossipHello with
+    // reportUse=false — which skips the half that opens the portcullis and frees
+    // Chromaggus, but NOT the half that stamps the lever NOT_SELECTABLE and
+    // GO_STATE_ACTIVE. One plain Use() and the run is unrecoverable: an immune
+    // boss behind a shut door with nothing left to click.
+    //
+    // ONE STEP, not "click then wait for the door". The click is synchronous —
+    // HandleGameObject opens the portcullis and SetGUID drops the immunity inside
+    // the same call — and Chromaggus' own walk out of the cage ends in
+    // SetInCombatWith(the clicker), so the fight starts itself. A WaitForGOState
+    // step after the click would only delay the latch past the moment the raid
+    // has already done its part.
+    //
+    // NOT Repeatable. The lever is a permanent one-way latch (nothing in the core
+    // ever resets its flags), so a wipe leaves the cage open and the raid simply
+    // re-pulls Chromaggus the ordinary way — there is nothing for a repeat to do.
+    // An unfinished step list is not latched either, so a click that never landed
+    // re-fires next tick on its own.
+    //
+    // REQUIRED, for the rouse's reason: if the lever genuinely cannot be pulled
+    // the run is over whatever we do here, and a stall names the problem instead
+    // of leaving forty bots staring at a portcullis.
+    //
+    // PANEL: sorted AFTER Flamegor, never PanelBeforeBoss(Chromaggus). The trap
+    // is the one the rouse documents — panelGatesBossEntry keys
+    // DcTargeting::HasPendingSummonEvent, which stands the whole pull pipeline
+    // down within 80yd of the boss it names. Chromaggus is a WORLD SPAWN sitting
+    // in his cage from map load; nobody summons him, the advance can see him, and
+    // suppressing the pull across his chamber would only strand the raid among
+    // the Death Talon packs it still has to clear.
+    out.push_back(
+        EventBuilder(MAP_ID, EVENT_CHROMAGGUS_CAGE, "Chromaggus — open the cage")
+            .Conditional(&ChromaggusCageDue)
+            .PanelAfterBoss(NPC_FLAMEGOR)
+            .UseGO(GO_CHROMAGGUS_LEVER, CHROMA_LEVER_SEARCH)
+                .ReportUse()
+            .Build());
+
+    // START NEFARIAN — one gossip, and the last thing DC does on this map.
+    //
+    // REPEATABLE, and it carries a second meaning here that it does not carry on
+    // the transit row. A repeatable conditional event is NEVER latched, so
+    // DcTargeting::HasPendingSummonEvent keeps answering "this boss is still to be
+    // summoned" for the whole encounter — which is precisely what stops
+    // DcAdvanceAction::TryBossNotPresentStall from aborting the run. Nefarian has
+    // no creature spawn row and does not exist until 42 drakonids die, so without
+    // that the advance would reach his anchor, find nothing in the creature store
+    // inside the grid-loaded range, and stall the run with "not spawned on this
+    // map" while the raid was in the middle of phase 1.
+    //
+    // It is also the honest answer for the event itself: Victor's gossip flag
+    // comes back after a failed attempt (EVENT_RESPAWN_NEFARIUS, 15min), and a
+    // raid that wiped should be able to start him again.
+    //
+    // PANEL BEFORE NEFARIAN, therefore — deliberately the opposite call from the
+    // other three rows on this map. The pull suppression that makes
+    // PanelBeforeBoss dangerous elsewhere is here exactly what is wanted: it is
+    // the same flag that suppresses the not-spawned stall, and Nefarian's lair
+    // holds no trash for a stood-down pull to have been useful against. The
+    // suppression lifts on its own the moment he dies and NextDungeonBoss
+    // advances past him.
+    //
+    // ONE STEP. The gossip chain is three menus deep (21330 -> 21331 -> 21332) and
+    // SelectGossip drills it from the single authored option 0; the click flips
+    // Victor hostile four seconds later and the raid strategy owns everything
+    // after that. There is deliberately no WaitForSpawn on Nefarian: the wait
+    // would span the entire wave phase with the party in continuous combat, where
+    // the out-of-combat event rung never runs — the boss anchor after this row is
+    // what waits for him, and it waits by simply not being reachable yet.
+    //
+    // NOT EncounterActive and NOT DrivesInCombat: DC's part is over before the
+    // fight starts, and claiming either would take ticks from the raid strategy
+    // that is about to need all of them.
+    out.push_back(
+        EventBuilder(MAP_ID, EVENT_NEFARIAN_START, "Nefarian — start the encounter")
+            .Conditional(&NefarianStartDue)
+            .Repeatable()
+            .PanelBeforeBoss(NPC_NEFARIAN)
+            .Gossip(NPC_VICTOR_NEFARIUS, NEFARIUS_GOSSIP_OPTION, NEFARIUS_SCAN)
+            .Build());
 }
 
 
@@ -543,7 +792,52 @@ void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
                              /*completionFrom*/ DcBlackwingLair::NPC_RAZORGORE,
                              /*orderOverride*/ 0));
 
+    // CHROMAGGUS MOVES OUT OF HIS CAGE. His derived anchor is his DB spawn
+    // (-7515.34, -1029.62, 476.73) — a holding pen sealed behind the portcullis
+    // the lever opens, and sitting directly above the z-449 Broodlord floor.
+    // boss_chromaggus::homePos is where his own scripted walk-out ends and where
+    // the fight actually happens, so that is the honest anchor: it is what the
+    // FAR approach routes to before his grid streams in (the advance switches to
+    // the live creature once it has), and what every panel and diag distance is
+    // measured against. Remove + re-add rather than `reorder`, which can only
+    // restamp the order key, never the coordinates.
+    //
+    // completionFrom is his OWN entry: the removal happens after inherited bits
+    // are resolved, so this reads his real DBC kill-bit (6) off the derived row
+    // instead of hardcoding it.
+    p.remove.push_back(DcBlackwingLair::NPC_CHROMAGGUS);
+    p.add.push_back(MakeBoss(DcBlackwingLair::NPC_CHROMAGGUS,
+                             DcBlackwingLair::MAP_ID, "Chromaggus",
+                             DcBlackwingLair::CHROMA_HOME_X,
+                             DcBlackwingLair::CHROMA_HOME_Y,
+                             DcBlackwingLair::CHROMA_HOME_Z,
+                             /*completionFrom*/ DcBlackwingLair::NPC_CHROMAGGUS,
+                             /*orderOverride*/ 7));
+
+    // NEFARIAN IS NOT DERIVED AT ALL. He has a kill-credit row (instance_encounters
+    // 617) but NO creature spawn — he is summoned mid-fight — and BossSpawnIndex
+    // walks the spawn table, so the auto-roster ends at Chromaggus and the run
+    // would report itself finished one boss short (the cast-spell-credit failure
+    // shape, from the other direction). MakeBossWithBit is the escape hatch:
+    // completionFrom has nothing to resolve against, so the DBC bit (7, read off
+    // DungeonEncounter.dbc row 617) is passed explicitly. The anchor is where his
+    // intro flight lands.
+    //
+    // The remove is defensive: a world DB that grows a Nefarian spawn row would
+    // otherwise derive him too and leave two anchors for one boss.
+    p.remove.push_back(DcBlackwingLair::NPC_NEFARIAN);
+    p.add.push_back(MakeBossWithBit(DcBlackwingLair::NPC_NEFARIAN,
+                                    DcBlackwingLair::MAP_ID, "Nefarian",
+                                    DcBlackwingLair::NEFARIAN_X,
+                                    DcBlackwingLair::NEFARIAN_Y,
+                                    DcBlackwingLair::NEFARIAN_Z,
+                                    DcBlackwingLair::NEFARIAN_ENCOUNTER_INDEX,
+                                    /*orderOverride*/ 8));
+
     // instance_encounters 610-617, in their own order — the classic clear path.
+    // Chromaggus and Nefarian are absent because they are re-added above with
+    // their order keys already stamped; `reorder` only touches entries that
+    // survived the removal.
     p.reorder = {
         { 12435, 1 },  // Razorgore the Untamed
         { 13020, 2 },  // Vaelastrasz the Corrupt
@@ -551,8 +845,6 @@ void RegisterBlackwingLairRoster(std::vector<BossRosterPatch>& t)
         { 11983, 4 },  // Firemaw
         { 14601, 5 },  // Ebonroc
         { 11981, 6 },  // Flamegor
-        { 14020, 7 },  // Chromaggus
-        { 11583, 8 },  // Nefarian
     };
 
     t.push_back(std::move(p));

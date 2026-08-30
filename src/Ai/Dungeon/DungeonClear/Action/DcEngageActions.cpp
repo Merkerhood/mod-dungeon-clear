@@ -947,6 +947,32 @@ bool DungeonClearEngageBossAction::Execute(Event event)
         return true;
     }
 
+    // CHROMAGGUS is opened by a LEVER, and until it has been pulled this rung has
+    // the same nothing to do — but a much sharper reason to do it.
+    //
+    // He is hostile, so none of the Vaelastrasz reasoning above applies: the
+    // ordinary branch would walk the tank at him and try to tag. That fails
+    // harmlessly (UNIT_FLAG_IMMUNE_TO_PC makes him an invalid attack target), and
+    // then the harm starts. The walk-in ends 65yd PAST the lever, inside a cage
+    // the raid has no reason to be in; and if anything ever did manage to flip
+    // DATA_CHROMAGGUS to IN_PROGRESS, go_chromaggus_lever's GossipHello refuses to
+    // open the portcullis at all while the encounter reads IN_PROGRESS — it just
+    // stamps itself spent. That is a wedged encounter with no way out but a reset.
+    //
+    // So hold on the anchor and let the cage event (relevance 31, above this rung)
+    // do the opening. `caged` is the immunity flag, which only the lever clears,
+    // so this releases on the same tick the click lands and never holds on a
+    // wiped-and-re-pullable Chromaggus. Placed with the rouse, AFTER the muster —
+    // which must still run, because the cage event waits on it.
+    if (next->entry == DcBlackwingLair::NPC_CHROMAGGUS &&
+        DcBlackwingLair::Chromaggus(bot).caged)
+    {
+        DcMovement::StopBot(bot, DcMovement::Stop::Soft);
+        ClearStall(context);
+        SetPhase(context, "waiting on the raid to open " + next->name + "'s cage");
+        return true;
+    }
+
     // PULL-BACK boss (BossPullbackRegistry): NEVER walk in. The whole registry
     // exists because the boss's own ground is lethal — EngageDirect would bee-line
     // the tank at Ghaz'an's live position, i.e. out into the Underbog lake, which

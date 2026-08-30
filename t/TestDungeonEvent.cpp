@@ -58,6 +58,26 @@ TEST(EventBuilderTest, BuildsTypedStepsInOrder)
     EXPECT_EQ(e.steps[2].timeoutMs, 8000u);
 }
 
+TEST(EventBuilderTest, ReportUseIsOptInAndTagsOnlyTheStepItFollows)
+{
+    // GameObject::Use() and the report-use opcode are not interchangeable: Use()
+    // hands the script GossipHello(player, FALSE), and a GameObjectAI that keys
+    // its work off that flag does nothing (BWL's Chromaggus lever does worse —
+    // it marks itself spent without opening the cage). So the executor has to be
+    // told which delivery a step wants, and the default must stay Use().
+    DungeonEvent e = EventBuilder(469, 99, "two levers")
+                         .Anchored(1)
+                         .UseGO(179148, 80.0f)
+                         .ReportUse()
+                         .UseGO(100, 10.0f)
+                         .Build();
+
+    ASSERT_EQ(e.steps.size(), 2u);
+    EXPECT_TRUE(e.steps[0].reportUse);
+    EXPECT_FALSE(e.steps[1].reportUse)
+        << "the modifier tags the LAST step at the time it is chained, not the event";
+}
+
 TEST(EventBuilderTest, JumpStepCarriesLandingAndRadius)
 {
     // A drop-down event: walk onto the lip, then jump the off-mesh gap onto the

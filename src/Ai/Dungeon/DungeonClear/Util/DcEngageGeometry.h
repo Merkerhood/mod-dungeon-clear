@@ -513,6 +513,31 @@ public:
     static bool ClosedDoorBetween(WorldObject* from, float tx, float ty, float tz,
                                   float corridorWidth = 8.0f);
 
+    // Companion veto-breaker for ClosedDoorBetween: true when every shut door
+    // standing on the from->(tx,ty,tz) line is a registry-declared
+    // interact-through gate (DcEventDoorRegistry::IsNavigationIgnored).
+    //
+    // ClosedDoorBetween is a raw GameObject-LOS ray and is therefore ENTRY-BLIND
+    // — it cannot tell a corridor door the run must open from a gate the run is
+    // contractually never routed through, one whose objective is completed from
+    // the players' side and which the event script opens itself. Callers that
+    // must not stand down on the second kind ask this afterwards.
+    //
+    // Blackwing Lair is why it exists. The Chromaggus cage Portcullis (179116)
+    // sits on the tank->Chromaggus line, so the at-boss trigger's fresh door
+    // check stood the rung down, the raid muster never staged, and
+    // ChromaggusCageDue — which waits on muster Ready — could never fire. The
+    // lever that opens the cage is pulled BY that event, so the run idled at the
+    // gate forever with every watchdog clear (tr-20260829-204120-2, 30yd out,
+    // "holding for at-boss" to teardown). Registering the portcullis
+    // IsNavigationIgnored fixed only the door-blocked/auto-pause half; this
+    // closes the other one.
+    //
+    // FALSE when nothing shut is on the line at all: the ray was blocked by
+    // something that is not a door in DcDoorIndex, and excusing that would be a
+    // blanket override rather than a registry exception.
+    static bool OnlyEventGatesBetween(WorldObject* from, float tx, float ty, float tz);
+
     // True if a closed `GAMEOBJECT_TYPE_DOOR` sits within `radius` (2D) of the
     // point (x,y,z) and on its floor (Z band). Companion to ClosedDoorBetween:
     // that one tests a door BETWEEN two points and deliberately ignores a door

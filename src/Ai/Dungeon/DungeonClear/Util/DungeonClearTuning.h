@@ -331,6 +331,19 @@ constexpr float DC_DOOR_BAND = 8.0f;
 // floors apart.
 constexpr float DC_DOOR_Z_BAND = 6.0f;
 
+// 2D half-width band used ONLY to attribute a blocked door-LOS ray to the door
+// that blocked it (DcEngageGeometry::OnlyEventGatesBetween). Wider than
+// DC_DOOR_BAND on purpose: that band asks "is this door on the corridor the bot
+// walks", this one asks "which shut door did that ray hit", and the ray runs
+// straight from the bot to the target rather than along the walked route, so a
+// wide gate's origin sits further off it. Measured: Blackwing Lair's Chromaggus
+// cage Portcullis (179116) is 6.9yd off the tank->boss chord from the standoff,
+// and the standoff itself moves with BossEngageRange. Widening is the SAFE
+// direction — the same band decides both halves of the attribution, so a wider
+// one finds MORE real doors and refuses more often; the caller's fallback is the
+// unmodified veto it already had.
+constexpr float DC_EVENT_GATE_BAND = 12.0f;
+
 // Below this vertical offset a candidate is treated as on the bot's own level:
 // slopes, stairs and ramps stay under it within a corridor lookahead. WotLK
 // inter-floor gaps are larger, so a genuine other-level mob always exceeds it.

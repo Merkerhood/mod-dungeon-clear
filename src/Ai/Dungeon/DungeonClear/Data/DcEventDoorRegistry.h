@@ -131,6 +131,46 @@ namespace DcEventDoorRegistry
             case 184393:  // Old Hillsbrad — Thrall's Prison Door (gossip through
                           // the gate; his script opens it via EVENT_OPEN_DOORS)
                 return true;
+            // Blackwing Lair — Chromaggus' cage Portcullis (179116, guid 75161
+            // at (-7506.3,-1043.2,480.0)). The cage is opened from the RAID's
+            // side by the Lever (179148, 65yd south), whose GossipHello does
+            // three things in one go: SetGUID(GUID_LEVER_USER) on Chromaggus,
+            // which is the ONLY thing in the core that clears his
+            // UNIT_FLAG_IMMUNE_TO_PC; MoveWaypoint, which walks him out; and
+            // HandleGameObject on this portcullis. Nothing else ever touches it
+            // — it is in instance_blackwing_lair's objectData but NOT its
+            // doorData, so no encounter state opens it either.
+            //
+            // Left unlisted it is a DEADLOCK, not merely a wrong park, because
+            // the flag and the thing that clears it need each other:
+            //
+            //   flagged blocking -> DungeonClearAtBossTrigger stands down
+            //     -> the engage rung never runs -> the raid muster never stages
+            //     -> ChromaggusCageDue is false (it waits on muster Ready)
+            //     -> the door-blocked trigger's due-event yield never fires
+            //     -> lock-free and not IsLockFreeClickable, so
+            //        BotCanOpenDoorLikePlayer refuses -> "can't open ... ->
+            //        auto-pausing", and a paused run cannot drive the event
+            //        that pulls the lever.
+            //
+            // This is what ended NINE BWL runs at the same spot, all parked
+            // ~21yd from the portcullis at (-7486,-1046,476.6):
+            // tr-20260828-183508-1/-2/-3, -195344-2/-4/-5, -215521-15,
+            // -235310-4 and tr-20260829-195231-1 (8/9 bosses; flagged 4s after
+            // the anchor flipped to Chromaggus, auto-paused 9s later, with no
+            // "raid muster: staging at Chromaggus" line ever reached).
+            //
+            // Deliberately IsNavigationIgnored and NOT IsScriptOnly, for the
+            // Thrall reason above it: IsScriptOnly only stops the CLICK, and
+            // the auto-pause below it is what actually kills the run. The route
+            // ends inside the cage on Chromaggus' spawn, the boss-engage rung
+            // holds the tank on the approach while he reads `caged`, and the
+            // cage event does the opening. The exit portcullis (179117) needs
+            // nothing: it is doorData DOOR_TYPE_PASSAGE on DATA_CHROMAGGUS and
+            // opens itself when he dies.
+            case 179116:  // Blackwing Lair — Chromaggus cage Portcullis
+                          // (opened by go_chromaggus_lever from the raid's side)
+                return true;
             // The Steamvault — Main Chambers Access Panels. These are wall
             // CONTROLS, not doors, but their template is GAMEOBJECT_TYPE_DOOR
             // and they spawn (and permanently stay) in GO_STATE_READY, so the
