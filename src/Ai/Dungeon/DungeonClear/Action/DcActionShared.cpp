@@ -988,6 +988,55 @@ DcMovementAction::GlideOutcome DcMovementAction::DriveGlideToEnd(
     if (hop.isDone)
         return GlideOutcome::ReachedEnd;
 
+    // --- The two RAMP guards DcAdvanceAction's ladder carries and this sibling
+    // did not. Both failure modes are the follower cursor's, not the tank rung's,
+    // so they belong here too; the door walk-in walks the same ramps.
+    //
+    // (1) Stranded cursor. Recast rasterizes an incline into plateaus, so a route
+    // point on a ramp routinely floats a couple of yards off the collision floor
+    // the bot stands on. Arrive under it and NextHop can never advance: the wedge
+    // detector above fires, Resnap searches forward FROM THE CURSOR and considers
+    // the cursor point itself first — which, being within POINT_REACHED
+    // horizontally, is the nearest candidate — so it re-picks the same point, and
+    // the glide is re-issued at a point the bot is standing beneath. Forever.
+    // Step past it, exactly as the tank ladder does.
+    //
+    // (2) Hop behind the bot. RouteDeviation is PERPENDICULAR, so a bot carried
+    // along its own corridor past the cursor reads a small deviation with its hop
+    // behind it, and the off-line rejoin below then walks it BACKWARD to that hop.
+    // Direction, not distance: a hop behind is never worth walking to, the route
+    // is one-way. ---
+    if (!hop.isJump)
+    {
+        G3D::Vector3 skipped;
+        if (DungeonPathFollower::SkipStrandedPoint(bot, path, follower, skipped))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] {} stranded cursor: standing {:.1f}yd under/over route point "
+                     "({:.1f},{:.1f},{:.1f}) -> skipped to seg {} pt {}",
+                     bot->GetName(), tag, bot->GetPositionZ() - skipped.z,
+                     skipped.x, skipped.y, skipped.z, follower.segmentIdx, follower.pointIdx);
+            hop = DungeonPathFollower::NextHop(bot, path, follower);
+            if (hop.isDone)
+                return GlideOutcome::ReachedEnd;
+        }
+
+        if (!hop.isJump && DungeonPathFollower::HopIsBehind(bot, path, follower, hop))
+        {
+            bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower);
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] {} re-anchor: next hop is behind the bot -> {}",
+                      bot->GetName(), tag,
+                      reanchored ? "Resnapped + refetched hop" : "Resnap failed, falling through");
+            if (reanchored)
+            {
+                hop = DungeonPathFollower::NextHop(bot, path, follower);
+                if (hop.isDone)
+                    return GlideOutcome::ReachedEnd;
+            }
+        }
+    }
+
     // --- Leave an in-flight escort glide alone, INCLUDING across a momentary
     // isMoving()==false flicker: the ACTIVE escort generator type alone is the
     // "spline still travelling" signal (the core pops it the instant the spline
@@ -1011,16 +1060,26 @@ DcMovementAction::GlideOutcome DcMovementAction::DriveGlideToEnd(
     // corridor, the escort spline's opening straight leg back to the route clips
     // wall corners. Rejoin via PathGenerator (MoveTo) while off the line; the
     // glide resumes once RouteDeviation drops back under the on-corridor threshold.
+    //
+    // The vertical half is the module's documented metric-mismatch repeat
+    // offender and this sibling was missing it: RouteDeviation is 2D-only, so a
+    // bot on a different floor directly under or over its route reads deviation
+    // ~= 0 and would let a STRAIGHT escort spline launch through the floor or
+    // ceiling. Same DC_CORRIDOR_Z_BAND test DcAdvanceAction::FillHopObs applies.
     float const deviation = DungeonPathFollower::RouteDeviation(bot, path, follower);
-    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD)
+    std::optional<G3D::Vector3> const curPt = DungeonPathFollower::CurrentPoint(path, follower);
+    bool const vertOff = curPt.has_value() &&
+                         std::fabs(bot->GetPositionZ() - curPt->z) > DC_CORRIDOR_Z_BAND;
+    if (deviation > DungeonPathFollower::OFF_PATH_THRESHOLD || vertOff)
     {
         DcMoveTo(mapId, hop.point.x, hop.point.y, hop.point.z,
                  /*idle*/ false, /*react*/ false, /*normal_only*/ false,
                  /*exact_waypoint*/ false, MovementPriority::MOVEMENT_NORMAL);
         LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] {} off-line {:.1f}yd -> rejoining route via generated path "
-                  "(seg {} pt {})",
-                  bot->GetName(), tag, deviation, follower.segmentIdx, follower.pointIdx);
+                  "[DC:{}] {} off-line {:.1f}yd (vertOff={}) -> rejoining route via "
+                  "generated path (seg {} pt {})",
+                  bot->GetName(), tag, deviation, vertOff,
+                  follower.segmentIdx, follower.pointIdx);
         return GlideOutcome::Moved;
     }
 

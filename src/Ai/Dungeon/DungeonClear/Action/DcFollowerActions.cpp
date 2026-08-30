@@ -583,19 +583,33 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // and the stock Follow() fan is the right fallback.
     if (DcSettings::GetBool(ObjectGuid::Empty, "PathCenterEnable"))
     {
-        float const toTank = bot->GetExactDist2d(tank);
+        // 3D, NOT 2D — the same metric everything else in this rung uses (the
+        // crumb spacing is walked 3D distance, the arrival hold below is
+        // GetExactDist, the tank's own spread gate is GetDistance). A 2D read
+        // here shrinks with the cosine of the slope, so on a ramp the leash
+        // arms at a LARGER true separation than on the flat and the correction
+        // the rung then issues is correspondingly bigger. Identical reasoning
+        // to the scout-lag branch above, which was fixed and this one was not.
+        float const toTank = bot->GetExactDist(tank);
         // Only trail once the tank is beyond the tight follow bubble — i.e. a
         // real corridor traversal is involved, not a fan-out shuffle. Below this
         // the Follow() fan below keeps the cluster tight in healer LOS.
         float const trailEngage = dist + 2.0f;
-        if (toTank > trailEngage)
+        // Per-bot stagger so the column spreads single-file ALONG the
+        // centered trail rather than every follower targeting the one crumb
+        // at `dist` behind the tank and piling onto it. Stable per GUID, same
+        // spirit as the golden-angle fan below but projected onto the trail.
+        uint32 const slot = static_cast<uint32>(bot->GetGUID().GetCounter()) % 4u;
+        float const lag = dist + static_cast<float>(slot) * 3.0f;
+        // Past the leash AND past our own stagger slot, so the crumb we aim at is
+        // genuinely ahead of us — a catch-up, never a retreat. The `toTank > lag`
+        // half is what stops this rung gliding a follower BACKWARD down the trail
+        // and handing it straight back to the Follow() fan below, which is the
+        // ping-pong the party does behind a moving tank (worst on ramps, where the
+        // two legs are down and back up the incline). Live numbers and the full
+        // reasoning: DungeonClearMath::TrailFollowShouldEngage.
+        if (DungeonClearMath::TrailFollowShouldEngage(toTank, trailEngage, lag))
         {
-            // Per-bot stagger so the column spreads single-file ALONG the
-            // centered trail rather than every follower targeting the one crumb
-            // at `dist` behind the tank and piling onto it. Stable per GUID, same
-            // spirit as the golden-angle fan below but projected onto the trail.
-            uint32 const slot = static_cast<uint32>(bot->GetGUID().GetCounter()) % 4u;
-            float const lag = dist + static_cast<float>(slot) * 3.0f;
             Position trailPoint;
             // Skip the trail when the chosen crumb is one we already occupy: re-
             // issuing MoveTo to a point we're basically on micro-steps in place

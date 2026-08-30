@@ -2409,3 +2409,53 @@ TEST(DungeonClearMathTest, PointTowardFromDegenerateBearingReturnsTheAnchor)
     EXPECT_NEAR(p.GetPositionX(), 12.0f, 1e-3f);
     EXPECT_NEAR(p.GetPositionZ(), 56.0f, 1e-3f);
 }
+
+// ==== follow-tank centered breadcrumb trail: engage gate ===================
+//
+// The rung engages on a leash measured to the TANK but aims at a crumb `lag`
+// yards behind it, and the per-bot stagger grows `lag` while the leash stays
+// put. Below, the shipped live numbers: AiPlayerbot.FollowDistance 1.5 gives
+// dist 1.5, leash 3.5, and crumbs at 1.5 / 4.5 / 7.5 / 10.5.
+
+// The slot-0 follower's crumb is inside the leash, so past the leash is always
+// past the slot — the original behaviour, unchanged.
+TEST(DungeonClearMathTest, TrailFollowEngagesForTheNearestStaggerSlot)
+{
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(3.4f, 3.5f, 1.5f));
+    EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(3.6f, 3.5f, 1.5f));
+    EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(19.7f, 3.5f, 1.5f));
+}
+
+// THE REGRESSION. A follower 5.1-7.1yd behind the tank with the lag-10.5 slot is
+// past the leash but INSIDE its own slot: its crumb sits farther from the tank
+// than it does, so trailing to it is a walk backward, out of the leash, straight
+// back into the Follow() fan that walks it forward again. Observed live in
+// DungeonClearPull.log at exactly these distances.
+TEST(DungeonClearMathTest, TrailFollowNeverRetreatsToReachItsStaggerSlot)
+{
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(5.1f, 3.5f, 10.5f));
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(5.9f, 3.5f, 10.5f));
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(7.1f, 3.5f, 10.5f));
+    // Same shape one slot in.
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(5.9f, 3.5f, 7.5f));
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(4.0f, 3.5f, 4.5f));
+}
+
+// Genuinely fallen behind: the crumb is now ahead of us and trailing closes the
+// gap. The rung must still engage, or the party never inherits the tank's
+// corridor-centered line on a long leg.
+TEST(DungeonClearMathTest, TrailFollowStillEngagesOnceTrulyBehind)
+{
+    EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(10.6f, 3.5f, 10.5f));
+    EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(19.0f, 3.5f, 10.5f));
+    EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(19.8f, 3.5f, 7.5f));
+}
+
+// The leash still binds when it is the larger of the two: a follower inside the
+// follow bubble does not trail just because its slot is tighter still.
+TEST(DungeonClearMathTest, TrailFollowLeashStillBindsInsideTheBubble)
+{
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(3.0f, 8.0f, 1.5f));
+    EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(7.9f, 8.0f, 6.0f));
+    EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(8.1f, 8.0f, 6.0f));
+}

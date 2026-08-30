@@ -169,6 +169,40 @@ namespace DungeonClearMath
         return std::fabs(destZ - botZ) <= zTolerance;
     }
 
+    // Should follow-tank's centered breadcrumb trail own this follower's tick?
+    //
+    // Two independent conditions, and the second is the one that was missing.
+    //
+    // `toTank > trailEngage` is the ORIGINAL leash: only trail once a real
+    // corridor traversal is involved, not a fan-out shuffle inside the follow
+    // bubble.
+    //
+    // `toTank > lag` is the guard the rung had no equivalent of. The crumb this
+    // branch aims at is `lag` yards behind the tank, and the stagger makes `lag`
+    // grow per slot while `trailEngage` does not — so a follower INSIDE its own
+    // slot but outside the leash was glided BACKWARD, down the trail, away from
+    // the party. That immediately re-armed the stock Follow() fan (radius `dist`)
+    // which walked it forward again, and ownership then flipped on every crossing
+    // between two aim points up to `lag + dist` apart. On a ramp the backward leg
+    // is a walk down the incline and the forward leg climbs it again, so the slope
+    // sets the amplitude: the reported "bots ping-pong on ramps". Live at the
+    // shipped AiPlayerbot.FollowDistance of 1.5 the leash is 3.5 and the crumbs
+    // sit at 1.5 / 4.5 / 7.5 / 10.5 — three of the four slots retreat.
+    //
+    // The invariant, stated generally: a rung must not move the bot AWAY from the
+    // condition that armed it. cf. the scout-lag branch, which has always held
+    // whenever `toTank <= lag` and only trails past it, and the follower cursor's
+    // own HopIsBehind ("a hop behind the bot is never worth walking to at ANY
+    // distance — the route is one-way").
+    //
+    // `toTank` must be a 3D distance: the crumb spacing is walked 3D distance and
+    // the arrival hold is GetExactDist, so a 2D read here shrinks with the cosine
+    // of the slope and arms the leash at a larger true separation on every ramp.
+    inline bool TrailFollowShouldEngage(float toTank, float trailEngage, float lag)
+    {
+        return toTank > trailEngage && toTank > lag;
+    }
+
     // One forward hostile for the Dynamic-pull aggro estimate. `chainEligible` is
     // pre-resolved by the caller from game state: true only when this mob is
     // navmesh-reachable from the pull target with a clear line of sight and no
