@@ -1421,7 +1421,10 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
     // Re-issue guard: the trigger latches and re-fires every tick, but re-plotting a
     // near-identical spline each time stutters and clips casts (cf. spline-reissue
     // freeze). While already travelling toward within 3yd of the same point, own the
-    // tick without touching the move.
+    // tick without touching the move. Owning it is correct HERE (unlike the no-op tail
+    // below): a reconnect spline really is in flight, and the trigger only armed
+    // because the bot has nothing in sight to shoot anyway — so nothing below is being
+    // starved, and yielding would just let a lower mover fight this spline.
     if (bot->isMoving() && _lastDestValid &&
         _lastDest.GetExactDist2d(x, y) < 3.0f)
         return true;
@@ -1443,12 +1446,23 @@ bool DungeonClearRegroupCombatAction::Execute(Event /*event*/)
                   anchorUnit ? anchorUnit->GetGUID().ToString() : "tank",
                   prio == MovementPriority::MOVEMENT_COMBAT ? "combat" : "normal");
 
-    if (DcMoveTo(map->GetId(), x, y, z, /*idle*/ false, /*react*/ false,
-                 /*normal_only*/ false, /*exact_waypoint*/ false, prio))
-    {
-        _lastDest = Position(x, y, z, 0.0f);
-        _lastDestValid = true;
-    }
+    // OWN THE TICK ONLY IF WE ACTUALLY MOVED. This action sits at rel 29, above stock
+    // `reach spell` (20) and the entire class rotation (5-20), and Engine::DoNextAction
+    // stops the tick at the first action that returns true — so an unconditional true
+    // here is a full mute of the follower's damage for as long as the rung stays
+    // latched. That is exactly what it was: when DcMoveTo declines (destination
+    // unreachable, already there, movement throttled) the bot stood still AND cast
+    // nothing, every tick, and since it never dealt damage it never gained the threat
+    // that would have refilled `attackers` and released the latch. Yielding on a no-op
+    // costs the reconnect nothing — the trigger stays latched and re-plots next tick —
+    // and hands the tick back to the rotation, which is the whole point of the rung
+    // sitting below stock combat movement.
+    if (!DcMoveTo(map->GetId(), x, y, z, /*idle*/ false, /*react*/ false,
+                  /*normal_only*/ false, /*exact_waypoint*/ false, prio))
+        return false;
+
+    _lastDest = Position(x, y, z, 0.0f);
+    _lastDestValid = true;
     return true;
 }
 

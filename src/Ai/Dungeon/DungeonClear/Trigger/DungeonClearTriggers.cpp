@@ -1909,19 +1909,33 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
 
 bool DungeonClearRegroupCombatTrigger::IsActive()
 {
-    if (!bot || bot->isDead() || !bot->IsInCombat())
+    // Every early-out below must go through this, never a bare `return false`. The
+    // latch is "a reconnect is in flight, keep firing until the bot can contribute
+    // again" — an intent that only makes sense inside one continuous combat. Left
+    // set on the way out (combat ended, run paused, held at a camp) it survives into
+    // the NEXT fight, where `if (_latched) return true` fires on tick one and skips
+    // the 2s debounce entirely: every subsequent pull then opens with the follower's
+    // tick already stolen by rel 29. Clearing here makes each fight start clean.
+    auto standDown = [this]() -> bool
+    {
+        _latched = false;
+        _pendingSince = 0;
         return false;
+    };
+
+    if (!bot || bot->isDead() || !bot->IsInCombat())
+        return standDown();
 
     // Feature toggle.
     if (!DcSettings::GetBool(bot, "CombatRegroup"))
-        return false;
+        return standDown();
 
     // The elected leader tank, non-null only while its clear is active and
     // unpaused. This both gates the feature on an active run and is the bot we
     // regroup on. The leader itself never regroups on anyone — it drives.
     Player* tank = AI_VALUE(Player*, DcKey::PartyTank);
     if (!tank || tank == bot || tank->GetMapId() != bot->GetMapId())
-        return false;
+        return standDown();
 
     // Hand all advanced-pull camp positioning to the camp/assist actions: while
     // the party is held PASSIVE at a camp (Forming/Advancing/Returning) it must
@@ -1932,7 +1946,7 @@ bool DungeonClearRegroupCombatTrigger::IsActive()
     Position camp;
     bool passive = false;
     if (DcLeaderSignal::GetLeaderCampHold(bot, camp, passive) && passive)
-        return false;
+        return standDown();
 
     // Gather the game-state reads the pure contribution kernel needs. The verdict
     // (§1) is role-aware: a DPS "can contribute" while its stock LOS-filtered
@@ -1947,6 +1961,22 @@ bool DungeonClearRegroupCombatTrigger::IsActive()
                                     UNIT_STATE_CONFUSED | UNIT_STATE_ROOT);
     in.hasVisibleAttacker = !botAI->GetAiObjectContext()
                                  ->GetValue<GuidVector>(DcKey::Stock::Attackers)->Get().empty();
+    // Second half of the DPS contribution test — see DecideCombatRegroup. `attackers`
+    // is threat-derived, so it reads empty for every mob the party is FIGHTING but has
+    // not yet landed threat on (including DC's own seed-then-SetInCombatWith window).
+    // A live, valid, in-LOS `current target` means the rotation has real work whatever
+    // the attacker list says, so this rung must not take the tick. Cheap: the LOS
+    // raycast only runs once a target actually resolves, and the whole clause is
+    // skipped for healers (the kernel ignores it for them).
+    in.hasLosTarget = false;
+    if (!in.isHealer)
+    {
+        if (Unit* cur = botAI->GetAiObjectContext()
+                             ->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Get())
+            in.hasLosTarget = cur->IsAlive() && cur->GetMapId() == bot->GetMapId() &&
+                              bot->IsValidAttackTarget(cur) && bot->IsWithinLOSInMap(cur);
+    }
+
     // Only meaningful for healers (the kernel ignores it for DPS); skip the party
     // scan otherwise. Non-empty = someone is below the heal floor -> HealReposition
     // owns the reposition, so regroup must stand down (its ownership invariant).
