@@ -19,6 +19,7 @@ TEST(DcNavPenaltyRegistry, ReportsMapsWithVolumes)
     EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(546));   // Underbog
     EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(543));   // Hellfire Ramparts
     EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(389));   // Ragefire Chasm
+    EXPECT_TRUE(DcNavPenaltyRegistry::HasVolumes(43));    // Wailing Caverns
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(0));     // no rows
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(230));   // BRD — no rows
     EXPECT_FALSE(DcNavPenaltyRegistry::HasVolumes(560));   // Old Hillsbrad — no rows
@@ -195,6 +196,45 @@ TEST(DcNavPenaltyRegistry, FencesTheRagefireChasmFunnelWall)
 
     // Geometrically on the wall, but a different map → no region applies.
     EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(0, -271.13f, -20.04f, -57.4f), 1.0f);
+}
+
+TEST(DcNavPenaltyRegistry, FencesTheWailingCavernsShortcutWall)
+{
+    // Both stitched climbs onto the west plateau are taxed. The reported ramp
+    // (the tank left the lower floor at (-76.78, -259.83) and went up here) ...
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(43, -77.91f, -262.80f, -59.38f), 1.0f);
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(43, -83.00f, -261.33f, -56.09f), 1.0f);
+    // ... and the second face 12yd north, which a ramp-only fence would just
+    // hand the route instead (30yd -> 50yd rather than 30yd -> 240yd).
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(43, -89.87f, -250.93f, -56.85f), 1.0f);
+
+    // The strip is continuous across its bends: a point on each leg's midline.
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(43, -90.50f, -249.50f, -58.0f), 1.0f);
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(43, -84.50f, -257.00f, -58.0f), 1.0f);
+    EXPECT_GT(DcNavPenaltyRegistry::PenaltyAt(43, -77.00f, -264.00f, -58.0f), 1.0f);
+
+    // Both sides of the wall stay untaxed — this is what a box could not do.
+    // The plateau the route has to reach the long way round, and the Druid of
+    // the Fang standing on it:
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -97.70f, -266.90f, -56.40f), 1.0f);
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -96.50f, -262.30f, -55.40f), 1.0f);
+    // The lower east floor, including where the climb was reported from:
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -74.30f, -260.00f, -63.20f), 1.0f);
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -76.78f, -259.83f, -64.64f), 1.0f);
+    // And the -60.5 rock spine the legitimate way round actually crosses.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -87.40f, -247.80f, -60.50f), 1.0f);
+
+    // On the wall in XY but far off the Z band → a different tier of the cavern
+    // is not this wall.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -84.50f, -257.00f, -20.0f), 1.0f);
+
+    // The two off-mesh drops the dungeon events own are nowhere near the wall,
+    // so the fence cannot interfere with them.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -290.66f, -3.83f, -58.30f), 1.0f);
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(43, -55.89f, 44.32f, -29.01f), 1.0f);
+
+    // Geometrically on the wall, but a different map → no region applies.
+    EXPECT_FLOAT_EQ(DcNavPenaltyRegistry::PenaltyAt(0, -84.50f, -257.00f, -58.0f), 1.0f);
 }
 
 TEST(DcNavPenaltyRegistry, PenalizesInsideTheLbrsShaft)

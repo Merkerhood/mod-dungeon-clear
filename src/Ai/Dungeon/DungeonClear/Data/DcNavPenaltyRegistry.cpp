@@ -150,7 +150,49 @@ namespace
     // wall against whatever geometry it abuts. Z band -64..-50 straddles the
     // ≈-58 floor. costMult 40 (a line the party must not cross, same class as
     // the shortcut rows above).
-    constexpr std::array<DcNavPenaltyPolygon, 5> kPolygons = {{
+    // Wailing Caverns (map 43) — the WALL between the lower east floor (z~-63)
+    // and the upper west plateau (z~-56/-54) that carries the Pythas -> Skum leg.
+    // Recast stitches walkable faces up that wall, so Detour's A* climbs it
+    // instead of taking the tunnel loop a player has to walk. Reported traversal:
+    // the tank leaves the lower floor at (-76.78, -259.83, -64.64) and climbs
+    //     (-78.1, -259.7, -62.6)  ->  (-85.3, -263.5, -53.3)
+    // (9.3yd rise over 8.1yd ground = ~49 degrees).
+    //
+    // THE FENCE COVERS THE WHOLE WALL, NOT JUST THE REPORTED RAMP. There is a
+    // SECOND stitched face 12yd north — (-89.1, -248.0, -60.5) -> (-92.3, -250.7,
+    // -54.4), 6.1yd over 4.2yd = ~55 degrees, steeper still — onto the same
+    // plateau. Fencing only the reported ramp moves the climb there and nothing
+    // else changes: measured against the real mmtiles, the corridor goes from
+    // 30yd (up the ramp) to 50yd (up the north face) instead of to the 240yd way
+    // round. Both faces have to be priced for the party to walk the tunnels.
+    //
+    // Authored as a 6yd-wide strip laid ALONG the wall — three quads, one per leg
+    // of the (-92.5,-246.5) -> (-88.5,-252.5) -> (-80.5,-261.5) -> (-73.5,-266.5)
+    // polyline, each inflated +-3yd on its perpendicular and extended 2yd past
+    // both ends (consecutive quads overlap at the bends; the outer ends seal
+    // against the geometry either side). Same recipe as the Ragefire funnel wall
+    // above. A box cannot do this job: the wall is diagonal, and any axis-aligned
+    // box hugging it also swallows either the plateau or the lower floor.
+    //
+    // Z band -63.5..-52.0 straddles the climbs (which run -63.2 up to -53.3). The
+    // plateau's own floor is at -56.4/-54.6, i.e. INSIDE that band — Z alone
+    // cannot separate the plateau from the shelves on the wall, so the XY strip is
+    // what keeps it clear, and the strip is drawn to stop short of it.
+    //
+    // Validated against the map's mmtiles (tools/probe_navmesh.py + a poly-
+    // adjacency walk over 043*.mmtile), per the no-cage rule above:
+    //   - six polys fall inside the strip, all of them wall faces or the shelves
+    //     between them; the plateau, the lower floor and the -60.5 rock spine the
+    //     legitimate route crosses are all outside it;
+    //   - hard-removing every one of those six leaves ZERO walkable polys cut off
+    //     from the instance entrance (marooned = 0), so nothing is caged even
+    //     under the StridedPathfinder's hard reject;
+    //   - the shortcut is priced out: lower floor -> plateau goes 30yd -> 240yd,
+    //     and the leg that actually matters, Pythas -> Skum, goes 414yd -> 459yd
+    //     (+45yd, round the north tunnels). Entrance -> Pythas and Entrance ->
+    //     Skum are unchanged.
+    // costMult 40, the shortcut class (a line a real player cannot walk).
+    constexpr std::array<DcNavPenaltyPolygon, 8> kPolygons = {{
         { 556, 15.0f, 38.0f, 40.0f, 5,
           { -233.29f, -230.34f, -209.82f, -192.94f, -192.04f },
           {  275.04f,  309.39f,  326.92f,  305.38f,  271.93f } },
@@ -166,6 +208,15 @@ namespace
         { 389, -64.0f, -50.0f, 40.0f, 4,   // leg 3
           { -267.38f, -237.15f, -236.38f, -266.61f },
           {  -18.84f,  -24.76f,  -20.83f,  -14.91f } },
+        { 43, -63.5f, -52.0f, 40.0f, 4,   // wall leg 1 (north face)
+          { -91.11f, -84.89f, -89.89f, -96.11f },
+          { -243.17f, -252.50f, -255.83f, -246.50f } },
+        { 43, -63.5f, -52.0f, 40.0f, 4,   // wall leg 2
+          { -87.59f, -76.93f, -81.41f, -92.07f },
+          { -249.01f, -261.00f, -264.99f, -253.00f } },
+        { 43, -63.5f, -52.0f, 40.0f, 4,   // wall leg 3 (the reported ramp)
+          { -80.38f, -70.13f, -73.62f, -83.87f },
+          { -257.90f, -265.22f, -270.10f, -262.78f } },
     }};
 
     // Even-odd ray cast — true iff (x,y) is inside the polygon's XY footprint.
