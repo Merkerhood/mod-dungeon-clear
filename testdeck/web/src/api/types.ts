@@ -105,6 +105,47 @@ export interface LiveRun {
   timeline?: TimelineEntry[];   // server-accumulated full history
 }
 
+/* ---- dungeon map pack (generated per host, see `testdeck mappack`) ---- */
+
+export interface MapFloor {
+  floor: number;
+  url: string;                 // /api/mappack/img/<mapId>/<floor>
+  /* World rect this image covers. minX/maxX are the world X (north) axis and
+   * drive the VERTICAL image axis; minY/maxY are world Y (west) and drive the
+   * horizontal one. The DBC's own field order is misleading; the pack has
+   * already normalised it. */
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  /* px = ax*x + bx*y + cx ; py = ay*x + by*y + cy, in a w x h image. */
+  ax: number; bx: number; cx: number;
+  ay: number; by: number; cy: number;
+  w: number;
+  h: number;
+  source?: string;             // "wdm" | "client"
+}
+
+export interface MapPackMap {
+  mapId: number;
+  name?: string;
+  kind?: "dungeon" | "terrain";
+  floors: MapFloor[];
+  /* Blizzard's own DungeonMapChunk MinZ ladder, ascending. Only ever used to
+   * break a tie between floors whose rects both contain the position. */
+  floorRule?: {
+    default?: number;
+    zsteps: { minZ: number; floor: number }[];
+  };
+}
+
+export interface MapPackIndex {
+  available: boolean;
+  reason?: string;
+  generated?: string;
+  maps: number[];
+}
+
 export interface LivePlan {
   planId: string;
   dungeon?: string;

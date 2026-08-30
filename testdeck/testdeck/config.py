@@ -94,7 +94,9 @@ class Config:
     playerbots_conf: Path = None
     dungeonclear_conf: Path = None
     dbc_dir: Path = None
+    client_dir: Path = None         # a WoW client root, for map-pack art
     data_dir: Path = None
+    mappack_dir: Path = None        # generated dungeon map art (under data_dir)
     app_dir: Path = None            # the testdeck/ checkout (holds dist/)
     mysql_bin: str = ""             # "" = look on PATH, then the usual places
     # server
@@ -187,6 +189,10 @@ class Config:
     @property
     def rosters_file(self):
         return self.data_dir / "rosters.json"
+
+    @property
+    def mappack_file(self):
+        return self.mappack_dir / "mappack.json"
 
     @property
     def secret_file(self):
@@ -375,6 +381,11 @@ def _load_paths(cfg, sec, app_dir):
                          cfg.dist / "data" / "dbc",
                          cfg.dist / "dbc",
                      ]))
+    # Where the dungeon map pack is generated to. Under data_dir by default,
+    # because the art is derived from the operator's own client and must not
+    # end up somewhere that looks redistributable.
+    cfg.mappack_dir = _p(sec.get("mappack_dir"), cfg.data_dir / "mappack")
+    cfg.client_dir = _p(sec.get("client_dir"))
     cfg.mysql_bin = str(sec.get("mysql_bin", ""))
 
 

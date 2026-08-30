@@ -4,8 +4,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import DungeonMap from "../components/DungeonMap";
 import { fmtDuration, usePoll } from "../api/hooks";
-import type { CommandReply, Live, LivePlan, LiveRun } from "../api/types";
+import type {
+  BotPos,
+  CommandReply,
+  Live,
+  LivePlan,
+  LiveRun,
+} from "../api/types";
 import { ROLE_ORDER } from "../data/wow";
 import {
   Card,
@@ -273,6 +280,8 @@ function RunCard({ run }: { run: LiveRun }) {
         </div>
       )}
 
+      {run.mapId ? <MapPanel mapId={run.mapId} bots={bots} /> : null}
+
       {run.timeline && run.timeline.length > 0 && (
         <TimelineFeed entries={run.timeline} startedS={run.elapsedS} />
       )}
@@ -290,6 +299,34 @@ function StageBadge({ stage }: { stage?: string }) {
   if (stage === "monitoring") return <Spinner label="Running…" />;
   return (
     <span className="rounded bg-ink-800 px-2 py-0.5 text-xs">{stage}</span>
+  );
+}
+
+/* The dungeon map, collapsed like the timeline below it and for the same
+ * reason: several runs up at once would push the party chips and boss
+ * progress off screen.
+ *
+ * Every run card starts closed, deliberately. This used to remember the
+ * choice in localStorage, which meant a run that started after you had
+ * opened the map on an earlier one appeared already expanded — so a fresh
+ * raid arrived pushing the rest of its card out of view. The state is plain
+ * component state now: RunCard is keyed by runId, so it survives the 3s poll
+ * and stays open for as long as you are watching THAT run, and a newly
+ * started run gets its own closed panel. */
+function MapPanel({ mapId, bots }: { mapId: number; bots: BotPos[] }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-4">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="text-xs text-ink-500 hover:text-ink-300"
+      >
+        {open ? "▾" : "▸"} dungeon map
+      </button>
+      {open && <DungeonMap mapId={mapId} bots={bots} />}
+    </div>
   );
 }
 

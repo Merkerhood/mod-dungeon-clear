@@ -294,6 +294,40 @@ Tests: `bash t/run_tests.sh` (backend pytest; plus the dist smoke and a
 build-as-type-check when `web/node_modules` exists). No root, no live
 worldserver, no database needed.
 
+## The Live page's dungeon map
+
+Each live run card has a **dungeon map** section — collapsed by default, above
+the timeline — that draws the party on the real Blizzard map art. The transform
+is exact rather than fitted: `DungeonMap.dbc` states the world rectangle each
+floor's image covers, so there is nothing to calibrate.
+
+No art ships with the Test Deck. You generate it on your own host, from your
+own WoW client:
+
+```sh
+pip install pillow mpyq                  # or: pip install -e ".[maps]"
+python3 -m testdeck mappack --client "C:/Games/World of Warcraft 3.3.5a"
+```
+
+Set `[paths] client_dir` in `testdeck.toml` and you can drop the `--client`
+flag. The pack lands in `<data_dir>/mappack` (~22 MB for all 82 maps) and
+`python3 -m testdeck check` reports it. Rebuild any time — the server notices
+without a restart.
+
+The 3.3.5a client has maps for the WotLK dungeons only, so for Classic and TBC
+the command downloads the [WDM-patch](https://github.com/Trimitor/WDM-patch)
+release once (~47 MB, cached under `<data_dir>/cache`). Pass `--offline` to
+skip that and build the WotLK half alone; pass `--maps 389,574` to build a
+couple of dungeons rather than everything.
+
+Neither Pillow nor mpyq is needed to *serve* a pack — only to build one.
+
+Multi-floor dungeons get a floor picker, and the shown floor follows the tank.
+Bots on another floor stay visible but faint, which is the case worth seeing:
+the healer who never came down the stairs. A position no floor draws counts as
+"off-map" rather than being snapped to floor 1 — Ulduar, Sunwell and Black
+Temple all have areas Blizzard never mapped.
+
 ## API
 
 See `docs/api.md`. Everything is JSON under `/api/`; the SPA in `dist/` is
