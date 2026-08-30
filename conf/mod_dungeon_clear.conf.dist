@@ -620,8 +620,16 @@ Appender.DungeonClear=2,4,0,DungeonClear.log
 #        4 (Info, default): milestones only. Raise to 5 (Debug) or 6 (Trace)
 #        to diagnose pathfinding/stall issues.
 #
+#        The appender list is DungeonClear only — the file, not the worldserver
+#        console. A clear logs a handful of Info lines per pack per bot (first
+#        contact, camp marked, party released), which is exactly what you want
+#        in a log you grep after the fact and exactly what you do not want
+#        scrolling the console of a live server. Add `Console` to the list below
+#        if you are actively watching a run. Real errors are unaffected: the
+#        module's error paths log to `playerbots`, which keeps its own routing.
+#
 
-Logger.playerbots.dungeonclear=4,Console DungeonClear
+Logger.playerbots.dungeonclear=4,DungeonClear
 
 #
 #    Advanced-pull sub-channel (playerbots.dungeonclear.pull).
@@ -639,7 +647,7 @@ Logger.playerbots.dungeonclear=4,Console DungeonClear
 #        6 = Trace (per-tick run-in / return / hold-at-camp movement).
 #
 #    Appender.DungeonClearPull=2,5,0,DungeonClearPull.log
-#    Logger.playerbots.dungeonclear.pull=5,Console DungeonClearPull
+#    Logger.playerbots.dungeonclear.pull=5,DungeonClearPull
 
 ########################################
 # ADVANCED PATHING SETTINGS
