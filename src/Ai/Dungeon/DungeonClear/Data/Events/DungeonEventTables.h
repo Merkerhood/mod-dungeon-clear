@@ -855,6 +855,24 @@ namespace DcBlackwingLair
     constexpr uint32 TRANSIT_ELITE_HOLD_TIMEOUT_MS  = 120000;
     constexpr uint32 TRANSIT_DISARM_HOLD_TIMEOUT_MS = 1500;
 
+
+    // Telemetry threshold only. How far a live combat reference has to be from
+    // every member holding it before the driver's `towing N` field counts it as
+    // aggro the raid is CARRYING rather than a fight the raid is IN.
+    //
+    // NOTHING HOLDS ON THIS. A gate that did was tried and removed: it waited at
+    // the staging point, and tr-20260830-152617-2 and -5 both show the raid
+    // reaching staging with the count at zero and 25 of 25 formed up on merit.
+    // The count only climbs at cursor 9, the foot of the Taskmaster ramp, ~200yd
+    // into the crossing — so a staging gate can never see it.
+    //
+    // Deliberately below DC_ENGAGEMENT_RADIUS (100yd), which is the opposite
+    // question: DcCombatFlag's scan discards everything past 100yd as "a
+    // reference that has outlived its geometry", and that discarded set is
+    // exactly what this counts. 60yd because the crossing's own fights are inside
+    // TRANSIT_SCAN (40yd) and the far packs sit 100-200yd off it.
+    constexpr float TRANSIT_AGGRO_SHED_DIST = 60.0f;
+
     // How far from the staging point the leader may be when the transit ARMS and
     // still be asked to gather there.
     //

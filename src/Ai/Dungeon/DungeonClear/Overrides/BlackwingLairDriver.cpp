@@ -7,14 +7,19 @@
 
 #include <list>
 #include <algorithm>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
+#include "CombatManager.h"
 #include "Creature.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "InstanceScript.h"
 #include "Log.h"
+#include "Map.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -794,6 +799,96 @@ namespace
         return best;
     }
 
+    // What the raid is still TOWING: live creatures holding somebody in combat
+    // from further than TRANSIT_AGGRO_SHED_DIST away from everyone they hold.
+    //
+    // A GRID SCAN CANNOT ANSWER THIS, which is why it walks combat references
+    // instead of reusing BwlNearestElite's shape. The whole point of the set is
+    // that it is somewhere else — 132.6-151.6yd away and still standing on its
+    // spawn, in tr-20260830-142049-6 — so any radius wide enough to see it is
+    // wide enough to sweep two rooms of things that are not holding anybody.
+    //
+    // MEASURED FROM THE MEMBER IT ACTUALLY HOLDS, not from the leader, and the
+    // difference is a false positive that would hold the raid for its whole
+    // budget every crossing: a straggler 50yd behind the leader fighting a whelp
+    // at arm's length is a mob 55yd from the leader and 2yd from the fight. So a
+    // creature counts only when it is remote from EVERY member on its reference
+    // list, which is the honest reading of "nobody is fighting this thing".
+    //
+    // DEDUPED BY GUID for the same reason the count is a count: seven members
+    // held by one Technician is one thing to shed, and reporting it as seven
+    // would make the log line unreadable in exactly the situation it exists for.
+    //
+    // Evade is skipped — a holder already walking home is the case the route
+    // comment always assumed and is nothing to wait on. No pathfind anywhere:
+    // unlike DcCombatFlag::ScanCombatHolders this asks a pure distance question,
+    // and the caller only asks it at the staging point.
+    struct BwlRemoteAggro
+    {
+        bool        valid = false;
+        uint32      holders = 0;
+        float       farthest = 0.0f;
+        std::string worst;  // the farthest one's name, for the hold's log line
+    };
+
+    BwlRemoteAggro BwlRemoteHolders(Player* leader)
+    {
+        BwlRemoteAggro out;
+        Map* const map = leader ? leader->GetMap() : nullptr;
+        if (!leader || !map)
+            return out;
+        out.valid = true;
+
+        // guid -> (closest member holding it, its name)
+        std::unordered_map<ObjectGuid, std::pair<float, std::string>> nearest;
+
+        auto const walk = [&](Player* member)
+        {
+            if (!member || !member->IsAlive() || member->GetMap() != map)
+                return;
+            for (auto const& kv : member->GetCombatManager().GetPvECombatRefs())
+            {
+                CombatReference* const ref = kv.second;
+                if (!ref)
+                    continue;
+                Unit* const other = ref->GetOther(member);
+                if (!other || !other->IsAlive() || other->GetMap() != map)
+                    continue;
+                if (!other->ToCreature())
+                    continue;
+                if (other->GetCombatManager().IsInEvadeMode())
+                    continue;  // bailing home -> already shed
+
+                float const d = member->GetExactDist(other);
+                auto const it = nearest.find(other->GetGUID());
+                if (it == nearest.end())
+                    nearest.emplace(other->GetGUID(),
+                                    std::make_pair(d, std::string(other->GetName())));
+                else if (d < it->second.first)
+                    it->second.first = d;
+            }
+        };
+
+        if (Group* const group = leader->GetGroup())
+            for (GroupReference* r = group->GetFirstMember(); r; r = r->next())
+                walk(r->GetSource());
+        else
+            walk(leader);
+
+        for (auto const& kv : nearest)
+        {
+            if (kv.second.first <= TRANSIT_AGGRO_SHED_DIST)
+                continue;
+            ++out.holders;
+            if (kv.second.first > out.farthest)
+            {
+                out.farthest = kv.second.first;
+                out.worst = kv.second.second;
+            }
+        }
+        return out;
+    }
+
     // Nearest ARMED Suppression Device, or -1. GO_STATE_READY is the armed state —
     // go_suppression_device pulses 22247 every 5s while it holds it, and the bot
     // disarm rung turns it off with SetGoState(GO_STATE_ACTIVE). A device turned
@@ -825,7 +920,7 @@ namespace
     // "the devices were never disarmed" from "the driver never got a tick".
     void BwlTransitLog(Player* bot, DcRunState& st, DcSuppressionTransit::Inputs const& in,
                        DcSuppressionTransit::Verdict const& v, BwlPackView const& pack,
-                       uint32 anchorCount)
+                       uint32 anchorCount, BwlRemoteAggro const& remote)
     {
         // Throttle state on the bot's own run state — see Util/DcThrottle.h.
         if (st.Throttled(DcThrottle::TransitLog, TRANSIT_TELEMETRY_MS))
@@ -834,12 +929,13 @@ namespace
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] BWL transit — cursor {}/{} ({:.1f}yd), pack {}/{} near the cursor{}, "
                   "{} of {} outside, trail {:.1f}yd (leash {:.0f}), elite {:.1f}yd, "
-                  "armed device {:.1f}yd -> {}{}",
+                  "armed device {:.1f}yd, towing {} -> {}{}",
                   bot->GetName(), in.cursorIndex, anchorCount ? anchorCount - 1 : 0, in.distToCursor,
                   pack.nearCursor, pack.living, pack.topped ? "" : ", NOT TOPPED",
                   in.packOutside, in.packLiving,
                   in.trailDist, in.packLeash,
                   in.nearestEliteDist, in.nearestArmedDeviceDist,
+                  remote.valid ? std::to_string(remote.holders) : std::string("n/a"),
                   v.complete ? "AT THE STANDOFF"
                              : (v.advance ? "advancing" : DcSuppressionTransit::HoldName(v.hold)),
                   v.timedOut ? " (WATCHDOG)" : "");
@@ -1011,9 +1107,22 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
     in.eliteHoldTimeoutMs = TRANSIT_ELITE_HOLD_TIMEOUT_MS;
     in.disarmHoldTimeoutMs = TRANSIT_DISARM_HOLD_TIMEOUT_MS;
 
+    // Measured every tick and REPORTED ONLY. There is no hold behind this number
+    // any more: the gate that used to read it was written on the theory that the
+    // aggro is picked up on the approach and could be shed at the staging point,
+    // and tr-20260830-152617-2 and -5 both falsified that — the raid reaches
+    // staging with `towing 0` and 25 of 25 formed up on merit, and the count only
+    // climbs at cursor 9, the foot of the Taskmaster ramp. The gate went with the
+    // theory; the instrument that killed it stays.
+    //
+    // Affordable because it is arithmetic. Twenty-five members by up to forty
+    // references is ~1000 distance compares and a hash insert each, with NO
+    // pathfind anywhere. The driver runs on one bot.
+    BwlRemoteAggro const remote = BwlRemoteHolders(bot);
+
     DcSuppressionTransit::Verdict const v = DcSuppressionTransit::Decide(in);
 
-    BwlTransitLog(bot, st, in, v, pack, anchorCount);
+    BwlTransitLog(bot, st, in, v, pack, anchorCount, remote);
 
     // --- act ---------------------------------------------------------------
     if (v.openGatherGate)
@@ -1049,11 +1158,14 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
     if (watchdogFired && !st.transitHoldTimedOut)
         LOG_WARN("playerbots.dungeonclear",
                  "[DC:{}] BWL transit — watchdog released a '{}' hold at anchor {} "
-                 "(trail {:.1f}yd, elite {:.1f}yd, armed device {:.1f}yd) -> walking on",
+                 "(trail {:.1f}yd, elite {:.1f}yd, armed device {:.1f}yd, towing {}) "
+                 "-> walking on",
                  bot->GetName(),
                  DcSuppressionTransit::HoldName(
                      static_cast<DcSuppressionTransit::Hold>(st.transitHoldReason)),
-                 cursor, in.trailDist, in.nearestEliteDist, in.nearestArmedDeviceDist);
+                 cursor, in.trailDist, in.nearestEliteDist, in.nearestArmedDeviceDist,
+                 remote.valid ? std::to_string(remote.holders) : std::string("n/a"));
+
 
     st.transitHoldTimedOut = watchdogFired;
     st.transitHoldSinceMs = v.holdSinceMs;
