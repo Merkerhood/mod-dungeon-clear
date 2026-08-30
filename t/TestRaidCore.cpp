@@ -136,6 +136,69 @@ TEST(DcBossStandDownTest, MsWraparoundStillExits)
     EXPECT_FALSE(v.active);
 }
 
+// --- DcBossStandDown::ClassifyAction exemption list ------------------------
+//
+// The list is the contract between the stand-down and the rungs that must keep
+// running inside an encounter. `isDcAction` mirrors the caller's own prefix
+// test, so each case is spelled the way the multiplier reaches it.
+
+namespace
+{
+    using Verdict = DcBossStandDown::ActionVerdict;
+
+    Verdict ClassifyDc(char const* name)
+    {
+        return DcBossStandDown::ClassifyAction(name, /*isDcAction*/ true);
+    }
+}
+
+TEST(DcBossStandDownClassifyTest, OrdinaryDcCombatRungGoesInert)
+{
+    EXPECT_EQ(Verdict::Inert, ClassifyDc("dungeon clear engage trash"));
+    EXPECT_EQ(Verdict::Inert, ClassifyDc("dungeon clear regroup combat"));
+    EXPECT_EQ(Verdict::Inert, ClassifyDc("dungeon clear pull maneuver"));
+}
+
+TEST(DcBossStandDownClassifyTest, EncounterDriversStayAtStockStrength)
+{
+    EXPECT_EQ(Verdict::Stock, ClassifyDc("dungeon clear run event combat"));
+    EXPECT_EQ(Verdict::Stock, ClassifyDc("dungeon clear razorgore orb"));
+    EXPECT_EQ(Verdict::Stock, ClassifyDc("dungeon clear razorgore camp"));
+    EXPECT_EQ(Verdict::Stock, ClassifyDc("dungeon clear hold fire"));
+}
+
+TEST(DcBossStandDownClassifyTest, OutOfLosAssistSurvivesTheStandDown)
+{
+    // BWL Firemaw, tr-20260830-152617-3: the tank held the boss around a corner
+    // and the whole raid stood flagged and targetless, because zeroing this rung
+    // left NOTHING that can hand a follower a target it cannot see — stock
+    // `dps assist` ranks over the LOS-filtered attacker list, and stock
+    // `reach spell` never moves a bot that is already inside spell range.
+    EXPECT_EQ(Verdict::Stock, ClassifyDc("dungeon clear assist camp combat"));
+}
+
+TEST(DcBossStandDownClassifyTest, DropTargetIsDeferredNotHandedBack)
+{
+    // The assist's other half. Handing `drop target` back to stock strength here
+    // is what re-armed the 1-tick engine ping-pong (assist seeds and flips to the
+    // combat engine, drop target at relevance 99 drops the unseeable target and
+    // flips straight back out). Defer so the caller's own three-way gate —
+    // non-healer, assist actually wanted, target alive/attackable/out-of-LOS —
+    // is the thing that decides, inside an encounter exactly as outside one.
+    EXPECT_EQ(Verdict::Defer,
+              DcBossStandDown::ClassifyAction("drop target", /*isDcAction*/ false));
+}
+
+TEST(DcBossStandDownClassifyTest, ExemptionsAreExactNamesNotPrefixes)
+{
+    // A near-miss must not inherit an exemption: the multiplier dispatches on the
+    // action's registered name, and these are the non-combat / differently-named
+    // siblings of exempt rungs.
+    EXPECT_EQ(Verdict::Inert, ClassifyDc("dungeon clear assist camp"));
+    EXPECT_EQ(Verdict::Inert, ClassifyDc("dungeon clear run event"));
+    EXPECT_EQ(Verdict::Inert, ClassifyDc("dungeon clear razorgore"));
+}
+
 // --- Roster patch: skip-by-design + summoned bosses ------------------------
 
 namespace

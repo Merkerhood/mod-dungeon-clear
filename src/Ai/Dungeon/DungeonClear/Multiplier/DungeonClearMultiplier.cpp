@@ -216,14 +216,13 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
 
     // RAID BOSS STAND-DOWN — the one shared check that makes every DC combat
     // trigger node inert during a raid encounter, instead of a copy in each of
-    // the ~12 triggers. While DcBossStandDown reads active, every "dungeon
-    // clear *" combat action is zeroed (the playerbots raid strategy owns the
-    // fight, ACTION_RAID=60+), and the drop-target carve-out below stands down
-    // too (return stock behavior). The ONE exemption is the combat event
-    // driver: encounter events (BWL's Razorgore orb) are DC's job mid-fight,
-    // and the executor itself refuses any event not flagged encounterActive
-    // while stand-down holds (see FindDueConditionalEvent), so letting the
-    // action through here is safe for every other event.
+    // the ~12 triggers. While DcBossStandDown reads active, a "dungeon clear *"
+    // combat action is zeroed unless it is on the exemption list (the playerbots
+    // raid strategy owns the fight, ACTION_RAID=60+). The list, and the reason
+    // each name is on it, live with the pure classifier in DcBossStandDown.h.
+    // `drop target` classifies as Defer and falls through to the suppressor
+    // below — during an encounter as much as outside one, because the
+    // out-of-LOS assist and that suppression are one mechanism in two halves.
     // Order of tests: the prefix compare is paid only after the cheap
     // exact-compare fast path fails, and IsActive itself is raid-gated +
     // leader-memoised, so dungeon runs pay one Map::IsRaid() at most.
@@ -232,33 +231,20 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
         return 1.0f;
     if (DcBossStandDown::IsActive(bot))
     {
-        if (name == "dungeon clear run event combat")
-            return 1.0f;
-        // The encounter driver's second actor. Razorgore's orb runner is a
-        // FOLLOWER, not the leader, so the event-driver exemption above does not
-        // cover it — and the whole point of the encounterActive seam is that this
-        // orchestration keeps running inside the fight. Its own trigger is gated on
-        // being the one elected member of map 469, so this exemption is inert
-        // everywhere else. See DungeonClearRazorgoreOrbTrigger.
-        //
-        // The camp rung rides the same exemption: the raid has to hold the floor
-        // below the ledge for the whole egg run, and the egg run happens entirely
-        // inside the stand-down.
-        if (name == "dungeon clear razorgore orb" || name == "dungeon clear razorgore camp")
-            return 1.0f;
-        // Hold-fire rides the same exemption, and needs it more than either: the
-        // window it guards is a RAID ENCOUNTER by definition — a creature is barred
-        // because killing it right now loses the fight — so the stand-down is
-        // always up while it has work. Zeroing it here would have left it dead in
-        // the only place it exists to run.
-        if (name == "dungeon clear hold fire")
-            return 1.0f;
-        return isDcAction ? 0.0f : 1.0f;  // DC inert; "drop target" back to stock
+        switch (DcBossStandDown::ClassifyAction(name, isDcAction))
+        {
+            case DcBossStandDown::ActionVerdict::Stock:
+                return 1.0f;
+            case DcBossStandDown::ActionVerdict::Inert:
+                return 0.0f;
+            case DcBossStandDown::ActionVerdict::Defer:
+                break;  // `drop target` -> the suppressor below decides
+        }
     }
 
-    // Touch EXACTLY ONE combat action outside stand-down. Fast-path everything
-    // else so a fight's full action list pays only the compares above per tick —
-    // the combat engine otherwise stays fully stock.
+    // Touch EXACTLY ONE other combat action. Fast-path everything else so a
+    // fight's full action list pays only the compares above per tick — the
+    // combat engine otherwise stays fully stock.
     if (name != "drop target")
         return 1.0f;
 

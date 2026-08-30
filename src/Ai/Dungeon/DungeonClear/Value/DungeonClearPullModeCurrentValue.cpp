@@ -10,6 +10,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/FightInPlaceRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/ScriptedPullRegistry.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcNoStopZone.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -79,8 +80,41 @@ bool DungeonClearPullModeCurrentValue::Calculate()
     // 60yd`, drags the camp BACKWARD into the middle of the overhead band, and
     // parks the raid there to fight, loot and rest. On tp-20260828-175353-1 that is
     // where all five raids ended their run. See DcNoStopZone.
+    //
+    // A LIVE RAID ENCOUNTER STANDS THE PULL DOWN THE SAME WAY, and this is the
+    // branch it belongs in rather than a gate of its own — "the raid is fighting
+    // its boss" wants precisely what the two above want: no camp, no drag, no
+    // scout-lag, the stored setting untouched and handed back on the way out.
+    //
+    // DcBossStandDown is the run's non-interference contract: while an encounter
+    // is live the fight belongs to mod-playerbots' raid strategies and DC goes
+    // inert. It was only ever wired into DungeonClearCombatMultiplier, which
+    // covers the COMBAT engine — and the pull pipeline is a NON-combat rung whose
+    // Idle branch gates on the tank's OWN combat flag. A tank that has dropped
+    // combat mid-encounter (the boss is on somebody else, which on a 40-man is
+    // most of the fight) therefore walked straight through the contract and
+    // started a fresh trash pull on top of the raid's boss.
+    //
+    // What that cost, live on Firemaw (tr-20260829-204120-2, 21:01:40, 39s into
+    // the encounter): "dynamic verdict for pack 12459: ADVANCED", a camp
+    // published at (-7615.7,-1061.1,449.2) — 102yd back down the Broodlord
+    // corridor and around its bend from the boss — and then 32 bots on one tick
+    // logging "advanced-pull: held passive at camp". `+passive` is a STOCK
+    // strategy flip (DcFollowerLifecycle::ApplyFollowerPassive), so the combat
+    // multiplier's stand-down could not undo it: the ranged simply stopped
+    // attacking. Three such pins in a 160s fight, plus 2023 camp-recall ticks
+    // dragging the raid backwards for the rest of it. Reported as "ranged dps got
+    // stuck around a corner out of line of sight and did not dps the boss".
+    //
+    // Lowering the LATCHED bool is what actually fixes it, which is why this
+    // shares the branch instead of vetoing at the pull trigger: the camp hold,
+    // the party-spread gate and ReapStrandedPassives all read that bool, so the
+    // followers are released and un-passived on the next world update. A veto at
+    // the trigger alone would have stopped the NEXT pull and left the raid pinned
+    // and passive at the one already standing.
     if (DungeonEventExecutor::IsPullOwningEventDriving(bot, context) ||
-        DcNoStopZone::IsInNoStopZone(bot, context))
+        DcNoStopZone::IsInNoStopZone(bot, context) ||
+        DcBossStandDown::IsActive(bot))
     {
         pull.ClearDynamicVerdict();
         // LOWER THE LATCHED BOOL TOO, not just the effective value. Returning
