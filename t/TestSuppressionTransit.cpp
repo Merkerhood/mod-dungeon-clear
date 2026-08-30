@@ -7,6 +7,9 @@
 
 #include "Ai/Dungeon/DungeonClear/Util/DcSuppressionTransitDecision.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <vector>
 
 // The pure kernel behind Blackwing Lair's Suppression Rooms transit: the
@@ -19,7 +22,9 @@
 //   2. each of the three holds fires on its own probe, in precedence order;
 //   3. each hold's watchdog releases it, with its OWN budget;
 //   4. the cursor only ever moves forward — except for the one recovery case it
-//      is explicitly allowed to move back for.
+//      is explicitly allowed to move back for;
+//   5. the pack's hold point rides the POLYLINE, so a hold behind a bend stays on
+//      the corridor instead of cutting the chord across it.
 
 using namespace DcSuppressionTransit;
 
@@ -602,4 +607,141 @@ TEST(DcSuppressionTransitTest, TheCursorProjectsOntoTheNearestSegmentNotTheNeare
     // (30, 8, 0) is 8yd off the middle of leg 2 (20 -> 40) and 12.8yd from the
     // nearest ANCHOR either side of it.
     EXPECT_EQ(ResolveCursor(route, 30, 8, 0, /*stored*/ 0, 60.0f), 2u);
+}
+
+// --- the gather radius floor ----------------------------------------------
+
+// THE REGRESSION, tr-20260830-125018-2. The gather gate asked for 20yd while the
+// pack rung parked the raid at 21-23yd of the cursor, so nobody was ever inside
+// it: nineteen consecutive driver ticks read `2/25 near` with the raid otherwise
+// perfectly formed (`0 of 24 outside` a 25yd leash, trail 21.5yd), the gate burnt
+// its full 60s and the tank crossed with two members.
+TEST(DcSuppressionTransitTest, TheGatherRadiusFloorCoversThePacksRestBand)
+{
+    // The shipped defaults: leash 25, margin 4, arrival leash 2.
+    EXPECT_NEAR(GatherRadiusFloor(25.0f, 4.0f, 2.0f), 23.0f, 0.001f);
+
+    // The floor must reach the OUTER edge of the band, not the point the rung
+    // aims at — a member that stops one arrival-leash short is still parked.
+    float const leash = 25.0f, margin = 4.0f, arrive = 2.0f;
+    EXPECT_GE(GatherRadiusFloor(leash, margin, arrive), leash - margin + arrive);
+
+    // A tighter leash tightens the floor with it, so the relationship holds under
+    // tuning rather than only on the defaults.
+    EXPECT_NEAR(GatherRadiusFloor(10.0f, 4.0f, 2.0f), 8.0f, 0.001f);
+
+    // Degenerate tuning cannot produce a negative radius.
+    EXPECT_FLOAT_EQ(GatherRadiusFloor(1.0f, 40.0f, 2.0f), 0.0f);
+}
+
+// --- the pack's hold point on the route ------------------------------------
+
+namespace
+{
+    // The real climb out of Blackwing Lair's staging shelf, anchors 20-24 of the
+    // Broodlord row. It is a C: the walkable floor bows ~7yd EAST around a hole in
+    // the mesh, so x runs -7631 -> -7623 -> -7628 while y runs monotonically south.
+    // Imported verbatim (rather than abstracted to a synthetic bend) because the
+    // defect this pins is a property of THESE coordinates.
+    std::vector<Anchor> CShapedClimb()
+    {
+        return { { -7630.90f, -915.50f, 437.30f },    // 0 staging
+                 { -7627.03f, -926.86f, 440.63f },    // 1 north arm
+                 { -7623.17f, -938.22f, 443.28f },    // 2 the east bulge
+                 { -7627.83f, -953.50f, 440.78f },    // 3 back west, lower room
+                 { -7633.00f, -968.64f, 440.81f } };  // 4
+    }
+
+    float Dist2D(Anchor const& a, float x, float y)
+    {
+        float const dx = a.x - x, dy = a.y - y;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+}
+
+TEST(DcSuppressionTransitTest, AnchorIndexOfFindsThePublishedAnchor)
+{
+    std::vector<Anchor> const route = CShapedClimb();
+    // The driver publishes hints[cursor] verbatim, so this is an exact match.
+    EXPECT_EQ(AnchorIndexOf(route, -7623.17f, -938.22f, 443.28f), 2u);
+    // ...and the tolerant form of the same question survives float drift.
+    EXPECT_EQ(AnchorIndexOf(route, -7623.20f, -938.19f, 443.31f), 2u);
+    EXPECT_EQ(AnchorIndexOf({}, 0, 0, 0), 0u);
+}
+
+TEST(DcSuppressionTransitTest, TheHoldPointWalksBackAlongThePolyline)
+{
+    std::vector<Anchor> const route = { {0, 0, 0}, {20, 0, 0}, {40, 0, 0}, {60, 0, 0} };
+
+    // 21yd back from anchor 3 (x=60) is x=39 — one whole leg plus one yard.
+    Anchor const back = PointBehindOnRoute(route, 3, 21.0f);
+    EXPECT_NEAR(back.x, 39.0f, 0.01f);
+    EXPECT_NEAR(back.y, 0.0f, 0.01f);
+
+    // Zero back-distance is the cursor itself.
+    EXPECT_NEAR(PointBehindOnRoute(route, 2, 0.0f).x, 40.0f, 0.01f);
+}
+
+// There is no polyline behind anchor 0, and the honest answer there is the head
+// itself — which at the staging point is exactly where a gather wants everybody.
+TEST(DcSuppressionTransitTest, TheHoldPointClampsToTheHeadOfTheRoute)
+{
+    std::vector<Anchor> const route = { {0, 0, 0}, {20, 0, 0}, {40, 0, 0} };
+    EXPECT_NEAR(PointBehindOnRoute(route, 1, 500.0f).x, 0.0f, 0.01f);
+    EXPECT_NEAR(PointBehindOnRoute(route, 0, 21.0f).x, 0.0f, 0.01f);
+    EXPECT_NEAR(PointBehindOnRoute({}, 0, 21.0f).x, 0.0f, 0.01f);
+    // A cursor past the end is clamped rather than read out of bounds.
+    EXPECT_NEAR(PointBehindOnRoute(route, 99, 0.0f).x, 40.0f, 0.01f);
+}
+
+// THE REGRESSION, tr-20260830-125018-2. A follower on the north arm holding on a
+// cursor down in the lower room used to be walked to the straight-line point 21yd
+// from that cursor. On this C that point is (-7626.5, -932.5) — where the only
+// navmesh surface is 2.3yd ABOVE it, two yards west of which there is no surface
+// at all. The bot was handed PATHFIND_NORMAL, took the straight-line shortcut and
+// walked into the ramp.
+//
+// The route walk-back cannot produce that point: every point it returns lies on a
+// segment between two anchors the probe suite certifies as walkable. Pinned here
+// as "it stays east, on the bulge" — the chord's defining property is that it
+// does NOT.
+TEST(DcSuppressionTransitTest, TheHoldPointRidesTheBulgeRatherThanCuttingTheC)
+{
+    std::vector<Anchor> const route = CShapedClimb();
+
+    // Cursor on anchor 3 (the lower room), holding 21yd back.
+    Anchor const hold = PointBehindOnRoute(route, 3, 21.0f);
+
+    // 21yd of ROUTE distance back from the lower room is up on the east bulge,
+    // which is the whole point: east of the chord, and above it. (Probed against
+    // the real mmtiles the floor there is z 442.4 and the hold point is 442.2 —
+    // see BlackwingLairSuppressionRouteProbe.TheChordAcrossTheClimbLeavesTheMesh.)
+    EXPECT_GT(hold.x, -7627.0f) << "the hold point cut west across the void";
+    EXPECT_GT(hold.z, 441.0f) << "the hold point sank below the ramp";
+
+    // ...and it is genuinely ON the polyline, not merely near it: for SOME
+    // segment, the distances to its two ends sum to that segment's own length.
+    // Asserted over every segment rather than a named one so the test survives an
+    // anchor being inserted, which would otherwise silently move which leg the
+    // walk-back lands on without changing the property being pinned.
+    float bestSlack = std::numeric_limits<float>::max();
+    for (std::size_t i = 1; i < route.size(); ++i)
+    {
+        float const legLen = Dist2D(route[i - 1], route[i].x, route[i].y);
+        // Slack rounds slightly NEGATIVE on the segment the point is actually on,
+        // so a "-1 means unset" sentinel would discard the winner and report the
+        // runner-up. Seeded with the float max instead.
+        float const slack = Dist2D(route[i - 1], hold.x, hold.y) +
+                            Dist2D(route[i], hold.x, hold.y) - legLen;
+        bestSlack = std::min(bestSlack, slack);
+    }
+    EXPECT_LT(bestSlack, 0.05f) << "the hold point is not on any authored segment";
+
+    // For contrast, the CHORD 21yd from the same cursor toward a follower up on
+    // the north arm sits west of the corridor — inside the C's mouth.
+    float const bx = -7630.0f, by = -920.0f;  // a follower on the north arm
+    float const cdx = bx - route[3].x, cdy = by - route[3].y;
+    float const clen = std::sqrt(cdx * cdx + cdy * cdy);
+    float const chordX = route[3].x + cdx * (21.0f / clen);
+    EXPECT_LT(chordX, -7626.0f) << "the chord no longer cuts the C — re-derive this test";
 }

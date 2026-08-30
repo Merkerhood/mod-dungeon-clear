@@ -6,7 +6,12 @@
 #ifndef _PLAYERBOT_DCSUPPRESSIONTRANSIT_H
 #define _PLAYERBOT_DCSUPPRESSIONTRANSIT_H
 
+#include <vector>
+
 #include "Position.h"
+
+#include "Ai/Dungeon/DungeonClear/Data/WaypointHint.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSuppressionTransitDecision.h"
 
 class Player;
 class PlayerbotAI;
@@ -38,9 +43,18 @@ namespace DcTransit
     //     because the stock combat engine layers MoveChase back over the escort
     //     slot every tick it wins.
     //
+    // `forcePath` makes the long-haul branch unconditional. The 30yd gate below is
+    // a proxy for "is the walk long enough to truncate", and a proxy that reads
+    // the STRAIGHT-LINE distance is wrong exactly where the ground is not
+    // straight: around Blackwing Lair's C-shaped staging climb the corridor runs
+    // 45yd between two points 16yd apart. A caller that already knows its
+    // destination is around a bend says so here rather than letting the proxy
+    // decide.
+    //
     // Returns true when it issued (or is riding) movement, so the caller can own
     // the tick; false when the bot is already inside the leash.
-    bool TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, float z, float leash);
+    bool TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, float z, float leash,
+                  bool forcePath = false);
 
     // Where to walk a bot the pack wants back: the point on the leash boundary
     // around `anchor` nearest to the bot, pulled `margin` INSIDE it — the near
@@ -64,8 +78,44 @@ namespace DcTransit
     //
     // A follower genuinely off the route's floor (mid-fall, a tier up) is not
     // rescued by either choice: that is stranded recovery's rung, not this one.
-    void HoldPoint(Player* bot, Position const& anchor, float leash, float margin,
-                   float& hx, float& hy, float& hz);
+    //
+    // ...AND THE BEARING IS THEN CHECKED AGAINST THE MESH, because interpolating z
+    // along a chord only describes real ground when the leg is straight. The climb
+    // out of the staging shelf is a C: the walkable surface bows seven yards east
+    // around a hole, so the chord from a follower on the north arm to a cursor on
+    // the south arm crosses the void and its interpolated z lands 2.3yd under the
+    // only floor there. Live, tr-20260830-125018-2, that is 95% of this rung's
+    // executions walking at a destination inside the rock.
+    //
+    // So: take the chord, snap it, and if the snap cannot find walkable ground
+    // near it, fall back to the point one leash BACK ALONG THE AUTHORED POLYLINE
+    // (`viaRoute`). The chord is kept for the ordinary straight leg because the
+    // ring it produces is what SPREADS the raid by bearing; the corridor fallback
+    // is a deliberate collapse to single file, which is the right formation for a
+    // ramp anyway.
+    struct HoldTarget
+    {
+        float x{0.0f};
+        float y{0.0f};
+        float z{0.0f};
+        bool viaRoute{false};  // the chord was off-mesh; this rides the corridor
+    };
+
+    HoldTarget HoldPoint(Player* bot, Position const& anchor, float leash, float margin);
+
+    // The transit's authored track, sliced at TRANSIT_STAGE_ANCHOR_INDEX so anchor
+    // 0 IS the staging point — SHARED, so the leader's cursor and every follower's
+    // hold point are read off one row. Both halves used to be able to disagree
+    // about the route; now they cannot.
+    //
+    // nullptr when the registry row is missing or too short to slice.
+    struct RouteView
+    {
+        std::vector<WaypointHint> hints;                    // anchor 20 onward
+        std::vector<DcSuppressionTransit::Anchor> anchors;  // ...the same, projected
+    };
+
+    RouteView const* Route();
 }
 
 #endif  // _PLAYERBOT_DCSUPPRESSIONTRANSIT_H

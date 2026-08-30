@@ -13,12 +13,15 @@
 #include "PlayerbotAI.h"
 #include "Timer.h"
 
+#include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/LongRangePathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 
 namespace
 {
@@ -53,7 +56,8 @@ namespace
     constexpr float BEARING_FLOOR = 1.0f;
 }
 
-bool DcTransit::TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, float z, float leash)
+bool DcTransit::TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, float z, float leash,
+                         bool forcePath)
 {
     if (!bot || !botAI)
         return false;
@@ -88,7 +92,7 @@ bool DcTransit::TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, floa
                                        epsilon, TRANSIT_REISSUE_MS))
         return true;
 
-    if (dist > TRANSIT_LONG_HAUL)
+    if (forcePath || dist > TRANSIT_LONG_HAUL)
     {
         ChunkedPathfinder::Result const path = LongRangePathfinder::Build(bot, x, y, z);
         if (path.reachable && !path.segments.empty())
@@ -125,21 +129,82 @@ bool DcTransit::TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, floa
     return true;
 }
 
-void DcTransit::HoldPoint(Player* bot, Position const& anchor, float leash, float margin,
-                          float& hx, float& hy, float& hz)
+DcTransit::RouteView const* DcTransit::Route()
 {
-    hx = anchor.GetPositionX();
-    hy = anchor.GetPositionY();
-    hz = anchor.GetPositionZ();
+    using namespace DcBlackwingLair;
+
+    static RouteView const route = []
+    {
+        RouteView r;
+        std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
+            MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
+        if (!row || row->size() < TRANSIT_STAGE_ANCHOR_INDEX + 2)
+            return r;
+
+        r.hints.assign(row->begin() + TRANSIT_STAGE_ANCHOR_INDEX, row->end());
+        r.anchors.reserve(r.hints.size());
+        for (WaypointHint const& h : r.hints)
+            r.anchors.push_back({ h.x, h.y, h.z });
+        return r;
+    }();
+    return route.hints.empty() ? nullptr : &route;
+}
+
+DcTransit::HoldTarget DcTransit::HoldPoint(Player* bot, Position const& anchor, float leash,
+                                           float margin)
+{
+    HoldTarget out;
+    out.x = anchor.GetPositionX();
+    out.y = anchor.GetPositionY();
+    out.z = anchor.GetPositionZ();
     if (!bot)
-        return;
+        return out;
+
+    float const back = leash - margin;
 
     // Never further out than the bot already is: the hold point pulls a bot IN,
     // and a bot inside the ring must not be pushed out to sit on it. z rides the
     // same fraction — see the header, and DungeonClearMath::PointTowardFrom.
-    Position const hold = DungeonClearMath::PointTowardFrom(
-        anchor, bot->GetPosition(), leash - margin, BEARING_FLOOR);
-    hx = hold.GetPositionX();
-    hy = hold.GetPositionY();
-    hz = hold.GetPositionZ();
+    Position const chord =
+        DungeonClearMath::PointTowardFrom(anchor, bot->GetPosition(), back, BEARING_FLOOR);
+
+    // Is the chord standing on the corridor, or in the middle of the C?
+    NavmeshSnap::Result const snap =
+        NavmeshSnap::Snap(bot, chord.GetPositionX(), chord.GetPositionY(),
+                          chord.GetPositionZ(), DcBlackwingLair::TRANSIT_HOLD_SNAP_RADIUS);
+    if (snap.ok && snap.distance <= DcBlackwingLair::TRANSIT_HOLD_SNAP_TOLERANCE)
+    {
+        // Take the SNAPPED point, not the raw chord. The two are within tolerance
+        // of each other by construction here, and the snapped one is on a polygon
+        // the pathfinder can name.
+        out.x = snap.x;
+        out.y = snap.y;
+        out.z = snap.z;
+        return out;
+    }
+
+    // The chord is off the floor. Ride the authored polyline instead: one leash
+    // back along the corridor from the cursor, which is walkable ground by
+    // certification (t/TestBlackwingLairSuppressionRouteProbe).
+    RouteView const* const route = Route();
+    if (!route)
+    {
+        // No row to fall back to. The chord is still a better last word than
+        // standing still, and TravelTo's pathfinder gets to refuse it honestly.
+        out.x = chord.GetPositionX();
+        out.y = chord.GetPositionY();
+        out.z = chord.GetPositionZ();
+        return out;
+    }
+
+    uint32 const cursor = DcSuppressionTransit::AnchorIndexOf(
+        route->anchors, anchor.GetPositionX(), anchor.GetPositionY(), anchor.GetPositionZ());
+    DcSuppressionTransit::Anchor const behind =
+        DcSuppressionTransit::PointBehindOnRoute(route->anchors, cursor, back);
+
+    out.x = behind.x;
+    out.y = behind.y;
+    out.z = behind.z;
+    out.viaRoute = true;
+    return out;
 }

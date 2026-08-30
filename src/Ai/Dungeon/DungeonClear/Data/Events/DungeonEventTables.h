@@ -787,6 +787,43 @@ namespace DcBlackwingLair
     // clamp floor (10) keeps this comfortably inside it.
     constexpr float TRANSIT_PACK_HOLD_MARGIN = 4.0f;
 
+    // The pack rung's ARRIVAL leash — how close to its hold point a walking member
+    // has to get before the rung hands the tick back.
+    //
+    // Named rather than inlined at the call site because the gather gate has to
+    // read it. A member parks anywhere in (leash - margin, leash - margin + this]
+    // of the cursor: the trigger keeps firing while it is outside the hold radius,
+    // but the action refuses to move it once it is within this of the point it
+    // aims at. That band IS where the raid stands, so a gate that asks for a
+    // radius under its top edge is asking for a formation the rung will never
+    // produce — see TransitGatherRadius's floor in the driver, and
+    // [[dc-moving-camp-rung-hysteresis]] for the first half of the same lesson.
+    constexpr float TRANSIT_PACK_ARRIVE_LEASH = 2.0f;
+
+    // How far the mesh may move the pack rung's chord hold point before the chord
+    // is judged to be describing somewhere the party cannot stand, and the rung
+    // rides the authored polyline instead (DcTransit::HoldPoint).
+    //
+    // TIGHT ON PURPOSE, and tighter than it looks. NavmeshSnap searches a FIXED
+    // 10yd vertical extent ([[dc-boss-anchor-snap-vertical-extent]]), so a chord
+    // that has merely sunk under a ramp still snaps — to the ramp, a yard or two
+    // up — and that is a GOOD outcome: measured on the real mesh, the north-arm
+    // follower's chord snaps 1.40yd to (-7629.8, -931.7, 441.1), which routes
+    // 11.7yd and arrives. It is the chords the snap CANNOT rescue that need the
+    // polyline. Two yards is the line between those two populations.
+    constexpr float TRANSIT_HOLD_SNAP_TOLERANCE = 2.0f;
+
+    // Horizontal search box for that snap. Deliberately smaller than the pack
+    // leash: the question is "is the chord standing on the corridor", and a wide
+    // box answers "is there floor SOMEWHERE near here", which on a C-shaped ramp
+    // finds the OTHER arm across the void and calls the chord good.
+    constexpr float TRANSIT_HOLD_SNAP_RADIUS = 3.0f;
+
+    // NavmeshSnap's own vertical extent, restated so the certification probe can
+    // search the same box the runtime does. Not a knob — it is fixed inside
+    // NavmeshSnap::Snap; named here only so the probe cannot drift from it.
+    constexpr float TRANSIT_HOLD_SNAP_V_EXTENT = 10.0f;
+
     // Grid-scan radius for the driver's per-tick elite / device sweeps. Wide
     // enough to see every hold-worthy thing from the middle of a leg (the widest
     // hold radius is 20yd and a leg is up to 33yd), tight enough that it never

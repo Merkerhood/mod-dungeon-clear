@@ -96,19 +96,31 @@ bool DungeonClearTransitPackAction::Execute(Event /*event*/)
 
     float const leash = DcSettings::GetFloat(bot, "TransitPackLeash");
 
-    float hx, hy, hz;
-    DcTransit::HoldPoint(bot, anchor, leash, TRANSIT_PACK_HOLD_MARGIN, hx, hy, hz);
+    DcTransit::HoldTarget const hold =
+        DcTransit::HoldPoint(bot, anchor, leash, TRANSIT_PACK_HOLD_MARGIN);
 
     // The arrival leash on the walk-back is deliberately tight — the hold point
     // is already inside the pack leash by TRANSIT_PACK_HOLD_MARGIN, so a loose
     // one here would hand the tick back while the bot is still outside the leash
     // the trigger measures and re-fire on the very next tick.
-    if (!DcTransit::TravelTo(bot, botAI, hx, hy, hz, /*leash*/ 2.0f))
+    //
+    // `viaRoute` FORCES the validated pathfinder. TravelTo's own 30yd gate reads
+    // the straight-line distance, and the hold point is only ever `leash - margin`
+    // nearer the cursor than the bot already is — so this rung would need a bot
+    // 51yd off the cursor before the gate ever opened, and 95.2% of its executions
+    // in tr-20260830-125018-2 (1056 of 1109) fell through to a bare MovePoint.
+    // That is survivable on straight ground and is exactly wrong on the C, where
+    // the corridor runs 45yd between points 16yd apart. When HoldPoint has told us
+    // it had to ride the polyline, we already know the ground is not straight.
+    if (!DcTransit::TravelTo(bot, botAI, hold.x, hold.y, hold.z,
+                             /*leash*/ TRANSIT_PACK_ARRIVE_LEASH,
+                             /*forcePath*/ hold.viaRoute))
         return false;
 
     LOG_DEBUG("playerbots.dungeonclear",
               "[DC:{}] BWL transit — closing on the pack ({:.1f}yd off the "
-              "cursor, leash {:.0f})",
-              bot->GetName(), bot->GetExactDist(anchor), leash);
+              "cursor, leash {:.0f}){}",
+              bot->GetName(), bot->GetExactDist(anchor), leash,
+              hold.viaRoute ? " -> chord off-mesh, riding the corridor" : "");
     return true;
 }

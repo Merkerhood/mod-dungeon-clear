@@ -34,6 +34,7 @@
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcSuppressionTransitDecision.h"
 
 #include <cmath>
 #include <cstdio>
@@ -103,6 +104,11 @@ namespace
     // leg per hop through LongRangePathfinder, so a long leg is legal — but a leg
     // longer than this is one the pack leash cannot hold a raid across.
     constexpr float MAX_LEG_2D = 30.0f;
+
+    // TransitPackLeash's registry default. Named here rather than read through
+    // DcSettings because this suite has no bot to read a per-run override off —
+    // the geometry question is about the shipped default.
+    constexpr float TRANSIT_PACK_LEASH_DEFAULT = 25.0f;
 
     std::shared_ptr<dtNavMesh> LoadOrSkipReason(std::string& why)
     {
@@ -406,3 +412,110 @@ TEST(BlackwingLairSuppressionRouteProbe, EveryLegIsWalkable)
     std::printf("========================================================\n");
 }
 
+// THE HOLD POINT, certified against the same mesh as the anchors.
+//
+// The transit's pack rung positions every follower relative to the leader's
+// cursor. It used to do that with a bare CHORD — the straight-line point one
+// leash from the cursor, z interpolated along the same fraction — handed
+// straight to MovePoint. A chord only describes real ground when the leg is
+// straight, and the climb out of the staging shelf is not: the walkable floor
+// bows ~7yd east around a hole, so the chord from a follower behind it sinks
+// under the ramp or into the void. tr-20260830-125018-2 is 1109 executions of
+// that rung, 95.2% of which handed MovePoint a destination off the floor; the
+// raid clipped the ramp.
+//
+// DcTransit::HoldPoint now snaps the chord and, when the snap cannot find
+// walkable ground near it, falls back to the point one leash back along the
+// AUTHORED POLYLINE. This measures both rungs of that ladder on the real mesh,
+// for followers at two different places behind the same cursor, and pins the
+// property that actually matters: the destination must be WALKABLE TO from where
+// the follower is standing, not merely on a polygon somewhere.
+TEST(BlackwingLairSuppressionRouteProbe, TheHoldPointIsReachableFromBehindTheClimb)
+{
+    std::string why;
+    std::shared_ptr<dtNavMesh> mesh = LoadOrSkipReason(why);
+    if (!mesh)
+        GTEST_SKIP() << why;
+
+    std::vector<WaypointHint> const* route = Route();
+    ASSERT_NE(route, nullptr);
+    ASSERT_GT(route->size(), TRANSIT_STAGE_ANCHOR_INDEX + 4);
+
+    // The transit slice, as DcTransit::Route() builds it.
+    std::vector<DcSuppressionTransit::Anchor> anchors;
+    for (std::size_t i = TRANSIT_STAGE_ANCHOR_INDEX; i < route->size(); ++i)
+        anchors.push_back({ (*route)[i].x, (*route)[i].y, (*route)[i].z });
+
+    constexpr uint32 CURSOR = 3;  // the lower room, one leg past the bulge
+    constexpr float BACK = TRANSIT_PACK_LEASH_DEFAULT - TRANSIT_PACK_HOLD_MARGIN;
+    DcSuppressionTransit::Anchor const& cursor = anchors[CURSOR];
+
+    struct Follower
+    {
+        char const* where;
+        float x, y, z;
+    };
+    // Both behind the same cursor, on ground the mesh agrees is walkable.
+    std::vector<Follower> const followers = {
+        { "north arm", -7630.0f, -920.0f, 439.7f },
+        { "staging",   TRANSIT_STAGE_X, TRANSIT_STAGE_Y, TRANSIT_STAGE_Z },
+    };
+
+    // The corridor fallback has to be LOAD-BEARING for at least one of them, or
+    // it is dead code dressed as a safety net.
+    int fellBackToTheCorridor = 0;
+
+    std::printf("=== Blackwing Lair (469) climb — pack hold point ===\n");
+    for (Follower const& f : followers)
+    {
+        float const dx = f.x - cursor.x, dy = f.y - cursor.y;
+        float const bearing = std::hypot(dx, dy);
+        ASSERT_GT(bearing, BACK) << f.where << " is inside the leash; no hold to take";
+
+        float const frac = BACK / bearing;
+        float const chordX = cursor.x + dx * frac;
+        float const chordY = cursor.y + dy * frac;
+        float const chordZ = cursor.z + (f.z - cursor.z) * frac;
+
+        G3D::Vector3 snapped;
+        bool const onMesh = DcNavHarness::NearestPoint(mesh.get(), chordX, chordY, chordZ,
+                                                       TRANSIT_HOLD_SNAP_RADIUS,
+                                                       TRANSIT_HOLD_SNAP_V_EXTENT, snapped);
+        float const miss =
+            onMesh ? std::sqrt((snapped.x - chordX) * (snapped.x - chordX) +
+                               (snapped.y - chordY) * (snapped.y - chordY) +
+                               (snapped.z - chordZ) * (snapped.z - chordZ))
+                   : -1.0f;
+
+        // The production rule, spelled out: take the snapped chord when the mesh
+        // barely had to move it, else ride the polyline.
+        bool const viaRoute = !onMesh || miss > TRANSIT_HOLD_SNAP_TOLERANCE;
+        if (viaRoute)
+            ++fellBackToTheCorridor;
+
+        DcSuppressionTransit::Anchor const corridor =
+            DcSuppressionTransit::PointBehindOnRoute(anchors, CURSOR, BACK);
+        float const hx = viaRoute ? corridor.x : snapped.x;
+        float const hy = viaRoute ? corridor.y : snapped.y;
+        float const hz = viaRoute ? corridor.z : snapped.z;
+
+        DcNavHarness::RouteResult const r =
+            DcNavHarness::Route(mesh.get(), MAP_ID, f.x, f.y, f.z, hx, hy, hz);
+
+        std::printf("  [%-9s] chord (%.1f, %.1f, %.1f) onMesh=%d miss=%5.2f -> %s\n",
+                    f.where, chordX, chordY, chordZ, onMesh, miss,
+                    viaRoute ? "CORRIDOR" : "snapped chord");
+        std::printf("              hold  (%.1f, %.1f, %.1f) reachable=%d complete=%d "
+                    "routed=%.1fyd (straight %.1fyd) %s\n",
+                    hx, hy, hz, r.reachable, r.corridorComplete, r.routeLength2d,
+                    std::hypot(hx - f.x, hy - f.y), r.failureReason.c_str());
+
+        EXPECT_TRUE(r.reachable) << f.where << ": the hold point cannot be walked to";
+        EXPECT_TRUE(r.corridorComplete) << f.where << ": the route stops short of the hold point";
+    }
+
+    EXPECT_GT(fellBackToTheCorridor, 0)
+        << "no follower needed the corridor fallback — the C has been re-meshed, and "
+           "DcTransit::HoldPoint's fallback is now dead code";
+    std::printf("========================================================\n");
+}

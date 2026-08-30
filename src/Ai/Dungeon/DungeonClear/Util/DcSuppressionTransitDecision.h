@@ -348,6 +348,27 @@ namespace DcSuppressionTransit
         return v;
     }
 
+    // The smallest gather radius the pack rung can ever satisfy.
+    //
+    // The rung walks a member to `packLeash - holdMargin` of the cursor and then
+    // refuses to move it again once it is within `arriveLeash` of that point, so
+    // the raid comes to rest in a band whose OUTER edge is the sum below. A gather
+    // gate that asks for a radius inside that band is asking for a formation
+    // nothing produces: it holds until its watchdog and crosses with whoever
+    // happens to be standing close, which live (tr-20260830-125018-2) was two of
+    // twenty-five with the raid otherwise perfectly formed.
+    //
+    // Both inputs are runtime-tunable and were tunable into direct contradiction,
+    // which is why this is a floor computed from them rather than a number chosen
+    // beside them. Same lesson as [[dc-moving-camp-rung-hysteresis]], one level up:
+    // there the TRIGGER had to read the radius its own action aims at; here the
+    // PARTY GATE does.
+    inline float GatherRadiusFloor(float packLeash, float holdMargin, float arriveLeash)
+    {
+        float const floor = packLeash - holdMargin + arriveLeash;
+        return floor > 0.0f ? floor : 0.0f;
+    }
+
     // --- where on the route are we -----------------------------------------
 
     struct Anchor
@@ -420,6 +441,79 @@ namespace DcSuppressionTransit
             return projected;
 
         return projected > stored ? projected : stored;
+    }
+
+    // Which authored anchor a PUBLISHED cursor position is. The driver publishes
+    // `hints[cursor]` verbatim, so this is an exact vertex match in every ordinary
+    // case; the nearest-vertex search is the tolerant form of the same question,
+    // for the tick on which the row and the stamp disagree by float.
+    //
+    // Nearest VERTEX and not nearest SEGMENT, deliberately — this answers "which
+    // anchor was published", not "where is the reader standing", and those are
+    // different questions with different right answers on a hairpin.
+    inline uint32 AnchorIndexOf(std::vector<Anchor> const& route, float x, float y, float z)
+    {
+        uint32 best = 0;
+        float bestD = -1.0f;
+        for (std::size_t i = 0; i < route.size(); ++i)
+        {
+            float const dx = route[i].x - x, dy = route[i].y - y, dz = route[i].z - z;
+            float const d = dx * dx + dy * dy + dz * dz;
+            if (bestD < 0.0f || d < bestD)
+            {
+                bestD = d;
+                best = static_cast<uint32>(i);
+            }
+        }
+        return best;
+    }
+
+    // The point `backDist` yards BEHIND `cursorIndex` measured ALONG the authored
+    // polyline, rather than `backDist` yards away from it in a straight line.
+    //
+    // WHY THE DISTINCTION IS THE WHOLE POINT. A straight-line hold point is a
+    // CHORD, and a chord is only on the floor when the leg is straight. The climb
+    // out of Blackwing Lair's staging shelf is a C — the walkable surface bows
+    // seven yards east around a hole in the mesh (probe the column at
+    // (-7628.5, -932.5): zero surfaces) — so the chord from a follower on the
+    // north arm to a cursor on the south arm passes through the void, and its
+    // linearly interpolated z lands 2.3yd UNDER the only floor there. A Player is
+    // handed PATHFIND_NORMAL whether or not a route exists
+    // ([[ac-pathgenerator-players-always-get-pathfind-normal]]), so the bot gets a
+    // straight-line shortcut and walks into the rock. Route distance cannot do
+    // that: every point it returns is ON the corridor the probe suite certifies.
+    //
+    // Clamps to the head of the route — there is no polyline behind anchor 0, and
+    // the honest answer there is the head itself.
+    inline Anchor PointBehindOnRoute(std::vector<Anchor> const& route, uint32 cursorIndex,
+                                     float backDist)
+    {
+        if (route.empty())
+            return Anchor{};
+        if (cursorIndex >= route.size())
+            cursorIndex = static_cast<uint32>(route.size()) - 1;
+
+        Anchor const& cursor = route[cursorIndex];
+        if (!(backDist > 0.0f))
+            return cursor;
+
+        float remaining = backDist;
+        for (uint32 i = cursorIndex; i > 0; --i)
+        {
+            Anchor const& b = route[i];
+            Anchor const& a = route[i - 1];
+            float const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+            float const len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len <= 0.0001f)
+                continue;
+            if (remaining <= len)
+            {
+                float const frac = remaining / len;
+                return Anchor{ b.x + dx * frac, b.y + dy * frac, b.z + dz * frac };
+            }
+            remaining -= len;
+        }
+        return route[0];
     }
 }
 

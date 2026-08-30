@@ -663,57 +663,38 @@ static ObjectiveArriveResult DriveRazorgoreOrb(Player* bot, AiObjectContext* con
 
 namespace
 {
-    // The authored route, as the kernel's plain-arithmetic view of it.
+    // The authored route, as the kernel's plain-arithmetic view of it — sliced at
+    // the staging point, because everything downstream of here counts from there:
+    // the kernel's gather gate is `cursorIndex == 0`, the arm pins the cursor to 0,
+    // ResolveCursor clamps against a stored index in the same space, and the
+    // completion test is "the LAST anchor". Hand the driver the unsliced row and
+    // every one of those means something different.
     //
-    // BUILT ONCE. This was rebuilt per call — twenty WaypointHints copied out of
-    // the registry and a twenty-element Anchor vector projected from them, two heap
-    // allocations on every tick of a leg that can run for minutes — on the
-    // reasoning that the row is small and a cache is one more thing to invalidate.
-    // Nothing invalidates it: the registry is seeded once from a static table and
-    // never written again, so the slice is a constant and belongs in one. The copy
-    // (rather than a pointer into the registry) is what keeps that true even if the
-    // store is ever rehashed.
+    // It NOW LIVES IN DcTransit::Route(), shared with the pack rung, which needs
+    // the same polyline to hold on (DcTransit::HoldPoint). Keeping it private to
+    // this file is how the two halves came to disagree about where the corridor
+    // runs: the driver walked the authored anchors and every follower walked a
+    // straight chord across them, through a hole in the mesh.
+    using BwlTransitRoute = DcTransit::RouteView;
+
+    BwlTransitRoute const* TransitRoute() { return DcTransit::Route(); }
+
+    // How far the FURTHEST living member is from the CURSOR, and how many are
+    // inside the gather radius OF THE CURSOR. One walk of the group for both,
+    // because both are wanted on the same ticks and a second walk of a 40-member
+    // raid every tick buys nothing.
     //
-    // SLICED AT THE STAGING POINT. The registry row is the whole Vaelastrasz ->
-    // Broodlord walk, and its first twenty anchors are the approach — the ordinary
-    // clear's business, not the transit's. Everything downstream of here counts
-    // from staging: the kernel's gather gate is `cursorIndex == 0`, the arm pins
-    // the cursor to 0, ResolveCursor clamps against a stored index in the same
-    // space, and the completion test is "the LAST anchor". Hand the driver the
-    // unsliced row and every one of those means something different — the gather
-    // would form up in Vaelastrasz's chamber and the crossing would report itself
-    // complete at the staging point.
-    struct BwlTransitRoute
-    {
-        std::vector<WaypointHint> hints;                    // anchor 20 onward
-        std::vector<DcSuppressionTransit::Anchor> anchors;  // ...the same, projected
-    };
-
-    // nullptr when the row is missing or too short to slice — the caller reports
-    // Done and the leg falls back to an ordinary clear.
-    BwlTransitRoute const* TransitRoute()
-    {
-        static BwlTransitRoute const route = []
-        {
-            BwlTransitRoute r;
-            std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
-                MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
-            if (!row || row->size() < TRANSIT_STAGE_ANCHOR_INDEX + 2)
-                return r;
-
-            r.hints.assign(row->begin() + TRANSIT_STAGE_ANCHOR_INDEX, row->end());
-            r.anchors.reserve(r.hints.size());
-            for (WaypointHint const& h : r.hints)
-                r.anchors.push_back({ h.x, h.y, h.z });
-            return r;
-        }();
-        return route.hints.empty() ? nullptr : &route;
-    }
-
-    // How far the FURTHEST living member is from a point, and how many are inside
-    // a radius of the leader. One walk of the group for both, because both are
-    // wanted on the same ticks and a second walk of a 40-member raid every tick
-    // buys nothing.
+    // BOTH AGAINST THE CURSOR, and that is a fix rather than a tidy-up. The gather
+    // quorum used to be measured against the LEADER while the rung that positions
+    // the raid (DungeonClearTransitPackTrigger) holds it on a ring around the
+    // CURSOR. During the gather the cursor is pinned to the staging point and the
+    // leader keeps walking, so the two reference points drift apart and the gate
+    // asks a question the rung is not answering. Live, tr-20260830-125018-2: the
+    // raid stood PERFECTLY formed — `0 of 24 outside, trail 21.5yd` of a 25yd
+    // leash — while the gate read `2/25 near` for nineteen consecutive ticks and
+    // then timed out and crossed with two members. The leader was 6.3yd past
+    // staging on the room side and the raid 21.5yd back on the approach side, so
+    // the distances ADDED to ~28yd.
     //
     // Living members ON THIS MAP only: a corpse-running member is the rez ladder's
     // business, and a member who never zoned in must not pin the crossing.
@@ -721,7 +702,7 @@ namespace
     {
         float trailDist = -1.0f;  // <0 = the leader is alone
         uint32 living = 0;        // living members on this map, leader included
-        uint32 nearLeader = 0;    // ...of which, inside the gather radius
+        uint32 nearCursor = 0;    // ...of which, inside the gather radius OF THE CURSOR
         bool topped = true;       // ...and everybody is at the pre-boss bars
 
         // The pack hold's own counts, measured against the CURSOR rather than
@@ -750,7 +731,7 @@ namespace
             return v;
 
         v.living = 1;
-        v.nearLeader = 1;
+        v.nearCursor = bot->GetExactDist(cursorX, cursorY, cursorZ) <= gatherRadius ? 1 : 0;
 
         Group* group = bot->GetGroup();
         if (!group)
@@ -773,10 +754,10 @@ namespace
                 continue;
 
             ++v.living;
-            if (bot->GetExactDist(member) <= gatherRadius)
-                ++v.nearLeader;
-
             float const d = member->GetExactDist(cursorX, cursorY, cursorZ);
+            if (d <= gatherRadius)
+                ++v.nearCursor;
+
             if (d > v.trailDist)
                 v.trailDist = d;
 
@@ -851,11 +832,11 @@ namespace
             return;
 
         LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] BWL transit — cursor {}/{} ({:.1f}yd), pack {}/{} near{}, "
+                  "[DC:{}] BWL transit — cursor {}/{} ({:.1f}yd), pack {}/{} near the cursor{}, "
                   "{} of {} outside, trail {:.1f}yd (leash {:.0f}), elite {:.1f}yd, "
                   "armed device {:.1f}yd -> {}{}",
                   bot->GetName(), in.cursorIndex, anchorCount ? anchorCount - 1 : 0, in.distToCursor,
-                  pack.nearLeader, pack.living, pack.topped ? "" : ", NOT TOPPED",
+                  pack.nearCursor, pack.living, pack.topped ? "" : ", NOT TOPPED",
                   in.packOutside, in.packLiving,
                   in.trailDist, in.packLeash,
                   in.nearestEliteDist, in.nearestArmedDeviceDist,
@@ -978,8 +959,26 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
     WaypointHint const& target = hints[cursor];
 
     // --- the snapshot ------------------------------------------------------
-    float const gatherRadius = DcSettings::GetFloat(bot, "TransitGatherRadius");
     float const packLeash = DcSettings::GetFloat(bot, "TransitPackLeash");
+
+    // THE GATHER RADIUS HAS A FLOOR, and the floor is the ring the pack rung
+    // actually parks the raid on. Both of these are runtime-tunable and were
+    // tunable into direct contradiction: the rung walks a member to
+    // `packLeash - TRANSIT_PACK_HOLD_MARGIN` of the cursor and then refuses to
+    // move it again once it is within TRANSIT_PACK_ARRIVE_LEASH of that point, so
+    // the raid comes to rest in a band ending at 23yd on the defaults — and the
+    // gate then asked for 20. Nobody is ever inside it, so the gather can only end
+    // by watchdog, which is precisely what tr-20260830-125018-2 did (2 of 25, 60s
+    // burnt, tank crossed alone).
+    //
+    // Clamped here rather than in the settings registry because it is a
+    // RELATIONSHIP between two settings, and the registry validates one row at a
+    // time. A larger authored radius is still honoured; only an impossible one is
+    // raised.
+    float const gatherRadius =
+        std::max(DcSettings::GetFloat(bot, "TransitGatherRadius"),
+                 DcSuppressionTransit::GatherRadiusFloor(packLeash, TRANSIT_PACK_HOLD_MARGIN,
+                                                         TRANSIT_PACK_ARRIVE_LEASH));
     BwlPackView const pack =
         BwlPack(bot, target.x, target.y, target.z, gatherRadius, packLeash);
 
@@ -992,7 +991,7 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
     in.arriveRadius = target.arriveRadius;
     in.gathered = st.transitGathered;
     in.quorumMet = pack.living <= 1 ||
-                   static_cast<float>(pack.nearLeader) >= static_cast<float>(pack.living) * quorum;
+                   static_cast<float>(pack.nearCursor) >= static_cast<float>(pack.living) * quorum;
     in.topped = pack.topped;
     in.trailDist = pack.trailDist;
     in.packLeash = packLeash;
@@ -1023,7 +1022,7 @@ ObjectiveArriveResult DriveSuppressionTransit(Player* bot, AiObjectContext* cont
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] BWL transit — {} of {} raid members formed up at the staging "
                  "point{} — crossing",
-                 bot->GetName(), pack.nearLeader, pack.living,
+                 bot->GetName(), pack.nearCursor, pack.living,
                  v.timedOut ? " (GATHER TIMEOUT — going with what we have)" : "");
     }
 
