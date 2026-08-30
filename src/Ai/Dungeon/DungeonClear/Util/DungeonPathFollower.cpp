@@ -511,6 +511,11 @@ void DungeonPathFollower::SeedCursor(Player* bot, ChunkedPathfinder::Result cons
                               std::numeric_limits<size_t>::max(), state);
 }
 
+bool DungeonPathFollower::LegIsClear(Player* bot, G3D::Vector3 const& to)
+{
+    return BotCanSee(bot, to);
+}
+
 std::vector<G3D::Vector3> DungeonPathFollower::BuildSplineWindow(Player* bot,
     ChunkedPathfinder::Result const& path, DungeonFollowerState const& state,
     float maxYards)

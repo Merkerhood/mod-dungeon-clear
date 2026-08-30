@@ -1004,6 +1004,65 @@ namespace DungeonClearMath
     // in each of the four walk-back clones; hoisted here so the four agree by
     // construction.
     inline constexpr float TrailJumpGuard = 12.0f;
+
+    // ---- off-line rejoin rung (DungeonClearAdvanceAction) -------------------
+
+    // Is the bot off the corridor, WITH HYSTERESIS? The rejoin rung engages at
+    // `engageBar` (OFF_PATH_THRESHOLD) and, once it owns the bot, holds until the
+    // deviation falls under the lower `releaseBar`.
+    //
+    // A single bar released exactly where it engaged, so a bot parked in the band
+    // around it alternated rejoin / escort-spline / rejoin tick by tick. That is
+    // not cosmetic: the spline's opening leg is a straight line from the bot to
+    // its cursor, harmless on the line and a chord across the inside of a bend off
+    // it. Live (tr-20260830-115416-5, BWL) a tank sat at 4.1-6.9yd across the
+    // anchor 16->18 hairpin and the sub-bar spline legs walked it into a navmesh
+    // void for five seconds. Same shape as every other bare threshold this module
+    // has had to give hysteresis (the transit pack leash, the moving-camp rung).
+    //
+    // `vertOff` (a corridor Z-band mismatch) is NOT hysteretic: a floor mismatch
+    // is a binary fact about which storey the bot is on, not a drift to damp.
+    inline bool IsOffLineWithHysteresis(float deviation, bool latched, bool vertOff,
+                                        float engageBar, float releaseBar)
+    {
+        return deviation > (latched ? releaseBar : engageBar) || vertOff;
+    }
+
+    struct RejoinRefusalVerdict
+    {
+        bool  haltStaleMove = false;  // cancel the in-flight move; re-issue next tick
+        float bestDeviation = 0.0f;   // baseline to carry into the next tick
+    };
+
+    // The rejoin rung issued no move this tick because stock MoveTo refused it.
+    // Is the move already in flight doing this rung's job, or undoing it?
+    //
+    // MoveTo refuses whenever ANY move is queued, and DcMoveTo's
+    // ResolveEscortConflict clears only an ESCORT generator — so on DC's own
+    // per-point move (gen=POINT, the norm in this rung) a refusal used to hand the
+    // tick back to whatever was moving the bot, unexamined. On tr-20260830-115416-5
+    // that was the move carrying the tank OFF the line: 48 of 53 rejoins refused,
+    // deviation growing 6.2 -> 31.1yd across 22 consecutive refused ticks.
+    //
+    // Judge it on NET PROGRESS, the yardstick the recovery ladder one rung up
+    // already uses: track the best (smallest) deviation seen since the rung took
+    // ownership and halt only once the current deviation has grown past it by
+    // `slack`. Riding a working re-entry matters as much as halting a bad one —
+    // cancelling on every refusal turns the healthy case into a stop/re-issue
+    // stutter. `slack` absorbs a pathed re-entry legitimately swinging wide to
+    // round a corner.
+    //
+    // Seeding `bestDeviation` with FLT_MAX yields exactly one tick of grace: the
+    // first refusal establishes the baseline and never halts.
+    inline RejoinRefusalVerdict DecideRejoinRefusal(float deviation, float bestDeviation,
+                                                    float slack)
+    {
+        RejoinRefusalVerdict v;
+        float const best = std::min(bestDeviation, deviation);
+        v.haltStaleMove  = deviation > best + slack;
+        v.bestDeviation  = v.haltStaleMove ? deviation : best;
+        return v;
+    }
 }
 
 #endif

@@ -91,6 +91,24 @@ namespace
     // make NextHop target a point behind the tank and walk it backward.
     constexpr float DC_REANCHOR_DISTANCE = 12.0f;
 
+    // RELEASE threshold for the off-line rejoin rung — the low side of its
+    // hysteresis band (it ENGAGES at DungeonPathFollower::OFF_PATH_THRESHOLD,
+    // 6yd). A bare threshold released exactly where it engaged, so a tank parked
+    // in the band flickered rejoin / spline / rejoin tick by tick and the escort
+    // spline kept relaunching from off the line. Sized at half the engage
+    // distance: comfortably inside ordinary navmesh float and corridor width, so
+    // the latch clears as soon as the bot is genuinely back on the line, and far
+    // enough below 6 that noise cannot walk it back and forth.
+    constexpr float DC_OFF_LINE_RELEASE = 3.0f;
+
+    // How much the route deviation may GROW, while the off-line rung is refused,
+    // before the rung stops believing the in-flight move is a re-entry and halts
+    // it. Slack absorbs the legitimate case: a pathed re-entry rounding a corner
+    // can swing a couple of yards wider before it comes back. Beyond that the
+    // move in flight is taking the bot away from the corridor, which is the one
+    // thing this rung exists to prevent. See DcApproachState::rejoinBestDev.
+    constexpr float DC_REJOIN_DEV_SLACK = 3.0f;
+
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
     // creatures in LOADED grids; grids stream in within ~MAX_VISIBILITY_DISTANCE
     // (250yd) of a moving player. Beyond this distance, a boss simply not being
@@ -1372,9 +1390,25 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
     std::optional<G3D::Vector3> const curPt = DungeonPathFollower::CurrentPoint(path, follower);
     bool const vertOff = curPt.has_value() &&
                          std::fabs(bot->GetPositionZ() - curPt->z) > DC_CORRIDOR_Z_BAND;
-    obs.offLine = st.routeDeviation > DungeonPathFollower::OFF_PATH_THRESHOLD || vertOff;
+    // HYSTERESIS. Engage at OFF_PATH_THRESHOLD, release at the lower
+    // DC_OFF_LINE_RELEASE, so once the rung owns the bot it keeps it until the
+    // re-entry has actually finished. Released at the same 6yd it engaged at, the
+    // rung handed a bot sitting in the band back to the escort spline every other
+    // tick — and the spline's straight opening leg is precisely what cuts a bend
+    // when the bot is off the line. (BWL tr-20260830-115416-5: 4.1-6.9yd across
+    // the anchor 16->18 hairpin, straight into a navmesh void.) The vertical band
+    // is not part of the hysteresis: a floor mismatch is binary, not a drift.
+    obs.offLine = DungeonClearMath::IsOffLineWithHysteresis(
+        st.routeDeviation, appr.offLineLatched, vertOff,
+        DungeonPathFollower::OFF_PATH_THRESHOLD, DC_OFF_LINE_RELEASE);
+    appr.offLineLatched = obs.offLine;
     if (obs.offLine)
         return;  // off-line outranks window
+
+    // Back on the corridor: the rejoin rung is done, so its net-progress baseline
+    // must not survive into the NEXT off-line episode (a stale low best would make
+    // the first refused tick of that episode read as drift).
+    appr.rejoinBestDev = std::numeric_limits<float>::max();
 
     // Normal case: is a >=2-point spline window available? Build it once here and
     // carry it into DoIssueSplineWindow so the launch reuses this exact window.
@@ -1429,6 +1463,32 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
                           honoured ? "truncating" : "too close to honour, gliding",
                           before, st.splineWindow.size());
     }
+    // SCREEN THE OPENING LEG. window[0] is the bot's live position and window[1]
+    // the cursor point; BuildSplineWindow appends the rest verbatim and screens
+    // nothing, so that first segment is a straight line the route never vouched
+    // for. On the corridor it runs ALONG the route and is safe by construction.
+    // Off it, it is a chord across whatever the route was bending around — which
+    // is how a BWL tank ended up inside solid rock (tr-20260830-115416-5, the
+    // anchor 16->18 hairpin, five seconds with zero navmesh under it).
+    //
+    // The rejoin rung already owns everything past OFF_PATH_THRESHOLD, so the only
+    // exposure is the residual band beneath it. Raycast ONLY inside that band: a
+    // bot within DC_OFF_LINE_RELEASE of the line has an opening leg that lies
+    // along the corridor and cannot cut a corner, and this is a per-tick hot path
+    // where an unconditional VMAP raycast would not pay for itself. Failing the
+    // screen drops the window, which sends the tick to the per-point MoveTo
+    // fallback — a PathGenerator route, wall-safe by construction.
+    if (st.splineWindow.size() >= 2 && st.routeDeviation > DC_OFF_LINE_RELEASE &&
+        !DungeonPathFollower::LegIsClear(bot, st.splineWindow[1]))
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] advance window: opening leg to ({:.1f},{:.1f},{:.1f}) is "
+                  "blocked at {:.1f}yd off the line -> per-point MoveTo instead",
+                  bot->GetName(), st.splineWindow[1].x, st.splineWindow[1].y,
+                  st.splineWindow[1].z, st.routeDeviation);
+        st.splineWindow.clear();
+    }
+
     obs.haveSplineWindow = st.splineWindow.size() >= 2;
 }
 
@@ -1567,10 +1627,49 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffLineRejoin(Advan
     appr.stuckCount = 0;
     ClearStall(context);
     SetPhase(context, "moving");
-    // Own the tick whether or not MoveTo issued: a false return is the benign
-    // duplicate / waiting-on-last-move case (the pathed re-entry is already in
-    // flight), and we must never fall through to launch the straight escort
-    // spline while the bot is still off the line.
+
+    // A REFUSAL IS NOT AUTOMATICALLY BENIGN. This rung used to return ReturnTrue
+    // unconditionally, reasoning that a false return means "the pathed re-entry is
+    // already in flight". Stock MoveTo refuses whenever ANY move is already
+    // queued, and DcMoveTo's ResolveEscortConflict clears only an ESCORT
+    // generator — so when DC's own per-point move is what is in flight
+    // (gen=POINT, which is the norm here: the previous tick's re-entry) the
+    // refusal handed the tick straight back to the move that was carrying the bot
+    // OFF the line, while this rung logged success and moved nothing. Measured on
+    // tr-20260830-115416-5: 48 of 53 rejoins for the tank refused (243 of 306
+    // server-wide), route deviation growing 6.2 -> 31.1yd across 22 consecutive
+    // refused ticks until Resnap blew its 45yd radius and threw the cursor
+    // backwards — the ping-pong, once every ~20s, all run.
+    //
+    // Cancelling on every refusal is not the answer either: the healthy case is a
+    // re-entry issued last tick and still walking, and tearing that down each tick
+    // is a stop/re-issue stutter. So judge the move in flight by whether it is
+    // doing this rung's job — NET PROGRESS back toward the corridor, the same
+    // yardstick recoveryProgressWatch applies one rung up. While the deviation
+    // holds at or below the best seen, ride it. Once it has grown past the slack,
+    // whatever is moving the bot is not a re-entry: halt it here so the next tick
+    // issues a clean one. StopMovingOnCurrentPos, not StopMoving — the latter
+    // does not cancel a launched escort spline (see DcMovement.h).
+    if (rejoining)
+    {
+        appr.rejoinBestDev = st.routeDeviation;
+        return Step::ReturnTrue;
+    }
+
+    DungeonClearMath::RejoinRefusalVerdict const rv =
+        DungeonClearMath::DecideRejoinRefusal(st.routeDeviation, appr.rejoinBestDev,
+                                              DC_REJOIN_DEV_SLACK);
+    if (rv.haltStaleMove)
+    {
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] off-line rejoin refused while drifting ({:.1f}yd, best "
+                  "{:.1f}yd) -> halting the stale move so the next tick can re-issue",
+                  bot->GetName(), st.routeDeviation, appr.rejoinBestDev);
+        bot->StopMovingOnCurrentPos();
+    }
+    appr.rejoinBestDev = rv.bestDeviation;
+    // Own the tick either way: we must never fall through to launch the straight
+    // escort spline while the bot is still off the line.
     return Step::ReturnTrue;
 }
 

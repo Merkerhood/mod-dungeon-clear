@@ -7,6 +7,8 @@
 #include "DungeonClearMath.h"
 #include "DcProgressWatchdog.h"
 
+#include <limits>
+
 // Test point directly on the segment (midpoint)
 TEST(DungeonClearMathTest, PointOnSegmentMidpoint)
 {
@@ -2458,4 +2460,131 @@ TEST(DungeonClearMathTest, TrailFollowLeashStillBindsInsideTheBubble)
     EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(3.0f, 8.0f, 1.5f));
     EXPECT_FALSE(DungeonClearMath::TrailFollowShouldEngage(7.9f, 8.0f, 6.0f));
     EXPECT_TRUE(DungeonClearMath::TrailFollowShouldEngage(8.1f, 8.0f, 6.0f));
+}
+
+// ---- off-line rejoin rung: hysteresis + refusal handling ------------------
+// Root cause of the BWL ping-pong + wall clip, tr-20260830-115416-5. See
+// DungeonClearMath::IsOffLineWithHysteresis / DecideRejoinRefusal.
+
+TEST(DungeonClearMathTest, OffLineEngagesAtTheEngageBarWhenUnlatched)
+{
+    // Unlatched: only the 6yd engage bar counts. The live failure sat at 4.1-6.9yd,
+    // so both sides of that band must be decidable.
+    EXPECT_FALSE(DungeonClearMath::IsOffLineWithHysteresis(4.1f, false, false, 6.0f, 3.0f));
+    EXPECT_FALSE(DungeonClearMath::IsOffLineWithHysteresis(6.0f, false, false, 6.0f, 3.0f));
+    EXPECT_TRUE(DungeonClearMath::IsOffLineWithHysteresis(6.9f, false, false, 6.0f, 3.0f));
+}
+
+TEST(DungeonClearMathTest, OffLineHoldsToTheReleaseBarOnceLatched)
+{
+    // THE FIX. Latched at 6.9yd, the rung must keep the bot through the whole
+    // 3-6yd band instead of handing it back to the escort spline, whose straight
+    // opening leg is what cut the BWL anchor 16->18 bend into a navmesh void.
+    EXPECT_TRUE(DungeonClearMath::IsOffLineWithHysteresis(5.9f, true, false, 6.0f, 3.0f));
+    EXPECT_TRUE(DungeonClearMath::IsOffLineWithHysteresis(4.1f, true, false, 6.0f, 3.0f));
+    EXPECT_TRUE(DungeonClearMath::IsOffLineWithHysteresis(3.1f, true, false, 6.0f, 3.0f));
+    // Genuinely back on the corridor -> released.
+    EXPECT_FALSE(DungeonClearMath::IsOffLineWithHysteresis(3.0f, true, false, 6.0f, 3.0f));
+    EXPECT_FALSE(DungeonClearMath::IsOffLineWithHysteresis(0.4f, true, false, 6.0f, 3.0f));
+}
+
+TEST(DungeonClearMathTest, OffLineVerticalMismatchIsNotHysteretic)
+{
+    // A floor mismatch is binary: it fires from either latch state and does not
+    // linger once the bot is back on its own storey.
+    EXPECT_TRUE(DungeonClearMath::IsOffLineWithHysteresis(0.0f, false, true, 6.0f, 3.0f));
+    EXPECT_TRUE(DungeonClearMath::IsOffLineWithHysteresis(0.0f, true, true, 6.0f, 3.0f));
+    EXPECT_FALSE(DungeonClearMath::IsOffLineWithHysteresis(0.0f, false, false, 6.0f, 3.0f));
+}
+
+TEST(DungeonClearMathTest, OffLineHysteresisCannotFlapInsideTheBand)
+{
+    // Walk a bot back and forth across 6yd the way the live tank did and assert
+    // the latch never toggles twice without a genuine re-entry between.
+    bool latched = false;
+    float const devs[] = {4.1f, 6.9f, 5.6f, 5.8f, 6.9f, 4.1f, 5.7f, 2.9f, 4.5f};
+    int toggles = 0;
+    for (float d : devs)
+    {
+        bool const next = DungeonClearMath::IsOffLineWithHysteresis(d, latched, false, 6.0f, 3.0f);
+        if (next != latched)
+            ++toggles;
+        latched = next;
+    }
+    // Exactly two: off->on at 6.9, on->off at 2.9. Pre-fix this sequence toggled
+    // six times, and every "off" tick launched an unscreened escort leg.
+    EXPECT_EQ(toggles, 2);
+    // Released at 2.9, the bar goes back to the 6yd ENGAGE side, so the trailing
+    // 4.5 stays on-line. That residual 3-6yd band is exactly what the spline
+    // window's opening-leg LOS screen covers (see FillHopObs) — the two halves of
+    // the fix meet here and neither is redundant.
+    EXPECT_FALSE(latched);
+}
+
+TEST(DungeonClearMathTest, RejoinRefusalGivesTheFirstTickGrace)
+{
+    // FLT_MAX seed = no rejoin of ours in flight yet. The first refusal only
+    // establishes the baseline; halting here would stutter the healthy case.
+    DungeonClearMath::RejoinRefusalVerdict const v = DungeonClearMath::DecideRejoinRefusal(
+        6.2f, std::numeric_limits<float>::max(), 3.0f);
+    EXPECT_FALSE(v.haltStaleMove);
+    EXPECT_FLOAT_EQ(v.bestDeviation, 6.2f);
+}
+
+TEST(DungeonClearMathTest, RejoinRefusalRidesAWorkingReEntry)
+{
+    // Deviation holding or shrinking means the in-flight move IS the re-entry.
+    // Cancelling it every refused tick is the stop/re-issue stutter this guards.
+    EXPECT_FALSE(DungeonClearMath::DecideRejoinRefusal(6.2f, 6.2f, 3.0f).haltStaleMove);
+    EXPECT_FALSE(DungeonClearMath::DecideRejoinRefusal(4.0f, 6.2f, 3.0f).haltStaleMove);
+    EXPECT_FALSE(DungeonClearMath::DecideRejoinRefusal(0.5f, 6.2f, 3.0f).haltStaleMove);
+    // The baseline tracks the best seen, so a later drift is measured from 0.5.
+    EXPECT_FLOAT_EQ(DungeonClearMath::DecideRejoinRefusal(0.5f, 6.2f, 3.0f).bestDeviation, 0.5f);
+}
+
+TEST(DungeonClearMathTest, RejoinRefusalToleratesRoundingWideWithinSlack)
+{
+    // A pathed re-entry rounding a corner may swing a couple of yards wider
+    // before it closes. Inside the slack that must not be read as drift.
+    EXPECT_FALSE(DungeonClearMath::DecideRejoinRefusal(9.2f, 6.2f, 3.0f).haltStaleMove);
+    EXPECT_TRUE(DungeonClearMath::DecideRejoinRefusal(9.3f, 6.2f, 3.0f).haltStaleMove);
+}
+
+TEST(DungeonClearMathTest, RejoinRefusalHaltsTheLiveBwlRunaway)
+{
+    // THE FIX, on the measured deviations from tr-20260830-115416-5. Pre-fix all
+    // 22 of these ticks returned "success" having moved nothing, and the tank
+    // drifted 6.2 -> 31.1yd before Resnap blew its 45yd radius.
+    float const devs[] = {6.2f, 7.6f, 9.0f, 10.5f, 10.6f, 12.6f, 14.1f, 15.7f,
+                          17.2f, 19.9f, 21.2f, 22.6f, 24.0f, 26.2f, 27.2f, 28.3f,
+                          29.4f, 30.0f, 30.6f, 31.1f, 31.1f, 31.0f};
+    float best = std::numeric_limits<float>::max();
+    int halts = 0;
+    float worstBeforeFirstHalt = 0.0f;
+    for (float d : devs)
+    {
+        DungeonClearMath::RejoinRefusalVerdict const v =
+            DungeonClearMath::DecideRejoinRefusal(d, best, 3.0f);
+        if (v.haltStaleMove)
+            ++halts;
+        else if (halts == 0)
+            worstBeforeFirstHalt = d;
+        best = v.bestDeviation;
+    }
+    // It must halt, and it must halt EARLY — the whole point is to stop the
+    // runaway near the corridor, not after it has crossed the map.
+    EXPECT_GT(halts, 0);
+    EXPECT_LT(worstBeforeFirstHalt, 10.0f);
+}
+
+TEST(DungeonClearMathTest, RejoinRefusalRebaselinesAfterAHalt)
+{
+    // After a halt the next tick must not re-halt on the same stale baseline —
+    // otherwise the rung cancels every tick and never lets a re-issue land.
+    DungeonClearMath::RejoinRefusalVerdict const halted =
+        DungeonClearMath::DecideRejoinRefusal(12.0f, 6.2f, 3.0f);
+    ASSERT_TRUE(halted.haltStaleMove);
+    EXPECT_FLOAT_EQ(halted.bestDeviation, 12.0f);
+    EXPECT_FALSE(DungeonClearMath::DecideRejoinRefusal(12.0f, halted.bestDeviation, 3.0f)
+                     .haltStaleMove);
 }

@@ -11,6 +11,7 @@
 #include "Position.h"
 #include "Timer.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcProgressWatchdog.h"
+#include <limits>
 
 // All transient per-approach state for one boss-approach run, owned as a single
 // value (DungeonClearApproachStateValue, "dungeon clear approach state") so the
@@ -116,6 +117,33 @@ struct DcApproachState
     // changes, and by the approach reset below.
     int8 avoidOrbitDir         = 0;  // 0 = unlatched, +/-1 = committed rotation
     ObjectGuid avoidOrbitSphere;     // pack GUID the current avoid orbit is for
+
+    // --- off-line rejoin latches ------------------------------------------
+    // HYSTERESIS on the off-line rung. The rung engages at OFF_PATH_THRESHOLD
+    // (6yd of perpendicular deviation) and used to release at the same 6yd, so a
+    // bot parked in the band around it flickered between "rejoin via a generated
+    // path" and "launch the escort spline" tick by tick. That matters because the
+    // spline's OPENING leg is a straight line from the bot to its cursor: on the
+    // line it is harmless, in the 3-6yd band it cuts the inside of a bend. Live
+    // (tr-20260830-115416-5, BWL) the tank sat at 4.1-6.9yd across the anchor
+    // 16->18 hairpin, the rejoin went silent under 6, and the sub-6 spline leg
+    // walked it into a navmesh void — the "tank ran through the wall" report.
+    // Once latched the rung holds until the bot is properly back on the corridor
+    // (DC_OFF_LINE_RELEASE), so re-entry has to actually finish.
+    bool offLineLatched = false;
+
+    // Best (smallest) route deviation seen while the off-line rung has owned the
+    // tick, or FLT_MAX when it has not run since the last reset. The rung's
+    // DcMoveTo is refused whenever a move is already queued, and DcMoveTo's
+    // ResolveEscortConflict only cancels an ESCORT generator — so when DC's own
+    // per-point move is what is in flight (gen=POINT) a refusal handed the tick
+    // straight back to the move that was carrying the bot OFF the line, while the
+    // rung logged success and returned ReturnTrue. Measured on the same run: 48 of
+    // 53 rejoins refused, deviation grew 6.2 -> 31.1yd across 22 consecutive
+    // refused ticks. Tracking the best deviation lets the rung tell a re-entry
+    // that is working (ride it — cancelling every refusal would stutter the
+    // healthy case into a stop/re-issue loop) from one that is not (halt it).
+    float rejoinBestDev = std::numeric_limits<float>::max();
 
     // --- chase leash (approach to a MOVING trash target) ------------------
     // A trash target is latched by GUID and read live, so a walking mob turns
@@ -248,6 +276,8 @@ struct DcApproachState
         partyNotReadyTicks  = 0;
         lastPos             = Position();
         skirtOrbitDir       = 0;
+        offLineLatched      = false;
+        rejoinBestDev       = std::numeric_limits<float>::max();
         skirtOrbitTarget.Clear();
         avoidOrbitDir       = 0;
         avoidOrbitSphere.Clear();

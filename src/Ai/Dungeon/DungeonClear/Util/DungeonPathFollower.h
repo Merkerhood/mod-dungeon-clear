@@ -267,6 +267,25 @@ public:
         ChunkedPathfinder::Result const& path, DungeonFollowerState const& state,
         float maxYards = 0.0f);
 
+    // Can the bot walk a straight leg to `to` without cutting through static
+    // geometry? A single VMAP raycast, the same one Resnap uses to screen cursor
+    // candidates — exposed because the SPLINE WINDOW needs it too.
+    //
+    // BuildSplineWindow seeds window[0] with the bot's live position and then
+    // appends route points verbatim, so the opening leg window[0] -> window[1] is
+    // a straight segment that NOTHING screens. On the corridor that leg is a few
+    // yards along the route and harmless, which is why it went unnoticed; off the
+    // corridor it is a chord across whatever the route was bending around. The
+    // off-line rejoin rung is the guard, and it only owns the tick past
+    // OFF_PATH_THRESHOLD — so the residual band under it launched unscreened
+    // chords. Live that put a BWL tank inside solid rock for five seconds
+    // (tr-20260830-115416-5, anchors 16->18).
+    //
+    // Callers screen the opening leg ONLY when the bot is off the line far enough
+    // for the leg to be a chord at all; the raycast is the expensive part of this
+    // header and must not run on every healthy glide tick.
+    static bool LegIsClear(Player* bot, G3D::Vector3 const& to);
+
     // Pure collection core of BuildSplineWindow (no Player — gtested directly).
     // Appends consecutive polyline points from cursor (seg, pt) to `window`,
     // which must already hold the live-position seed as its last element (length
