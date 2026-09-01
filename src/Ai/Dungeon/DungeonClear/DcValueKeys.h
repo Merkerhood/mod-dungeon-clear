@@ -53,6 +53,9 @@ namespace DcKey
     inline constexpr char const* PartyTank               = "dungeon clear party tank";
     inline constexpr char const* LongPath                = "dungeon clear long path";
     inline constexpr char const* CurrentHop              = "dungeon clear current hop";
+    // Diagnostic heartbeat, 0 == never. Written only by DcTickHeartbeat, read
+    // only by the teardown snapshot; nothing steers off it. See DcTickMemo.h.
+    inline constexpr char const* LastTickMs              = "dungeon clear last tick ms";
     inline constexpr char const* FarTargets              = "dungeon clear far targets";
     inline constexpr char const* Hazards                 = "dungeon clear hazards";
     // Ground pools (persistent-area-aura DynamicObjects) near the bot. A SEPARATE

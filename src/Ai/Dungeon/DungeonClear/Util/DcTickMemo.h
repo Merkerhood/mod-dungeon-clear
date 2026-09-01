@@ -118,4 +118,36 @@ public:
     static bool LevelReachable(Player* bot, AiObjectContext* ctx, Unit* u);
 };
 
+// Per-bot "my DC trigger ladder ran this tick" heartbeat (DcKey::LastTickMs).
+//
+// Separate from DcTickMemo above, which only stamps when a leader-only consumer
+// asks it for a predicate — a bot whose every rung declines never touches it, so
+// its stamp cannot answer "is this bot ticking at all". This one is written
+// unconditionally, before any gate, on BOTH engines' ladders.
+//
+// What it buys: the teardown snapshot could not previously tell the two halves of
+// a frozen run apart. A tank whose DC rungs are all standing down (ladder
+// evaluated, every rung declines) and a tank whose AI is not being updated at all
+// look identical in every other field — same frozen phase token, same zeroed
+// watchdogs, same stale route. Live (tp-20260831-083759-1, Gundrak): five runs
+// wedged at the Colossus altar with the tank silent for ten minutes while its
+// four followers ticked thousands of times, and the record could not say which.
+//
+// Both engines matter: the non-combat ladder is not evaluated while a bot sits on
+// the combat engine, so stamping only there would read "frozen" for the whole of
+// every boss fight — a clock/latch mismatch of exactly the kind that has burned
+// this diagnostic before. Stamped on both, a stale value means the bot's AI is
+// not being updated, whatever it is doing.
+namespace DcTickHeartbeat
+{
+    // Record that this bot's DC trigger ladder is being evaluated right now.
+    void Stamp(AiObjectContext* ctx);
+
+    // getMSTime() of the last Stamp, or 0 when the ladder has never run for this
+    // bot. Reading lazily creates the value (answering 0), which is the truthful
+    // answer for a bot that has never had a DC ladder — so this stays safe to
+    // call from the read-only diagnostic snapshot.
+    std::uint32_t LastMs(AiObjectContext* ctx);
+}
+
 #endif  // _DC_TICK_MEMO_H

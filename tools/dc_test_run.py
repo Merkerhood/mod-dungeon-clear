@@ -567,6 +567,38 @@ def render_pauses(rec):
     return [f"  {mmss(p.get('t')):>6}  {p.get('reason','?')}" for p in pauses]
 
 
+# --- DC heartbeat -----------------------------------------------------------
+# dcTickAgeMs is ms since that bot last evaluated a DC trigger ladder; -1 means
+# the ladder has never run for it. A ladder is evaluated every AI tick, so a
+# healthy age is hundreds of ms. Anything past a few seconds means the bot is not
+# being updated at all -- which reads identically to "every DC rung declined" in
+# every other diag field, and is the one thing this column exists to separate.
+TICK_STALE_MS = 5000
+
+
+def tick_cell(age):
+    """Compact per-member column. Blank when the record predates the field."""
+    if age is None:
+        return ""
+    if age < 0:
+        return "NEVER"
+    if age >= TICK_STALE_MS:
+        return f"STALE {age / 1000:.0f}s"
+    return f"{age}ms"
+
+
+def fmt_tick_age(age):
+    if age is None:
+        return ""
+    if age < 0:
+        return "dcTick=NEVER  (this bot's DC ladder never ran)"
+    if age >= TICK_STALE_MS:
+        return (f"dcTick=STALE {age / 1000:.0f}s  "
+                f"(the tank's DC ladder stopped being evaluated -- "
+                f"compare the party's dcTick column)")
+    return f"dcTick={age}ms"
+
+
 def render_combat_blame(members):
     """Who is holding each flagged member in combat, and the verdict each holder earns.
 
@@ -688,6 +720,11 @@ def render_diag(rec):
                    f"victim={wd.get('victim') or '-'}")
         out.append(f"                  encounterMask=0x{wd.get('completedEncounterMask',0):x} "
                    f"clearedAnchors={wd.get('clearedAnchors',0)} skipped={wd.get('skipped',0)}")
+        # Heartbeat. Absent on records written before the field existed, so an
+        # older run says nothing here rather than lying with a zero.
+        age = wd.get("dcTickAgeMs")
+        if age is not None:
+            out.append(f"                  {fmt_tick_age(age)}")
 
     party = d.get("party") or {}
     members = party.get("members") or []
@@ -702,9 +739,10 @@ def render_diag(rec):
                  m.get("victim", ""),
                  ("dc" if m.get("dcStrategy") else "-") + "/" + ("cbt" if m.get("dcCombatStrategy") else "-"),
                  m.get("botState", ""),
+                 tick_cell(m.get("dcTickAgeMs")),
                  "" if m.get("online") else "OFFLINE"] for m in members]
         out += table(rows, ["name", "guid", "state", "hp", "mp", "distTank", "", "victim",
-                            "strat", "engine", ""])
+                            "strat", "engine", "dcTick", ""])
         out += render_combat_blame(members)
 
     roster = d.get("roster") or []

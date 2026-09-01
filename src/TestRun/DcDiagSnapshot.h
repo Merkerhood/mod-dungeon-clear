@@ -109,6 +109,18 @@ namespace DcDiag
         bool dcStrategy = false;      // has the "dungeon clear" strategy
         bool dcCombatStrategy = false;
 
+        // HEARTBEAT: how long ago this member's own DC trigger ladder last ran
+        // (DcTickHeartbeat, stamped on both engines before any gate).
+        // `dcTickSeen == false` means it has never run for this bot.
+        //
+        // This is the field that separates "DC stood every rung down" from "this
+        // bot's AI is not being updated", which every other column reports
+        // identically. Read it per MEMBER, not just off the tank: the freeze it
+        // was written for is precisely a tank whose age climbs into the hundreds
+        // of seconds while its four followers stay in the tens of milliseconds.
+        std::uint32_t dcTickAgeMs = 0;
+        bool dcTickSeen = false;
+
         // --- combat blame (populated only while inCombat) ------------------
         // WHICH ENGINE the bot is actually running, which is a different
         // question from whether it is FLAGGED. `drop target` (stock, relevance
@@ -219,6 +231,11 @@ namespace DcDiag
         std::uint32_t inCombatCount = 0;
         std::uint32_t clearedAnchors = 0;
         std::uint32_t skippedCount = 0;
+
+        // The tank's own heartbeat, mirrored out of its member row so the
+        // one-line Summarize can carry it. See MemberSnapshot::dcTickAgeMs.
+        std::uint32_t dcTickAgeMs = 0;
+        bool dcTickSeen = false;
 
         std::vector<MemberSnapshot> members;
         std::vector<BossSnapshot> roster;

@@ -116,3 +116,20 @@ bool DcTickMemoAccess::LevelReachable(Player* bot, AiObjectContext* ctx, Unit* u
             { key, static_cast<std::uint8_t>(reachable ? 1 : 0) };
     return reachable;
 }
+
+void DcTickHeartbeat::Stamp(AiObjectContext* ctx)
+{
+    if (!ctx)
+        return;
+    std::uint32_t const now = getMSTime();
+    // Never store 0 — that is the "never ran" sentinel, and getMSTime() really
+    // does return 0 for one millisecond every wrap.
+    ctx->GetValue<uint32>(DcKey::LastTickMs)->Set(now ? now : 1u);
+}
+
+std::uint32_t DcTickHeartbeat::LastMs(AiObjectContext* ctx)
+{
+    if (!ctx)
+        return 0;
+    return ctx->GetValue<uint32>(DcKey::LastTickMs)->Get();
+}

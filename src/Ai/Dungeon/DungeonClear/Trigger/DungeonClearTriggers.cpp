@@ -132,6 +132,13 @@ namespace
 
 bool DungeonClearIdleTrigger::IsActive()
 {
+    // HEARTBEAT FIRST — above every gate below, including IsEnabled. The point of
+    // the stamp is to prove the ladder was evaluated at all; taking it after a
+    // gate would make "DC stood itself down" and "this bot is not being updated"
+    // look identical again, which is the exact confusion it exists to end.
+    // Non-combat engine; the combat ladder stamps in the break-stuck-combat rung.
+    DcTickHeartbeat::Stamp(context);
+
     if (!IsEnabled(context, bot))
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
@@ -1821,6 +1828,11 @@ namespace
 
 bool DungeonClearBreakStuckCombatTrigger::IsActive()
 {
+    // HEARTBEAT — the combat engine's half. This is the first rung of the DC
+    // combat ladder, so stamping here keeps the heartbeat live for the whole of a
+    // fight, when the non-combat ladder above is not being evaluated at all.
+    DcTickHeartbeat::Stamp(context);
+
     // Only meaningful while flagged in combat. Out of combat -> nothing to break;
     // reset the streak so a fresh stall later starts its clock clean.
     if (!bot || bot->isDead() || !bot->IsInCombat())
