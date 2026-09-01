@@ -200,7 +200,10 @@ public:
                                                 uint32 mapId);
 
     // True if `context`'s run is currently driving a PERSISTENT anchored event
-    // that has started (stepIndex past 0) — i.e. a long multi-phase set-piece
+    // that has started — stepIndex past 0, or still on a LEADING MoveTo, the one
+    // step that walks the tank out of its own arriveRadius before any latch could
+    // hold it (see the .cpp for the Gundrak altar deadlock that shape caused) —
+    // i.e. a long multi-phase set-piece
     // (ZulFarrak's temple) owns the tank. Single source of truth used to stand
     // other systems down for the event's whole duration:
     //   - the PULL pipeline (no advanced-pull camp-drag mid-event),

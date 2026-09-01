@@ -1440,8 +1440,39 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
 
     // stepIndex >= 1 means the event has advanced past its first step, so this is
     // false until the tank has actually arrived and the event has begun running.
-    return prog.eventId == ev->id && prog.stepIndex >= 1 &&
-           prog.stepIndex < ev->steps.size();
+    //
+    // ...with one exception, because otherwise the FIRST step is unprotected and a
+    // leading MoveTo is the one step kind that walks the tank out of its own
+    // objective's arriveRadius by design. When its destination lies outside that
+    // radius the event can never finish it: the executor HopTo's the tank out, the
+    // at-objective trigger goes false on distance, the event stops being driven,
+    // Advance hauls the tank back to the anchor, repeat. A MoveTo cannot
+    // false-complete the way a KillCreature gate can when its creature is merely
+    // out of scan range (it is a plain distance test against fixed coordinates), so
+    // counting it as "started" cannot pin the run on a half-started event — which
+    // is the failure the stepIndex >= 1 rule exists to prevent.
+    //
+    // Live: tp-20260830-185318-1, Gundrak's Drakkari Colossus altar, 3 of 10 runs.
+    // Its anchor->click step is 7.01yd against arriveRadius 6, and the log carries
+    //   objective 'Altar of the Drakkari Colossus': dist=7.0 > arriveRadius=6.0
+    //       (NOT arrived; event not started)
+    // in the same second as the executor driving that event's step 0. The tank sits
+    // ~7yd from its anchor making no net progress: posStuck and the stuck ladder
+    // churn, the party drops into rest cycles, and DC yields those ticks — so the
+    // tank spends long stretches not being driven by this module at all. In run 5 it
+    // then travelled 115yd away under stock playerbots control and walked back, at
+    // running speed and on the mesh the whole way (the monotonic off-route trace
+    // 13.7 -> 114.6yd over 16s is a RUN, not a fall — bots do not walk into holes),
+    // only to re-enter the deadlock. The run burns its entire budget this way.
+    //
+    // Retuning the radii is not the fix here: arriveRadius is ALSO the ring the
+    // followers gather in, so it is capped by the anchor's measured walkable pad
+    // (8.50 at this altar) and floored by the MoveTo's reach (8.26) — a 0.24yd
+    // window whose only solutions park the party within centimetres of the drop.
+    bool const started =
+        prog.stepIndex >= 1 ||
+        (!ev->steps.empty() && ev->steps.front().kind == EventStepKind::MoveTo);
+    return prog.eventId == ev->id && started && prog.stepIndex < ev->steps.size();
 }
 
 bool DungeonEventExecutor::IsPullOwningEventDriving(Player* bot, AiObjectContext* context)

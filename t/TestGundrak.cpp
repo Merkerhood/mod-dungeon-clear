@@ -534,6 +534,71 @@ TEST(DungeonEventGundrakTest, AltarClickPointsAreInsideTheUseRange)
     EXPECT_LT(Dist2d(moorabiAnchor->x, moorabiAnchor->y, 1772.22f, 804.963f), 1.0f);
 }
 
+// The two rim altars park the tank OUTSIDE their own objective's arrive radius —
+// forced, not sloppy. Their GOs stand in navmesh holes, so the anchor (roomy, for
+// the followers to gather on) and the click (a measured rim pad) cannot be the
+// same point, and the leading MoveTo between them is longer than arriveRadius.
+//
+// That shape deadlocked in the field: tp-20260830-185318-1 lost 3 of 10 runs to
+//   objective 'Altar of the Drakkari Colossus': dist=7.0 > arriveRadius=6.0
+//       (NOT arrived; event not started)
+// logged in the same second as the executor driving that event's step 0 — the tank
+// pinned ~7yd from its anchor, making no net progress for the rest of the run. The
+// fix is in IsPersistentAnchoredEventActive, which now counts a leading MoveTo as
+// "started"; this test pins the geometry that makes that latch load-bearing here,
+// so if someone later "simplifies" the latch these numbers say what breaks.
+//
+// Retuning arriveRadius instead is NOT an option and the margins say why: it is
+// also the ring the followers gather in, so it is capped by the anchor's measured
+// pad and floored by the MoveTo's reach. Slad'ran's window is 7.43..7.60 and the
+// Colossus's 8.26..8.50 — every solution stands the party within a few centimetres
+// of the drop the tank already fell down.
+TEST(DungeonEventGundrakTest, RimAltarsLeadWithAMoveToBeyondTheirArriveRadius)
+{
+    std::vector<DungeonBossInfo> const roster = Normal();
+
+    struct Row
+    {
+        uint32 eventId;
+        char const* name;
+    };
+    constexpr Row kRims[] = {
+        { EVENT_ALTAR_SLADRAN,  "Slad'ran"  },
+        { EVENT_ALTAR_COLOSSUS, "Colossus"  },
+    };
+
+    for (Row const& r : kRims)
+    {
+        DungeonBossInfo const* anchor = FindEvent(roster, r.eventId);
+        ASSERT_NE(anchor, nullptr) << r.name;
+        DungeonEvent const* ev = DungeonEventRegistry::Find(MAP, r.eventId);
+        ASSERT_NE(ev, nullptr) << r.name;
+        ASSERT_FALSE(ev->steps.empty()) << r.name;
+
+        // The latch keys off exactly this: step 0 being a MoveTo.
+        ASSERT_EQ(ev->steps.front().kind, EventStepKind::MoveTo) << r.name;
+
+        // The tank must stand at the click, up to the step's own radius off it, for
+        // that MoveTo to report Done — so this is how far from the anchor the event
+        // needs the objective to still count as ARRIVED.
+        EventStep const& move = ev->steps.front();
+        float const reach = Dist2d(anchor->x, anchor->y, move.x, move.y) + move.radius;
+        EXPECT_GT(reach, anchor->arriveRadius)
+            << r.name << ": this altar's leading MoveTo now finishes INSIDE the arrive "
+               "radius (" << reach << "yd vs " << anchor->arriveRadius << "yd). That is "
+               "a fine state of affairs, but it means this dungeon no longer exercises "
+               "the leading-MoveTo latch — check something still does before trusting it.";
+    }
+
+    // Moorabi's altar has 7.25yd of continuous mesh under it, so anchor and click
+    // are the same point and it never needed the latch — nor did it ever reproduce
+    // the stall in the field. Recorded so the asymmetry is not "fixed" away.
+    DungeonEvent const* moorabi = DungeonEventRegistry::Find(MAP, EVENT_ALTAR_MOORABI);
+    ASSERT_NE(moorabi, nullptr);
+    ASSERT_FALSE(moorabi->steps.empty());
+    EXPECT_NE(moorabi->steps.front().kind, EventStepKind::MoveTo);
+}
+
 // --- F2: the Colossus's Living Mojo ring ----------------------------------
 
 // The Colossus spawns NON_ATTACKABLE with MoveInLineOfSight stubbed out; the only
