@@ -9,8 +9,14 @@
 #include <cmath>
 #include <limits>
 
+#include <memory>
+
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearGeometry.h"
+#include "DetourExtended.h"   // dtQueryFilterExt
+#include "DetourNavMeshQuery.h"
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
+#include "PathGenerator.h"    // NAV_* flags, VERTEX_SIZE, INVALID_POLYREF
 #include "Player.h"
 
 namespace
@@ -357,6 +363,69 @@ namespace
                                     VMAP::ModelIgnoreFlags::Nothing);
     }
 
+    // --- navmesh walkability of a straight leg ------------------------------
+    //
+    // Sized like CorridorCenter's local searches: a raycast walks polys from a
+    // start ref, it does not run a dungeon-length A*, so the small pool is right.
+    constexpr int LEG_NODE_POOL = 2048;
+    float const LEG_POLY_EXTENTS[VERTEX_SIZE] = { 3.0f, 5.0f, 3.0f };
+
+    using ManagedQuery = std::unique_ptr<dtNavMeshQuery, decltype(&dtFreeNavMeshQuery)>;
+
+    // Does the straight leg bot->p stay on the navmesh the whole way?
+    //
+    // dtNavMeshQuery::raycast is the exact primitive: it walks the mesh from the
+    // start poly toward the target and reports `t`, the fraction of the ray
+    // travelled before it hit a navmesh boundary EDGE. A hole's rim is such an
+    // edge, so this catches the open void a VMAP sightline flies over. t >= 1
+    // (Detour returns FLT_MAX for a clean run) means the whole leg is on mesh.
+    bool BotCanWalk(Player* bot, G3D::Vector3 const& p)
+    {
+        if (!bot)
+            return false;
+        Map* map = bot->GetMap();
+        if (!map)
+            return true;  // no map data — never block on an unqueryable check
+        dtNavMesh const* navMesh = map->GetMapCollisionData().GetMMapData().GetNavMesh();
+        if (!navMesh)
+            return true;
+
+        // thread_local for the same reason CorridorCenter's is: map updates run
+        // across a worker pool and Detour mutates the node pool during a search.
+        thread_local ManagedQuery query(nullptr, &dtFreeNavMeshQuery);
+        if (!query)
+            query.reset(dtAllocNavMeshQuery());
+        if (!query || dtStatusFailed(query->init(navMesh, LEG_NODE_POOL)))
+            return true;
+
+        dtQueryFilterExt filter;
+        filter.setIncludeFlags(static_cast<uint16>(NAV_GROUND | NAV_WATER | NAV_MAGMA));
+        filter.setExcludeFlags(0);
+        DungeonClearGeometry::ApplyLiquidAreaCosts(filter);
+
+        // Detour is {y, z, x}.
+        float const start[VERTEX_SIZE] = { bot->GetPositionY(), bot->GetPositionZ(),
+                                           bot->GetPositionX() };
+        float const end[VERTEX_SIZE]   = { p.y, p.z, p.x };
+
+        dtPolyRef startRef = INVALID_POLYREF;
+        float snapped[VERTEX_SIZE];
+        if (dtStatusFailed(query->findNearestPoly(start, LEG_POLY_EXTENTS, &filter,
+                                                  &startRef, snapped)) ||
+            startRef == INVALID_POLYREF)
+            return true;  // bot is already off-mesh; the stuck ladder owns that case
+
+        float t = 0.0f;
+        float hitNormal[VERTEX_SIZE];
+        dtPolyRef visited[16];
+        int visitedCount = 0;
+        if (dtStatusFailed(query->raycast(startRef, start, end, &filter, &t, hitNormal,
+                                          visited, &visitedCount, 16)))
+            return true;
+
+        return t >= 1.0f;
+    }
+
     // Shared body of Resnap and SeedCursor: walk `maxSteps` flattened polyline
     // points forward from `from`, keep the ones inside RESNAP_RADIUS, and take
     // the nearest that the bot can actually SEE. Writes the winner into `state`
@@ -514,6 +583,21 @@ void DungeonPathFollower::SeedCursor(Player* bot, ChunkedPathfinder::Result cons
 bool DungeonPathFollower::LegIsClear(Player* bot, G3D::Vector3 const& to)
 {
     return BotCanSee(bot, to);
+}
+
+bool DungeonPathFollower::LegIsOnMesh(Player* bot, G3D::Vector3 const& to)
+{
+    return BotCanWalk(bot, to);
+}
+
+bool DungeonPathFollower::DropOpeningLeg(size_t windowPoints, float deviation,
+                                         float releaseBand, bool losClear, bool onMesh)
+{
+    if (windowPoints < 2)
+        return false;              // nothing to screen; the caller already falls back
+    if (deviation <= releaseBand)
+        return false;              // on the corridor: the leg runs along the route
+    return !losClear || !onMesh;
 }
 
 std::vector<G3D::Vector3> DungeonPathFollower::BuildSplineWindow(Player* bot,

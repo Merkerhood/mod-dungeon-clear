@@ -1472,21 +1472,42 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
     // anchor 16->18 hairpin, five seconds with zero navmesh under it).
     //
     // The rejoin rung already owns everything past OFF_PATH_THRESHOLD, so the only
-    // exposure is the residual band beneath it. Raycast ONLY inside that band: a
+    // exposure is the residual band beneath it. Probe ONLY inside that band: a
     // bot within DC_OFF_LINE_RELEASE of the line has an opening leg that lies
     // along the corridor and cannot cut a corner, and this is a per-tick hot path
-    // where an unconditional VMAP raycast would not pay for itself. Failing the
+    // where an unconditional raycast would not pay for itself. Failing the
     // screen drops the window, which sends the tick to the per-point MoveTo
-    // fallback — a PathGenerator route, wall-safe by construction.
-    if (st.splineWindow.size() >= 2 && st.routeDeviation > DC_OFF_LINE_RELEASE &&
-        !DungeonPathFollower::LegIsClear(bot, st.splineWindow[1]))
+    // fallback — a PathGenerator route, wall-safe AND floor-safe by construction,
+    // so it routes AROUND whatever the chord tried to cross.
+    //
+    // TWO probes, because a wall and a hole fail differently. LegIsClear is a
+    // static-VMAP sightline and an open void has nothing in it to see, so a leg
+    // over a pit screens perfectly clean. LegIsOnMesh raycasts the NAVMESH and
+    // stops at the void's rim. Gundrak tr-20260831-174013-100 is the case that
+    // needs the second one: a tank 7.2yd off its route on the spur north of the
+    // Colossus arena, opening leg straight across the x 1638-1648 void, LOS
+    // clean — 202yd walked for 0.98yd of net progress, 142 direction reversals,
+    // and a stuck ladder that ran to completion nine times without ever
+    // suspecting the route (which was fine) or the leg (which nothing checked).
+    // Size and band are tested BEFORE either probe: window[1] must exist to be
+    // read, and neither raycast may run on a healthy on-corridor tick.
+    if (st.splineWindow.size() >= 2 && st.routeDeviation > DC_OFF_LINE_RELEASE)
     {
-        LOG_DEBUG("playerbots.dungeonclear",
-                  "[DC:{}] advance window: opening leg to ({:.1f},{:.1f},{:.1f}) is "
-                  "blocked at {:.1f}yd off the line -> per-point MoveTo instead",
-                  bot->GetName(), st.splineWindow[1].x, st.splineWindow[1].y,
-                  st.splineWindow[1].z, st.routeDeviation);
-        st.splineWindow.clear();
+        bool const losClear = DungeonPathFollower::LegIsClear(bot, st.splineWindow[1]);
+        // Short-circuit: a leg already condemned by LOS never pays for the
+        // navmesh raycast as well.
+        bool const onMesh = losClear && DungeonPathFollower::LegIsOnMesh(bot, st.splineWindow[1]);
+        if (DungeonPathFollower::DropOpeningLeg(st.splineWindow.size(), st.routeDeviation,
+                                                DC_OFF_LINE_RELEASE, losClear, onMesh))
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] advance window: opening leg to ({:.1f},{:.1f},{:.1f}) is "
+                      "{} at {:.1f}yd off the line -> per-point MoveTo instead",
+                      bot->GetName(), st.splineWindow[1].x, st.splineWindow[1].y,
+                      st.splineWindow[1].z, losClear ? "off the navmesh" : "blocked",
+                      st.routeDeviation);
+            st.splineWindow.clear();
+        }
     }
 
     obs.haveSplineWindow = st.splineWindow.size() >= 2;

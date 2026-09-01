@@ -295,3 +295,53 @@ TEST(DcRampArrivalTest, WholeNavmeshFloatBandIsReachable)
         EXPECT_TRUE(Reached(70.0f, G3D::Vector3(1.0f, 0.0f, 70.0f - dz))) << "below dz=" << dz;
     }
 }
+
+// --- the opening-leg screen --------------------------------------------------
+//
+// window[0] is the bot's live position and window[1] the cursor point, so the
+// first segment is a straight line the route never vouched for. DropOpeningLeg
+// is that screen's whole policy: which ticks pay for a probe, and what condemns
+// a leg once probed.
+
+// The band gate. On the corridor the opening leg runs ALONG the route, so no
+// probe runs and nothing is dropped — this is the hot path.
+TEST(DcSplineWindowTest, OpeningLegIsNotScreenedOnTheCorridor)
+{
+    EXPECT_FALSE(DungeonPathFollower::DropOpeningLeg(10, /*deviation*/ 1.0f,
+                                                     /*releaseBand*/ 3.0f, true, true));
+    // Even a leg that WOULD fail both probes is left alone inside the band: the
+    // caller never probes there, so these flags are the caller's defaults.
+    EXPECT_FALSE(DungeonPathFollower::DropOpeningLeg(10, 3.0f, 3.0f, false, false));
+}
+
+// A chord through a WALL. This is the case the screen originally shipped for —
+// BWL tr-20260830-115416-5, the anchor 16->18 hairpin, five seconds inside rock.
+TEST(DcSplineWindowTest, OpeningLegBlockedByGeometryIsDropped)
+{
+    EXPECT_TRUE(DungeonPathFollower::DropOpeningLeg(10, /*deviation*/ 7.2f, 3.0f,
+                                                    /*losClear*/ false, /*onMesh*/ false));
+}
+
+// THE REGRESSION. A chord over an open VOID: nothing is built across a hole, so
+// the VMAP sightline is perfectly clean and only the navmesh probe objects.
+// Before LegIsOnMesh this combination screened as safe and the window survived —
+// Gundrak tr-20260831-174013-100, 202yd walked for 0.98yd of net progress.
+TEST(DcSplineWindowTest, OpeningLegOverAVoidIsDroppedDespiteCleanLos)
+{
+    EXPECT_TRUE(DungeonPathFollower::DropOpeningLeg(10, /*deviation*/ 7.23f, 3.0f,
+                                                    /*losClear*/ true, /*onMesh*/ false));
+}
+
+// Both probes clean, off the corridor: a legitimate rejoin chord. Keep it.
+TEST(DcSplineWindowTest, OpeningLegThatIsWalkableAndClearSurvives)
+{
+    EXPECT_FALSE(DungeonPathFollower::DropOpeningLeg(10, 7.23f, 3.0f, true, true));
+}
+
+// A sub-2-point window has no opening leg to screen; the caller already falls
+// back to per-point movement, and reading window[1] there would be out of range.
+TEST(DcSplineWindowTest, OpeningLegScreenIgnoresADegenerateWindow)
+{
+    EXPECT_FALSE(DungeonPathFollower::DropOpeningLeg(0, 50.0f, 3.0f, false, false));
+    EXPECT_FALSE(DungeonPathFollower::DropOpeningLeg(1, 50.0f, 3.0f, false, false));
+}

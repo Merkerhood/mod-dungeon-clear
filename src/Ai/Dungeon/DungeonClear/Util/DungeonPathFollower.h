@@ -286,6 +286,44 @@ public:
     // header and must not run on every healthy glide tick.
     static bool LegIsClear(Player* bot, G3D::Vector3 const& to);
 
+    // Can the bot WALK a straight leg to `to` without leaving the navmesh? A
+    // single dtNavMeshQuery::raycast from the bot's snapped poly, which stops at
+    // the first navmesh boundary edge it crosses.
+    //
+    // WHY THIS EXISTS ALONGSIDE LegIsClear. LegIsClear is a static-VMAP
+    // sightline, and a sightline does not care about the FLOOR. An open hole —
+    // a pit, a moat, a gap over a lower deck — has no geometry in the way, so
+    // the raycast sails across it and the leg screens CLEAN while the bot cannot
+    // take a single step along it. The two probes answer different questions and
+    // the opening leg needs both: LegIsClear rejects a chord through a wall,
+    // this rejects a chord over a void.
+    //
+    // Live (tr-20260831-174013-100, Gundrak heroic): the tank stood on a narrow
+    // spur north of the Colossus arena at (1632.0, 728.3, 142.9), 7.2yd off its
+    // route, and the opening leg ran straight at (1666.9, 740.8) across the
+    // navmesh void at x 1638-1648 / y <= 733. LegIsClear passed it — nothing is
+    // built over that gap — so the window survived and the bot pushed into the
+    // rim, moving 0.98yd NET while walking 202yd, reversing direction 142 times
+    // over 3m47s. 96% of those reversals landed within a second of a posStuck
+    // recovery: the ladder cycled resnap -> rebuild to completion, nine times
+    // over, and every rung validated the ROUTE, which was never the broken part.
+    //
+    // Fails OPEN (returns true) with no map, no navmesh, or no poly under the
+    // bot, matching DungeonClearGeometry's rule that an unqueryable geometry
+    // check never blocks routing.
+    static bool LegIsOnMesh(Player* bot, G3D::Vector3 const& to);
+
+    // Should the opening leg be dropped from the window? The whole screen policy
+    // in one pure predicate so it can be pinned by a test.
+    //
+    // Screening is BANDED: a bot within `releaseBand` of the line has an opening
+    // leg that lies along the corridor and cannot cut a corner, and both probes
+    // are far too expensive to run on every healthy glide tick. Outside the band
+    // the leg is a chord the route never vouched for, and EITHER probe failing
+    // condemns it — see LegIsOnMesh for why one is not enough.
+    static bool DropOpeningLeg(size_t windowPoints, float deviation, float releaseBand,
+                               bool losClear, bool onMesh);
+
     // Pure collection core of BuildSplineWindow (no Player — gtested directly).
     // Appends consecutive polyline points from cursor (seg, pt) to `window`,
     // which must already hold the live-position seed as its last element (length
