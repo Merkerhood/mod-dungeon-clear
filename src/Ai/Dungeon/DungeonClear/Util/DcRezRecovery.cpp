@@ -671,7 +671,7 @@ namespace DcRezRecovery
         run.rezAnnounceMs = 0;
         run.noRezzerSinceMs = 0;
         run.noRezzerQuietSinceMs = 0;
-        run.progressMs = 0;  // stranded clock re-arms on the next evaluation
+        run.progress.stampMs = 0;  // stranded clock re-arms on the next evaluation
 
         if (PlayerbotAI* botAI = GET_PLAYERBOT_AI(bot))
             DcStatusPublisher::SendAddonMessage(

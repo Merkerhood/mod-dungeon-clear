@@ -456,6 +456,16 @@ void DcStatusPublisher::UnmarkActiveTank(ObjectGuid tank)
     std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
     g_dcActiveTanks.erase(tank);
 }
+
+std::vector<ObjectGuid> DcStatusPublisher::ActiveTanks()
+{
+    std::vector<ObjectGuid> out;
+    std::lock_guard<std::mutex> lock(g_dcActiveTanksMutex);
+    out.reserve(g_dcActiveTanks.size());
+    for (auto const& kv : g_dcActiveTanks)
+        out.push_back(kv.first);
+    return out;
+}
 void DcStatusPublisher::SetStatusObserver(StatusObserver observer)
 {
     g_dcStatusObserver = std::move(observer);

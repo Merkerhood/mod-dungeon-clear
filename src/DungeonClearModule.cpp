@@ -80,6 +80,7 @@
 #include "Ai/Dungeon/DungeonClear/DungeonClearStrategyContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearTriggerContext.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearValueContext.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcFirstContact.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullBrake.h"
@@ -451,6 +452,15 @@ public:
         // the global tick (not a per-bot one) so it keeps firing through boss
         // fights, when the bot's non-combat strategy engine is dormant.
         DcStatusPublisher::TickStatusPushes(diff);
+
+        // Unreachable-holder combat purge: break a run out of a fight that can
+        // never end — a registered mob stranded off the navmesh holding the party
+        // flagged with nothing killable. Global tick, not a trigger, for the same
+        // reason as the ZF stray-summon despawner below: the deadlock parks the
+        // bots on the COMBAT engine, where the clear's non-combat triggers never
+        // get one. Internally throttled and gated on the map having a row, so it
+        // is a handful of integer compares on every other map.
+        DcCombatPurge::Tick(diff);
 
         // `.dc test` harness state machine (spawn -> gear -> group -> teleport
         // -> dc on -> watchdogs -> record). Cheap no-op while no test run is

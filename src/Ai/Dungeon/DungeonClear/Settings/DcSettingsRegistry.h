@@ -172,6 +172,26 @@ inline constexpr DcSettingDef kDcSettings[] =
     { "StrandedRecovery",              DcType::Bool,   1,   0,    1,  true  },
     { "StrandedRecoveryNoProgressSecs", DcType::UInt,  60,  60, 3600,  true  },
 
+    // Unreachable-holder combat purge. The other half of "the run has frozen":
+    // not a member stranded out of range, but a MOB stranded out of reach that
+    // has the party in combat and can never be killed, never be reached, and
+    // never evade (Gundrak's Drakkari Raiders, ejected off a drop into water by
+    // SmartAI and re-homed where they land). Nothing in the core ends that fight,
+    // so the party stays flagged for the rest of the run.
+    //
+    // When the run has shown NO progress — no boss/objective completed and the
+    // tank not closing on the next anchor — for this many seconds, and a creature
+    // listed in DcCombatPurgeRegistry is holding the party in combat, that
+    // creature's combat and threat are dropped and its entry is barred from
+    // target selection for the same window. The clock is deliberately COMBAT-BLIND
+    // (unlike StrandedRecoveryNoProgressSecs, which a fight re-arms): the fight is
+    // the thing being detected. 0 disables the purge entirely.
+    //
+    // Only a hand-vetted (mapId, entry) can ever be dropped, so the window is not
+    // a safety bound on WHAT gets purged — just on how long a deadlock is allowed
+    // to run before the failsafe answers it. See Util/DcCombatPurge.h.
+    { "UnreachableCombatPurgeSecs",    DcType::UInt,  60,   0, 3600,  true  },
+
     // Wait at Boss: auto-pause the run at the moment the tank would commit a
     // boss pull and hold for the human's resume (the addon Pause/Resume button
     // or `dc pause`), so the party can prepare instead of the tank rushing in

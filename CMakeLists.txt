@@ -783,3 +783,35 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    registration, the FSM's ordering guarantees, and the runner election's hard
 #    gates and preference order. Suite name starts DungeonEvent so the
 #    `DungeonEvent*` gtest filter in t/run_tests.sh picks it up.)
+# Util/DcRunProgress.{h,cpp}
+#   (the module's one definition of PROGRESS — encounter mask grew, cleared-anchor
+#    set grew, tank closed on the next anchor — hoisted out of DcStrandedRecovery's
+#    anonymous namespace so the two no-progress failsafes cannot drift apart. Each
+#    caller owns its own Mark, because the detector reports an EDGE and consumes
+#    it: one shared mark and whichever clock ticked first would eat the other's
+#    evidence. Combat is deliberately NOT one of the signals — the stranded
+#    failsafe adds engagement back on top of it, DcCombatPurge must not.)
+# Data/DcCombatPurgeRegistry.{h,cpp} + Util/DcCombatPurge.{h,cpp}
+#   (THE UNENDABLE FIGHT. A creature alive and hostile where the party cannot
+#    reach it, holding a CombatReference: instanced creatures never leash and a
+#    re-homed one has nowhere to evade back to, so nothing in the core ends that
+#    fight and the party stays flagged for the rest of the run — pull FSM stuck,
+#    rest gates shut, clear stopped. Gundrak's Drakkari Raider (29982) is the row
+#    it was written for: it has NO spawn row at all, it rides the Drakkari Rhino
+#    (29931) as a vehicle accessory, and the rhino's SmartAI ejects all three off
+#    waypoint path 1272070's sixteen-yard drop into the water and has them set
+#    their home position where they land.
+#    Two halves, and NEITHER is a reachability test — that guard was tried twice
+#    and is what made the old stuck-combat hatch go inert, since `IsReachable` is
+#    the chunked pathfinder and calls a 347yd holder through rock "reachable".
+#    WHICH creature is a hand-vetted table; WHEN is a COMBAT-BLIND no-progress
+#    clock on the global playerbot tick (a trigger cannot serve — the deadlock
+#    parks bots on the combat engine, where the non-combat rungs never tick).
+#    A purge also drops the stale `current target` and arms a windowed bar that
+#    DcTargetExclusionRegistry carries into stock target selection, or the pickers
+#    re-open the same fight next tick and the purge becomes a revolving door.
+#    Settings: DungeonClear.UnreachableCombatPurgeSecs. Tests: t/TestCombatPurge.cpp.)
+# t/TestCombatPurge.cpp
+#   (the registry lint and the shared progress kernel's clock arithmetic —
+#    unarmed/off/rollover. Suite names start Dc so t/run_tests.sh's filter picks
+#    them up.)

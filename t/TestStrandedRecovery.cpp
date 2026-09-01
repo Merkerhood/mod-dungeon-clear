@@ -209,3 +209,42 @@ TEST(DcStrandedRecoveryTest, RangeThresholdIsStrictlyGreater)
     Strand(party, 2, 25.01f);         // just past it: stranded
     EXPECT_TRUE(Decide(in, party).recover);
 }
+
+// --- the anchor may be a CORPSE ---------------------------------------------
+
+// When the tank dies, the glue keeps running this failsafe but re-anchors it on
+// the run owner's BODY: the survivors' only way out of a wipe is a rez, a rez is
+// cast at the corpse, and a rescue that gathers them anywhere else leaves the run
+// exactly as stuck. So the kernel must not treat a dead tank row as a reason to
+// stand down — it is the reference point, not a participant.
+//
+// Gundrak tp-20260830-231921-1: five runs wiped on Slad'ran, survivors parked
+// 122yd from the corpse, every one killed by the 600s no-progress watchdog.
+TEST(DcStrandedRecoveryTest, ADeadTankAnchorStillStrandsTheSurvivors)
+{
+    std::vector<Member> party = BaseParty();
+    party[0].isAlive = false;      // the anchor is a corpse
+    Strand(party, 2, 122.0f);      // ...and a survivor is 122yd out
+
+    Result const r = Decide(StaleInputs(), party);
+
+    EXPECT_TRUE(r.recover);
+    ASSERT_EQ(r.strandedIdx.size(), 1u);
+    EXPECT_EQ(r.strandedIdx[0], 2);
+}
+
+// The corpse is never itself a stray, however far the party has drifted from it:
+// isTank is skipped before any distance test, so a dead anchor can never be
+// selected for a teleport to itself.
+TEST(DcStrandedRecoveryTest, TheAnchorIsNeverTeleportedEvenWhenDead)
+{
+    std::vector<Member> party = BaseParty();
+    party[0].isAlive = false;
+    party[0].distToTank = 900.0f;  // nonsense distance; isTank must win regardless
+    Strand(party, 1, 122.0f);
+
+    Result const r = Decide(StaleInputs(), party);
+
+    ASSERT_EQ(r.strandedIdx.size(), 1u);
+    EXPECT_EQ(r.strandedIdx[0], 1);
+}

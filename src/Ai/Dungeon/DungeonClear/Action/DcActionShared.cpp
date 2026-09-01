@@ -54,6 +54,7 @@
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/ChunkedPathfinder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcDoorPolicy.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPathWorker.h"
@@ -272,6 +273,11 @@ namespace DcActionShared
         if (bot)
         {
             DcStatusPublisher::UnmarkActiveTank(bot->GetGUID());
+            // Post-purge target bars are the other piece of run state kept OUTSIDE
+            // the bot — keyed by instance id, which the server reuses — so a bar
+            // left standing would silently follow the next run into the same
+            // instance and hide a legitimate target from it. See DcCombatPurge.h.
+            DcCombatPurge::ClearBars(bot);
             // Hand the room back. The social quarantine is the one piece of run
             // state that lives OUTSIDE the bot — it is stored as react state on the
             // creatures themselves — so a reset that only clears context values

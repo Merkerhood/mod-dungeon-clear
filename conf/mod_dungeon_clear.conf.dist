@@ -316,6 +316,35 @@ DungeonClear.StrandedRecovery = 1
 DungeonClear.StrandedRecoveryNoProgressSecs = 60
 
 #
+#    DungeonClear.UnreachableCombatPurgeSecs
+#        The other half of "the run has frozen". Not a party member stranded out
+#        of range, but a MOB stranded out of REACH that has the party in combat
+#        and can never be killed, never be reached, and never evade — Gundrak's
+#        Drakkari Raiders are the case this exists for: SmartAI ejects three of
+#        them off a sixteen-yard drop into water, mid-charge, and has them set
+#        their home position where they land. Instanced creatures never leash and
+#        a re-homed one has nowhere to evade back to, so nothing in the core ever
+#        ends that fight: the party stays flagged, the pull FSM never retires its
+#        phase, nobody can eat or drink, and the clear stops where it stands.
+#
+#        Seconds the run must show NO progress before such a holder's combat and
+#        threat are dropped and its entry is barred from target selection for the
+#        same window. This clock is COMBAT-BLIND, unlike the stranded-recovery one
+#        above — the unendable fight is the thing being detected, so a clock that
+#        combat re-armed could never fire.
+#
+#        Only creatures hand-listed in DcCombatPurgeRegistry can ever be dropped
+#        (currently one row: Gundrak's Drakkari Raider), so this window does not
+#        decide WHAT gets purged — only how long a deadlock runs before the
+#        failsafe answers it.
+#            0 = off (an unreachable holder freezes the run until you intervene)
+#
+#        Default: 60 (1 minute)
+#
+
+DungeonClear.UnreachableCombatPurgeSecs = 60
+
+#
 #    DungeonClear.WaitAtBoss
 #        Auto-pause the run right before every boss pull and wait for you to
 #        resume (the addon's Pause/Resume button, or `dc pause`). The pause

@@ -13,6 +13,7 @@
 #include "ObjectGuid.h"
 #include "Timer.h"
 
+#include "Ai/Dungeon/DungeonClear/Util/DcRunProgress.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcThrottle.h"
 
 // The authoritative, leader-owned state of one dungeon-clear RUN — the run's
@@ -180,20 +181,28 @@ struct DcRunState
     uint32 musterRebuffIssuedMs = 0;  // getMSTime() the rebuff round was issued
     bool   musterRestOverride = false;
 
-    // === stranded-member recovery failsafe (leader-owned) =========================
-    // The no-progress clock + last-seen progress snapshot, ticked live on the
-    // leader by DcStrandedRecovery::Evaluate (the single clock-owner site).
-    // progressMs re-stamps whenever the run shows a sign of life — a boss/objective
-    // completed, or the tank closing on the next anchor — and combat re-arms it too
-    // (a fight is progress), so a legitimately slow pull/rest never trips it. When
-    // it goes stale past StrandedRecoveryNoProgressSecs while a bot member is stuck
-    // out of range (fell under the world / wedged), the leader teleports the strays
-    // to itself. See Util/DcStrandedDecision.h + DcStrandedRecovery.
-    uint32 progressMs        = 0;       // getMSTime() of the last sign of progress (0 = unarmed)
-    uint32 progressMask      = 0;       // completed-encounter mask last seen
-    uint32 progressAnchors   = 0;       // cleared-anchor count last seen
-    float  progressBestDist  = -1.0f;   // closest tank approach to the current anchor (<0 = unset)
-    uint32 progressAnchorEntry = 0;     // anchor entry progressBestDist is keyed to (re-arm on change)
+    // === the run's no-progress clocks (leader-owned) ==============================
+    // Two failsafes ask "has this run stopped moving?" and both read the same
+    // three signals (DcRunProgress: an encounter completed, an anchor cleared,
+    // the tank closing on the next anchor). They get SEPARATE marks because the
+    // detector reports an edge and consumes it — one shared mark and whichever
+    // clock ticked first would eat the other's evidence.
+    //
+    // `progress` is the stranded-member recovery failsafe's, ticked live on the
+    // leader by DcStrandedRecovery::Evaluate (its single clock-owner site). It
+    // additionally re-arms on party ENGAGEMENT — a fight is progress — so a
+    // legitimately slow pull or a long boss fight never trips it. When it goes
+    // stale past StrandedRecoveryNoProgressSecs while a bot member is stuck out of
+    // range (fell under the world / wedged), the leader teleports the strays to
+    // itself. See Util/DcStrandedDecision.h + DcStrandedRecovery.
+    //
+    // `purgeProgress` is DcCombatPurge's, ticked on the global playerbot tick.
+    // It is deliberately COMBAT-BLIND: its subject is a fight that can never end
+    // (a mob stranded off the navmesh holding the party flagged forever), so a
+    // clock that engagement re-armed could never fire in the one state it exists
+    // for. See Util/DcCombatPurge.h.
+    DcRunProgress::Mark progress;
+    DcRunProgress::Mark purgeProgress;
 
     // === Blackwing Lair — Razorgore's orb and egg run (leader-owned) =============
     // The one encounter DC orchestrates from INSIDE a raid fight (see

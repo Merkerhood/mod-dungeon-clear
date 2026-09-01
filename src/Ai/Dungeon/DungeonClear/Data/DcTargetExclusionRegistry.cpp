@@ -12,6 +12,7 @@
 #include "Script/Playerbots.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcCombatPurge.h"
 
 #include <list>
 #include <unordered_set>
@@ -100,6 +101,29 @@ namespace
         return !inst || inst->GetBossState(DcBlackwingLair::BROODLORD_ENCOUNTER_INDEX) != DONE;
     }
 
+    // Gundrak: a Drakkari Raider the combat purge has just dropped.
+    //
+    // The purge ends an unendable fight (DcCombatPurge) — but ending it is not
+    // enough on its own, because the mob is still standing there, still hostile,
+    // and still a legal target. The clear's pickers re-select it the next tick,
+    // walk the party at water they cannot cross, and re-open the same fight: a
+    // revolving door that purges once a window forever and never progresses.
+    //
+    // So the purge arms a short bar on the entry and this row carries it into the
+    // stock combat engine's own target selection, which is the only place that
+    // actually points the party's damage. `alsoTank`, because the tank walking at
+    // it is the specific harm — the followers go where the tank goes.
+    //
+    // Windowed by construction: the bar expires with the purge clock, so a raider
+    // that landed on solid ground and IS fightable is barred at most for that
+    // window and never permanently. This is the mirror image of the Razorgore row
+    // — same mechanism, opposite direction: there the world decides the window,
+    // here the failsafe does.
+    bool GundrakRaiderJustPurged(Player* bot)
+    {
+        return DcCombatPurge::IsBarred(bot, 29982);
+    }
+
     DcTargetExclusionRow const kRows[] = {
         // Blackwing Lair — Razorgore the Untamed. Killing him before the last egg
         // breaks casts 20038 (Explosion) and instakills the raid, so phase-1
@@ -134,6 +158,9 @@ namespace
         { 469, DcBlackwingLair::NPC_EBONROC,    &BwlDrakeHallOutOfOrder, /*alsoTank*/ true },
         { 469, DcBlackwingLair::NPC_FLAMEGOR,   &BwlDrakeHallOutOfOrder, /*alsoTank*/ true },
         { 469, DcBlackwingLair::NPC_CHROMAGGUS, &BwlDrakeHallOutOfOrder, /*alsoTank*/ true },
+
+        // Gundrak — Drakkari Raider, for the window after a combat purge dropped it.
+        { 604, 29982, &GundrakRaiderJustPurged, /*alsoTank*/ true },
     };
 }
 
