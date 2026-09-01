@@ -163,7 +163,9 @@ inline constexpr DcSettingDef kDcSettings[] =
     // run freezes. With StrandedRecovery on, when the run has shown NO progress —
     // no boss/objective completed and the tank not closing on the next anchor —
     // for StrandedRecoveryNoProgressSecs while a BOT member is stuck beyond
-    // PartyMaxSpread of the tank, that member is teleported to the tank (bots
+    // the tank's live advance-gate spread (PartyMaxSpread, or a sealed
+    // encounter's tighter muster clump — DcStrandedDecision::RescueSpread), that
+    // member is teleported to the tank (bots
     // only; a human is never relocated). The long clock is deliberate: it must
     // never fire during a legitimately slow pull/rest, only a true freeze, and
     // combat re-arms it (a fight is progress) so a long boss fight never trips it.

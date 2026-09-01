@@ -12,6 +12,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcPartyState.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcPullPlanner.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRunProgress.h"
@@ -97,6 +98,20 @@ namespace
     // rescue that gathers them anywhere else leaves the run exactly as stuck. It
     // also means the driver may be a stray itself — the sole survivor 122yd out is
     // both — so Recover moves the anchor's group, never "everyone but me".
+    // The rescue's out-of-range threshold, matched to the gate the tank's
+    // advance is ACTUALLY enforcing rather than to the raw setting. See
+    // DcStrandedDecision::RescueSpread for the dead band this closes and why the
+    // tank-anchored test is load-bearing. Resolved once per tick by Evaluate and
+    // again by Recover; both go through this one body so they can never disagree
+    // about who is stranded.
+    float RescueSpread(Player* bot)
+    {
+        DcPartyState::SpreadGate const gate = DcPartyState::LeaderGate(bot);
+        return DcStrandedDecision::RescueSpread(
+            DcSettings::GetFloat(bot, "PartyMaxSpread"), gate.maxSpread,
+            /*gateIsTankAnchored*/ gate.anchor == nullptr);
+    }
+
     struct Driver
     {
         Player* clockOwner = nullptr;  // whose tick runs this
@@ -194,7 +209,7 @@ namespace DcStrandedRecovery
         in.lastProgressMs = run.progress.stampMs;
         in.noProgressTimeoutMs = DcSettings::GetUInt(bot, "StrandedRecoveryNoProgressSecs") * 1000;
         in.partyEngaged = partyEngaged;
-        in.maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
+        in.maxSpread = RescueSpread(bot);
 
         return DcStrandedDecision::Decide(in, members).recover;
     }
@@ -216,7 +231,7 @@ namespace DcStrandedRecovery
         if (!group)
             return;
 
-        float const maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
+        float const maxSpread = RescueSpread(bot);
         float const lx = leader->GetPositionX();
         float const ly = leader->GetPositionY();
         float const lz = leader->GetPositionZ();
@@ -256,8 +271,8 @@ namespace DcStrandedRecovery
 
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] stranded-recovery: no progress past the timeout with {} out of "
-                     "range ({:.0f}yd) -> teleported to the {}",
-                     leader->GetName(), member->GetName(), strandedDist,
+                     "range ({:.0f}yd > {:.0f}yd) -> teleported to the {}",
+                     leader->GetName(), member->GetName(), strandedDist, maxSpread,
                      leader->isDead() ? "tank's corpse (driver " + bot->GetName() + ")"
                                       : "tank");
         }

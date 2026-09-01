@@ -277,6 +277,21 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
     }
     return gate;
 }
+DcPartyState::SpreadGate DcPartyState::LeaderGate(Player* bot)
+{
+    SpreadGate own;
+    if (!bot)
+        return own;
+    own.maxSpread = DcSettings::GetFloat(bot, "PartyMaxSpread");
+    Player* leader = DcLeaderSignal::FindLeaderTank(bot);
+    if (!leader)
+        return own;
+    PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
+    if (!leaderAI)
+        return own;   // a real-player leader runs no DC gate to be inside of
+    return GetSpreadGate(leader, leaderAI->GetAiObjectContext());
+}
+
 float DcPartyState::LeaderEffectiveMaxSpread(Player* bot)
 {
     if (!bot)
