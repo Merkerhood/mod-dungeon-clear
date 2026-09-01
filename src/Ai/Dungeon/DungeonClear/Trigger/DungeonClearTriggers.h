@@ -280,6 +280,22 @@ public:
 // cast, so bots roll as soon as the window opens. Gated by
 // DungeonClear.BetterLootRolling; inert for self-bots, where the human owns
 // the roll (improvement #1 — see BetterLootRollAction.h).
+//
+// STARVATION BOUND. This rung sits at DcRel::LootRollPending (95), above the
+// entire driving ladder, and one action runs per tick — so for as long as it
+// fires and its action reports success, NOTHING else drives the bot. That is
+// only safe while "fires" and "the vote lands" mean the same thing, and once
+// they came apart the run died silently for ten minutes (see
+// DcLootRoll::IsVotablePendingRoll). The shared predicate closes the case we
+// found; the counter below bounds the CLASS, so the next predicate that drifts
+// costs one unrolled item instead of a whole run.
+//
+// The action votes on every pending roll in a single Execute, so one healthy
+// firing clears this bot's whole backlog and the rung goes quiet on the very
+// next tick. Several consecutive ticks against an UNCHANGED set of pending
+// rolls therefore means the votes are not landing. The signature is what makes
+// this safe to latch: any real change — a roll resolved, a new item dropped —
+// gives a different value, resets the streak and re-arms the rung immediately.
 class DungeonClearLootRollPendingTrigger : public Trigger
 {
 public:
@@ -288,6 +304,14 @@ public:
     {
     }
     bool IsActive() override;
+
+private:
+    // Consecutive ticks this trigger has fired against the same pending set.
+    // Generous: a healthy roll needs exactly one.
+    static constexpr uint32 MAX_UNCHANGED_TICKS = 5;
+
+    std::uint64_t _pendingSignature = 0;   // 0 == nothing was pending last tick
+    uint32 _unchangedTicks = 0;
 };
 
 // --- Advanced pulls -------------------------------------------------------

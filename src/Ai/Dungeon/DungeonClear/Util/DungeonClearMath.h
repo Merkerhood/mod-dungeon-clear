@@ -694,6 +694,46 @@ namespace DungeonClearMath
         return now >= sinceMs && (now - sinceMs) >= graceMs;
     }
 
+    // Loot-roll rung starvation bound (pure, by-reference latch).
+    //
+    // The rung that answers an open loot roll sits at relevance 95, above the
+    // whole driving ladder, and only one action runs per tick — so while it
+    // fires and its action reports success, nothing else drives the bot. Safe
+    // only while "fires" and "the vote lands" mean the same thing; when they
+    // came apart the run froze for ten minutes with every watchdog reading zero
+    // (tr-20260831-123946-18). The shared votable-roll predicate closes that
+    // case; this bounds the CLASS.
+    //
+    // `signature` digests the rolls the bot could vote on this tick and
+    // `votable` counts them (counted, not inferred from a zero digest). The
+    // action clears its whole backlog in ONE Execute, so a healthy firing needs
+    // a single tick and the next tick sees an empty set. Consecutive ticks on an
+    // UNCHANGED set therefore mean the votes are not landing — yield the tick.
+    // Any real change (a roll resolved, a new drop) re-arms immediately, which
+    // is what keeps the latch from suppressing legitimate rolling.
+    //
+    // Returns TRUE while the rung may fire. After a call, `unchangedTicks ==
+    // maxUnchangedTicks + 1` marks the single tick the bound first bit, for a
+    // one-shot log.
+    inline bool LootRollRungMayFire(std::uint32_t votable, std::uint64_t signature,
+                                    std::uint32_t maxUnchangedTicks,
+                                    std::uint64_t& lastSignature,
+                                    std::uint32_t& unchangedTicks)
+    {
+        if (!votable)
+        {
+            lastSignature = 0;
+            unchangedTicks = 0;
+            return false;       // nothing pending — full budget for the next window
+        }
+        if (signature != lastSignature)
+        {
+            lastSignature = signature;
+            unchangedTicks = 0;
+        }
+        return ++unchangedTicks <= maxUnchangedTicks;
+    }
+
     // Bystander-detour borrow watchdog (pure, by-reference latch).
     //
     // Above commit range the tank's approach belongs to Advance (the long-path

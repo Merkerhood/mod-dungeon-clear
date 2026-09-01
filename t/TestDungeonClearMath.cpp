@@ -2588,3 +2588,67 @@ TEST(DungeonClearMathTest, RejoinRefusalRebaselinesAfterAHalt)
     EXPECT_FALSE(DungeonClearMath::DecideRejoinRefusal(12.0f, halted.bestDeviation, 3.0f)
                      .haltStaleMove);
 }
+
+// ===== Loot-roll rung starvation bound (LootRollRungMayFire) =====
+//
+// The rung sits at relevance 95 above the whole driving ladder, and one action
+// runs per tick. tr-20260831-123946-18: a roll whose Loot had been emptied made
+// Group::CountRollVote refuse the vote, so the rung fired and its action
+// reported success on all 3142 ticks of the freeze while `dungeon clear advance`
+// (15) was pushed every tick and executed on none. This bounds that class.
+
+TEST(DungeonClearMathTest, LootRollRungFiresForAHealthyWindow)
+{
+    std::uint64_t sig = 0;
+    std::uint32_t ticks = 0;
+
+    // The action clears its whole backlog in one Execute, so a healthy window is
+    // one firing followed by an empty set.
+    EXPECT_TRUE(DungeonClearMath::LootRollRungMayFire(2, 0xABCD, 5, sig, ticks));
+    EXPECT_FALSE(DungeonClearMath::LootRollRungMayFire(0, 0, 5, sig, ticks));
+    EXPECT_EQ(ticks, 0u);   // empty set restores the full budget
+}
+
+TEST(DungeonClearMathTest, LootRollRungStandsDownOnAnUnchangedSet)
+{
+    std::uint64_t sig = 0;
+    std::uint32_t ticks = 0;
+
+    // Same unresolvable roll every tick: fires for the budget, then yields.
+    for (std::uint32_t i = 0; i < 5; ++i)
+        EXPECT_TRUE(DungeonClearMath::LootRollRungMayFire(1, 0xDEAD, 5, sig, ticks)) << "tick " << i;
+
+    EXPECT_FALSE(DungeonClearMath::LootRollRungMayFire(1, 0xDEAD, 5, sig, ticks));
+    EXPECT_EQ(ticks, 6u);   // == max + 1: the one tick the one-shot log fires on
+
+    // And it STAYS down while nothing changes — without this the freeze resumes.
+    for (int i = 0; i < 50; ++i)
+        EXPECT_FALSE(DungeonClearMath::LootRollRungMayFire(1, 0xDEAD, 5, sig, ticks));
+}
+
+TEST(DungeonClearMathTest, LootRollRungReArmsWhenTheRollSetChanges)
+{
+    std::uint64_t sig = 0;
+    std::uint32_t ticks = 0;
+
+    while (DungeonClearMath::LootRollRungMayFire(1, 0xDEAD, 5, sig, ticks)) {}
+    EXPECT_FALSE(DungeonClearMath::LootRollRungMayFire(1, 0xDEAD, 5, sig, ticks));
+
+    // A new drop lands: the digest changes and the rung must roll on it at once.
+    // A latch that suppressed this would trade one bug for a bot that stops
+    // rolling for the rest of the run.
+    EXPECT_TRUE(DungeonClearMath::LootRollRungMayFire(2, 0xBEEF, 5, sig, ticks));
+    EXPECT_EQ(ticks, 1u);
+}
+
+TEST(DungeonClearMathTest, LootRollRungCountsRollsRatherThanTrustingTheDigest)
+{
+    std::uint64_t sig = 0;
+    std::uint32_t ticks = 0;
+
+    // votable == 0 is the ONLY "nothing pending" signal. A digest that happens
+    // to be zero with rolls still pending must still fire, or a hash collision
+    // would silently disable rolling.
+    EXPECT_TRUE(DungeonClearMath::LootRollRungMayFire(1, 0, 5, sig, ticks));
+    EXPECT_EQ(ticks, 1u);
+}

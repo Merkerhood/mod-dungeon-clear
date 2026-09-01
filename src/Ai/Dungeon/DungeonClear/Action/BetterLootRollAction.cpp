@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Group.h"
+#include "LootMgr.h"
 #include "ObjectMgr.h"
 #include "PlayerbotAIConfig.h"
 #include "Playerbots.h"
@@ -49,6 +50,42 @@ namespace
     }
 }
 
+bool DcLootRoll::IsVotablePendingRoll(Roll* roll, Player* bot)
+{
+    if (!roll || !bot)
+        return false;
+
+    // FIRST, because it is what CountRollVote depends on before anything else:
+    // it resolves the roll through Group::GetRoll, which matches on
+    // `itemGUID == Guid && isValid()` (Group.cpp:2680). A Roll whose Loot has
+    // been destroyed is INVALIDATED but stays in the group's RollId list, so it
+    // is still handed out by GetRolls() and still looks answerable from the
+    // outside — `getLoot()` just returns null for it, which is precisely why the
+    // empty-items guard below waves it through.
+    //
+    // This is the common flavour in practice: the first fix shipped without it
+    // and the starvation bound still tripped 21 times in tp-20260831-134433-1,
+    // every one of them an invalidated roll rather than an emptied one.
+    if (!roll->isValid())
+        return false;
+
+    auto const voteItr = roll->playerVote.find(bot->GetGUID());
+    if (voteItr == roll->playerVote.end() || voteItr->second != NOT_EMITED_YET)
+        return false;
+
+    // Group.cpp:1516. A loot object that exists but has been emptied — the
+    // corpse looted out from under a still-open roll window — makes
+    // CountRollVote bail before it records anything, so a vote here can never
+    // land and asking for one every tick is a livelock, not a retry.
+    if (Loot* loot = roll->getLoot())
+        if (loot->items.empty())
+            return false;
+
+    // The action's own no-vote path: it skips a roll whose template does not
+    // resolve, so such a roll must not be reported votable either.
+    return sObjectMgr->GetItemTemplate(roll->itemid) != nullptr;
+}
+
 bool DungeonClearBetterLootRollAction::isUseful()
 {
     // Only intercept self-bots (master == bot). A bot driven for a separate
@@ -80,16 +117,20 @@ bool DungeonClearBetterLootRollAction::Execute(Event event)
     // which erases the entry and deletes the Roll — so no Roll* may be read
     // after any vote has been cast.
     std::vector<std::pair<ObjectGuid, RollVote>> decided;
-    for (Roll const* roll : group->GetRolls())
+    for (Roll* roll : group->GetRolls())
     {
-        auto voteItr = roll->playerVote.find(bot->GetGUID());
-        if (voteItr == roll->playerVote.end() || voteItr->second != NOT_EMITED_YET)
+        // One predicate with the trigger — see DcLootRoll::IsVotablePendingRoll.
+        // It also screens the roll CountRollVote would refuse, which this loop
+        // must skip for its own sake: `decided` is what makes Execute report
+        // true, so queuing a vote that can never be recorded would keep this
+        // action owning the tick forever.
+        if (!DcLootRoll::IsVotablePendingRoll(roll, bot))
             continue;
 
         ItemTemplate const* proto = sObjectMgr->GetItemTemplate(roll->itemid);
         // Anything that is not the over-level case is stock's to answer, and
         // the pass below answers it — leave the vote unemitted for now.
-        if (!proto || !IsFutureWearable(proto))
+        if (!IsFutureWearable(proto))
             continue;
 
         int32 randomProperty = 0;

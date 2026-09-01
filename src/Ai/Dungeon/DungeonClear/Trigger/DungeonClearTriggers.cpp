@@ -47,6 +47,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearMath.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTickMemo.h"
+#include "Ai/Dungeon/DungeonClear/Action/BetterLootRollAction.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonPathFollower.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
@@ -2193,18 +2194,33 @@ bool DungeonClearLootRollPendingTrigger::IsActive()
     if (!group)
         return false;
 
+    // Digest every roll this bot could actually vote on right now. The predicate
+    // is shared with the action so the two can never disagree about what
+    // "votable" means — that disagreement was the bug. FNV-1a over the item
+    // GUIDs, with the count kept separately so an unlucky digest can never be
+    // mistaken for an empty window.
+    std::uint64_t signature = 14695981039346656037ull;
+    uint32 votable = 0;
     for (Roll* roll : group->GetRolls())
     {
-        auto voteItr = roll->playerVote.find(bot->GetGUID());
-        if (voteItr == roll->playerVote.end() || voteItr->second != NOT_EMITED_YET)
+        if (!DcLootRoll::IsVotablePendingRoll(roll, bot))
             continue;
-
-        // Mirror the action's only no-vote path: it skips a roll whose item
-        // template doesn't resolve, so such a roll must not fire the trigger
-        // every tick forever.
-        if (sObjectMgr->GetItemTemplate(roll->itemid))
-            return true;
+        ++votable;
+        signature = (signature ^ roll->itemGUID.GetRawValue()) * 1099511628211ull;
     }
 
-    return false;
+    // Starvation bound — see DungeonClearMath::LootRollRungMayFire.
+    if (!DungeonClearMath::LootRollRungMayFire(votable, signature, MAX_UNCHANGED_TICKS,
+                                               _pendingSignature, _unchangedTicks))
+    {
+        if (_unchangedTicks == MAX_UNCHANGED_TICKS + 1)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] loot-roll rung stood down: {} tick(s) on an unchanged pending "
+                     "roll set and the vote never landed — releasing the tick to the driving "
+                     "ladder (re-arms if the rolls change)",
+                     bot->GetName(), MAX_UNCHANGED_TICKS);
+        return false;
+    }
+
+    return true;
 }
