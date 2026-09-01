@@ -454,6 +454,31 @@ namespace DcGundrak
     constexpr float WEST_TIP_X   = 1753.50f;
     constexpr float EAST_TIP_X   = 1796.50f;
 
+    // --- the rhino stampede, which stands on the Gal'darah approach -------
+    //
+    // Both rhinos spawn ON THE CAUSEWAY between the teleport landing and the
+    // boss, so the party cannot reach Gal'darah without walking through them.
+    //
+    // 29931 is the loaded one: vehicle_template_accessory seats THREE Drakkari
+    // Raiders (29982) on it, and its SmartAI runs waypoint path 1272070, fires
+    // Do Action 150/151/152 at point 3, and each raider answers with "Exit
+    // vehicle + Set Home Position". Three ordinary trash mobs are then loose on
+    // the approach, and — instanced creatures never leash — anything they tag
+    // stays tagged from wherever they end up. That is the standoff combat that
+    // pinned the tank outside engage range in tr-20260830-195435-2 / -6.
+    //
+    // 29838 is the charging one (Charge 55530 at 5-40yd, Deafening Roar); it
+    // killed tr-20260830-195435-7 outright.
+    constexpr uint32 RHINO_LOADED   = 29931;
+    constexpr uint32 RHINO_CHARGING = 29838;
+    constexpr uint32 RAIDER         = 29982;
+    constexpr uint32 RAIDER_SEATS   = 3;
+
+    constexpr float RHINO_LOADED_X   = 1865.06f;
+    constexpr float RHINO_LOADED_Y   = 742.78f;
+    constexpr float RHINO_CHARGING_X = 1887.56f;
+    constexpr float RHINO_CHARGING_Y = 742.88f;
+
     // --- Gal'darah's sealed arena ----------------------------------------
     constexpr float MUSTER_X = 1858.00f;
     constexpr float MUSTER_Y = 743.60f;

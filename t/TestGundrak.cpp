@@ -15,6 +15,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 #include "Ai/Dungeon/DungeonClear/Data/SealedEncounterRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonClearTuning.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 
 // Gundrak (map 604) — the authored-data lints for a dungeon that had FOUR
@@ -930,4 +931,66 @@ TEST(DungeonEventGundrakTest, NoGundrakEventClaimsAVettedFlag)
     }
     EXPECT_EQ(found, 6) << "Gundrak authors six events (three altars, the mojo pull, the "
                            "dweller pool and the crossing)";
+}
+
+// --- F6: the rhino stampede stands on the Gal'darah approach ---------------
+//
+// The fifth stacked defect, and the one that only became visible once the
+// bridge crossing (F4) started working: the party lands, walks east, and runs
+// straight into the stampede staging ground.
+//
+// Live, tp-20260830-195430-1: of the six runs that killed Moorabi, THREE were
+// ended here. tr-…-7 wiped outright to the charging rhino. tr-…-2 and tr-…-6
+// hung until the operator aborted them at 29 minutes, with every member held in
+// combat by a dismounted Drakkari Raider at 16-26yd that never closed and never
+// died — closest approach to Gal'darah 27.6yd and 46.7yd against an engage range
+// of 22, so the at-boss path never armed and the boss never aggroed at all.
+//
+// What is pinned here is the GEOMETRY that makes the encounter unavoidable. The
+// combat-resolution half of the fix (walking the PvE combat refs, not just
+// getAttackers) lives in DcTargeting::CollectCombatHolders and needs a live
+// CombatManager, so it is verified in-game rather than here.
+TEST(DungeonEventGundrakTest, RhinoStampedeStandsOnTheGaldarahApproach)
+{
+    std::vector<DungeonBossInfo> const roster = DerivedNormal();
+    auto const boss = std::find_if(roster.begin(), roster.end(),
+                                   [](DungeonBossInfo const& b) { return b.entry == GALDARAH; });
+    ASSERT_NE(boss, roster.end());
+
+    // Both rhinos sit BETWEEN the teleport landing and the boss, on the causeway
+    // centreline. There is no way to reach Gal'darah that does not pass them, so
+    // "route around the stampede" is not an available fix.
+    for (float rhinoX : {RHINO_LOADED_X, RHINO_CHARGING_X})
+    {
+        EXPECT_GT(rhinoX, CROSS_LAND_X)
+            << "a rhino spawning west of the teleport landing would not be on the approach";
+        EXPECT_LT(rhinoX, boss->x)
+            << "a rhino spawning east of Gal'darah would be behind the party, not in front";
+    }
+
+    // The loaded rhino is inside the sealed arena's approach radius, so its
+    // raiders dismount INTO the window where the muster and the tank-anchored
+    // clump are already armed — which is why their combat flag stalls the gates
+    // rather than merely delaying the walk.
+    SealedEncounterRow const* const row = SealedEncounterRegistry::Find(MAP, GALDARAH);
+    ASSERT_NE(row, nullptr);
+    float const rhinoToBoss = Dist3d(RHINO_LOADED_X, RHINO_LOADED_Y, boss->z,
+                                     boss->x, boss->y, boss->z);
+    EXPECT_LT(rhinoToBoss, row->approachRadius)
+        << "the loaded rhino (" << rhinoToBoss << "yd from the boss) must fall inside "
+           "approachRadius (" << row->approachRadius << "), or this encounter is an "
+           "ordinary trash fight and the gates it stalls are not armed yet";
+
+    // ...and it is far enough out that a party held there is NOT inside engage
+    // range: this is exactly the band in which the tank was pinned, close enough
+    // for the at-boss gates to be armed and too far for the engage to fire.
+    EXPECT_GT(rhinoToBoss, DC_ENGAGE_RANGE)
+        << "a party stalled at the rhino must be outside DC_ENGAGE_RANGE — that gap "
+           "is the failure, and if it ever closes this test is measuring the wrong thing";
+
+    // The loaded rhino is the one that matters: it is the raider carrier. If this
+    // ever stops being three seats, the dismount count in GundrakEvents is stale.
+    EXPECT_EQ(RAIDER_SEATS, 3u);
+    EXPECT_NE(RHINO_LOADED, RHINO_CHARGING);
+    EXPECT_NE(RAIDER, RHINO_LOADED);
 }

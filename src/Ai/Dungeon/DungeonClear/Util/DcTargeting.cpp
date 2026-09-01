@@ -28,6 +28,7 @@
 #include <vector>
 #include "AttackersValue.h"
 #include "CellImpl.h"
+#include "CombatManager.h"
 #include "Creature.h"
 #include "CreatureGroups.h"
 #include "GameObject.h"
@@ -955,18 +956,46 @@ Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
     return nullptr;
 }
 
+void DcTargeting::CollectCombatHolders(Unit* member, std::vector<Unit*>& out)
+{
+    if (!member)
+        return;
+
+    std::unordered_set<uint64> seen;
+    for (Unit* const u : out)
+        if (u)
+            seen.insert(u->GetGUID().GetRawValue());
+
+    auto const collect = [&out, &seen](Unit* u)
+    {
+        if (u && seen.insert(u->GetGUID().GetRawValue()).second)
+            out.push_back(u);
+    };
+
+    for (auto const& kv : member->GetCombatManager().GetPvECombatRefs())
+        if (CombatReference* const ref = kv.second)
+            collect(ref->GetOther(member));
+    for (Unit* const attacker : member->getAttackers())
+        collect(attacker);
+    collect(member->GetVictim());
+}
+
 Unit* DcTargeting::LeaderFightAnchor(Player* bot, Player* leader, Position& anchorPos)
 {
     if (!bot || !leader)
         return nullptr;
 
-    // Nearest live unit the leader is meleeing — the pack it is holding. LOS-blind
-    // on purpose (the reconnect exists precisely for a fight the bot can't see yet).
-    // getAttackers() covers the melee pack; the leader's victim is the fallback for
-    // an all-ranged grab. Mirrors DungeonClearAssistCampActionBase's anchor scan.
+    // Nearest live unit holding the leader in combat — the pack it is fighting.
+    // LOS-blind on purpose (the reconnect exists precisely for a fight the bot
+    // can't see yet). CollectCombatHolders covers the melee pack, the leader's
+    // victim for an all-ranged grab, AND the standoff tagger that appears in
+    // neither. Mirrors DungeonClearAssistCampActionBase's anchor scan.
+    std::vector<Unit*> holders;
+    DcTargeting::CollectCombatHolders(leader, holders);
+
     Unit* target = nullptr;
     float bestDist = 0.0f;
-    for (Unit* a : leader->getAttackers())
+    for (Unit* a : holders)
     {
         if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
             continue;
@@ -978,13 +1007,6 @@ Unit* DcTargeting::LeaderFightAnchor(Player* bot, Player* leader, Position& anch
             target = a;
             bestDist = d;
         }
-    }
-    if (!target)
-    {
-        Unit* const victim = leader->GetVictim();
-        if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId() &&
-            bot->IsValidAttackTarget(victim))
-            target = victim;
     }
 
     anchorPos = target ? target->GetPosition() : leader->GetPosition();

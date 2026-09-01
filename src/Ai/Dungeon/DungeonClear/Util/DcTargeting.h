@@ -147,6 +147,28 @@ public:
     // fallback to kill obstacles when no path to the boss exists.
     static Unit* FindNearestReachableHostile(Player* bot);
 
+    // Every unit that currently holds `member` in combat, GUID-deduped and
+    // appended to `out`: the PvE combat references first (the authoritative
+    // "who has me flagged" list — the same set DcCombatFlag::ScanCombatHolders
+    // and the teardown snapshot walk), then getAttackers() as a superset guard
+    // for anything mid-swing that has not registered a reference yet, then the
+    // member's own victim.
+    //
+    // getAttackers() ALONE IS NOT THE ANSWER, and the difference is the whole
+    // reason this helper exists. That set holds only units whose CURRENT VICTIM
+    // is this member. A mob that tagged the party from range and then stood off
+    // — never entering melee, never picking a victim — is absent from it while
+    // its CombatReference goes on holding every member flagged forever
+    // (instanced creatures never leash). DungeonEventExecutor's
+    // DropCombatLeftBehind learnt this the hard way and already walks both; the
+    // assist pickers did not, and returned nullptr for a fight that was
+    // demonstrably happening.
+    //
+    // Read-only: collects, never clears. Callers that DROP combat must still do
+    // their own collect-then-clear pass, because CombatReference::EndCombat
+    // deletes the reference it is iterating.
+    static void CollectCombatHolders(Unit* member, std::vector<Unit*>& out);
+
     // The unit the leader is fighting, from `bot`'s perspective: the nearest live,
     // valid-attack-target among the leader's attackers, falling back to the
     // leader's victim, then nullptr. LOS-blind on purpose — the whole point is to

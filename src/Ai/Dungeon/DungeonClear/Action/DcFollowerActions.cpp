@@ -1151,13 +1151,26 @@ namespace
             best = u;
             bestDist = d;
         };
+        // EVERY HOLDER, NOT JUST THE MELEE ONES. getAttackers() lists units whose
+        // CURRENT VICTIM is `src`; a mob that tagged the party from range and then
+        // stood off is in none of it, while its CombatReference holds the whole
+        // party flagged forever (instanced creatures never leash). That fight is
+        // real, it is what the party is stuck in, and resolving nullptr for it is
+        // what sends the caller to a fallback that cannot end.
+        //
+        // Live on map 604 (tr-20260830-195435-2 / -6): three Drakkari Raiders
+        // (29982) dismount from the Gal'darah-causeway rhino stampede, hold all
+        // five members at 16-26yd without ever closing, and the teardown reads
+        // `attackers=0 victim=- held by Drakkari Raider(29982) 16.5yd 100%
+        // reachable -> LEGITIMATE` for nine minutes.
         auto considerFrom = [&](Unit* src)
         {
             if (!src)
                 return;
-            for (Unit* a : src->getAttackers())
-                consider(a);
-            consider(src->GetVictim());
+            std::vector<Unit*> holders;
+            DcTargeting::CollectCombatHolders(src, holders);
+            for (Unit* h : holders)
+                consider(h);
         };
 
         // 1. The leader's own fight takes priority (the pack it is holding).
@@ -1780,13 +1793,27 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
             bestFighterDist = md;
         }
 
-        // Everything meleeing this groupmate, plus its own victim — the pack we
-        // must peel onto the tank.
+        // Everything holding this groupmate in combat — the pack we must peel onto
+        // the tank. CollectCombatHolders, not getAttackers(), for the reason it
+        // documents: a RANGED OR STANDOFF TAGGER APPEARS IN NEITHER
+        // getAttackers() NOR GetVictim(), so the old scan resolved nullptr for it
+        // and dropped straight through to the groupmate fallback below — which
+        // walks the tank at a flagged party member at MOVEMENT_COMBAT, claims the
+        // tick at DcRel::LeaderAssist(24) over DcRel::Advance(15), and never
+        // closes because the member is following the tank. Live on map 604
+        // (tr-20260830-195435-2): 2m30s of
+        //   leader assist: closing on party fight (13.9yd, target=groupmate, prio=combat)
+        //   move REFUSED ... (dest 1914.8,743.7,136.5 at 45.3yd, prio=2)
+        // — the boss approach starved by the assist, the tank pinned 27-42yd from
+        // Gal'darah, and a boss that therefore never aggroed at all.
+        //
         // Level-gated for the reason PickPartyFightTarget documents at length, and
         // it matters more here: the LEADER walks at whatever this resolves, so one
         // overhead pick takes the tank through the ceiling and the followers'
         // tethers bring the rest of the raid with it.
-        for (Unit* a : member->getAttackers())
+        std::vector<Unit*> holders;
+        DcTargeting::CollectCombatHolders(member, holders);
+        for (Unit* a : holders)
         {
             if (!a || !a->IsAlive() || a->GetMapId() != bot->GetMapId())
                 continue;
@@ -1799,17 +1826,6 @@ bool DungeonClearLeaderAssistAction::Execute(Event /*event*/)
                 continue;
             target = a;
             bestTargetDist = d;
-        }
-        if (!target)
-        {
-            Unit* const victim = member->GetVictim();
-            if (victim && victim->IsAlive() && victim->GetMapId() == bot->GetMapId() &&
-                bot->IsValidAttackTarget(victim) &&
-                DcTickMemoAccess::LevelReachable(bot, context, victim))
-            {
-                target = victim;
-                bestTargetDist = bot->GetExactDist2d(victim);
-            }
         }
     }
 
