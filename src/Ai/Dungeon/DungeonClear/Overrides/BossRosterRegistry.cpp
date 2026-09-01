@@ -62,6 +62,7 @@ namespace
             RegisterAzjolNerubRoster(t);
             RegisterAhnkahetRoster(t);
             RegisterDrakTharonKeepRoster(t);
+            RegisterGundrakRoster(t);
             RegisterVioletHoldRoster(t);
             RegisterMoltenCoreRoster(t);
             return t;

@@ -279,6 +279,213 @@ namespace DcVioletHold
 void RegisterVioletHoldEvents(std::vector<DungeonEvent>& out);
 void RegisterMoltenCoreEvents(std::vector<DungeonEvent>& out);
 
+// --- Gundrak (map 604) ----------------------------------------------------
+// The numbers GundrakEvents.cpp authors and t/TestGundrak.cpp pins. Shared here
+// for the same reason DcDrakTharonKeep and DcVioletHold are: several of them are
+// SAFETY numbers whose whole value is that a test can re-derive them from the
+// live spawn data (the mojo search that must exclude four trash spawns, the pool
+// volume that must name exactly three of six Ruins Dwellers), and a literal
+// buried in the .cpp cannot be pinned. Every coordinate was column-probed against
+// the live 604 mmtiles — see GundrakEvents.cpp for why each is where it is, and
+// why on THIS map a GO's own Z is never usable.
+namespace DcGundrak
+{
+    constexpr uint32 MAP = 604;
+
+    // Encounters. The entry numbering does NOT follow the encounter order:
+    // 29305 is Moorabi and 29306 is Gal'darah, not the other way round.
+    constexpr uint32 SLADRAN   = 29304;
+    constexpr uint32 MOORABI   = 29305;
+    constexpr uint32 GALDARAH  = 29306;
+    constexpr uint32 COLOSSUS  = 29307;
+    constexpr uint32 ECK       = 29932;
+
+    // The Drakkari ELEMENTAL — the Colossus's instance_encounters credit entry
+    // (it is what dies; SummonedCreatureDies then KillSelf()s the Colossus). It
+    // has no `creature` row on any map, which is exactly why BossSpawnIndex drops
+    // the Colossus. Never an anchor entry; recorded so the roster test can say
+    // which entry it must NOT have used.
+    constexpr uint32 DRAKKARI_ELEMENTAL = 29573;
+
+    constexpr uint32 LIVING_MOJO   = 29830;
+    constexpr uint32 RUINS_DWELLER = 29920;
+
+    // DungeonEncounter.dbc bits, read off the live DBC. The Colossus is bit 1 on
+    // BOTH difficulties, so one MakeBossWithBit serves both; Eck is heroic-only
+    // bit 3 (and heroic Gal'darah shifts to bit 4, which the DERIVED row already
+    // carries correctly).
+    constexpr uint32 BIT_COLOSSUS = 1;
+    constexpr uint32 BIT_ECK      = 3;
+
+    // The three altars and the four bridge statues (gundrak.h). Each altar's
+    // click drives ITS OWN statue to GO_STATE_READY via instance_gundrak::SetData
+    // — 192518 -> 192564, 192520 -> 192567, 192519 -> 192565. That mapping is easy
+    // to transpose (the script's own _bridgeGUIDs indices run Slad'ran / Drakkari
+    // / Moorabi, a DIFFERENT order from the DATA_* enum), so it is pinned by test.
+    constexpr uint32 ALTAR_SLADRAN  = 192518;
+    constexpr uint32 ALTAR_MOORABI  = 192519;
+    constexpr uint32 ALTAR_COLOSSUS = 192520;
+
+    constexpr uint32 STATUE_SNAKE   = 192564;  // Slad'ran's
+    constexpr uint32 STATUE_MAMMOTH = 192565;  // Moorabi's
+    constexpr uint32 STATUE_RHINO   = 192566;  // Gal'darah's — the BRIDGE witness
+    constexpr uint32 STATUE_TROLL   = 192567;  // the Colossus's
+
+    // Where all four statues stand, on the bridge-chamber floor 61-89yd from the
+    // altars that drive them. STATUE_SEARCH has to reach this from every altar
+    // anchor or the verification step hangs forever.
+    constexpr float STATUE_X = 1775.16f;
+    constexpr float STATUE_Y = 743.455f;
+    constexpr float STATUE_Z = 119.073f;
+
+    // --- the three altar clicks ------------------------------------------
+    //
+    // Two of the three altars stand in HOLES in the navmesh (the GO's own column
+    // has no walkable surface at its Z), so each of those gets a roomy objective
+    // anchor plus a short MoveTo onto a measured rim pad. The third, Moorabi's,
+    // has 7.25yd of continuous mesh under it and needs neither.
+    constexpr float SLADRAN_ANCHOR_X = 1775.29f;
+    constexpr float SLADRAN_ANCHOR_Y = 670.00f;
+    constexpr float SLADRAN_ANCHOR_Z = 129.26f;
+    constexpr float SLADRAN_CLICK_X  = 1775.29f;
+    constexpr float SLADRAN_CLICK_Y  = 676.18f;
+    constexpr float SLADRAN_CLICK_Z  = 129.34f;
+
+    constexpr float COLOSSUS_ANCHOR_X = 1683.00f;
+    constexpr float COLOSSUS_ANCHOR_Y = 743.60f;
+    constexpr float COLOSSUS_ANCHOR_Z = 142.94f;
+    constexpr float COLOSSUS_CLICK_X  = 1690.01f;
+    constexpr float COLOSSUS_CLICK_Y  = 743.60f;
+    constexpr float COLOSSUS_CLICK_Z  = 142.94f;
+
+    constexpr float MOORABI_ANCHOR_X = 1772.22f;
+    constexpr float MOORABI_ANCHOR_Y = 804.96f;
+    constexpr float MOORABI_ANCHOR_Z = 129.34f;
+
+    // The GOs' own positions, for the tests that re-derive the click geometry
+    // (worst-case reach = d + radius must stay inside DC_EVENT_GO_USE_RANGE).
+    constexpr float ALTAR_SLADRAN_GO_X  = 1775.29f;
+    constexpr float ALTAR_SLADRAN_GO_Y  = 679.68f;
+    constexpr float ALTAR_COLOSSUS_GO_X = 1693.51f;
+    constexpr float ALTAR_COLOSSUS_GO_Y = 743.595f;
+
+    // Measured pad radii at the two click points — the largest disc around each
+    // where every sample is still walkable mesh. The MoveTo radius must stay
+    // under these or the bot can turn off the rim into the hole.
+    constexpr float SLADRAN_CLICK_PAD  = 1.40f;
+    constexpr float COLOSSUS_CLICK_PAD = 1.45f;
+
+    constexpr float ALTAR_SEARCH  = 12.0f;
+    constexpr float STATUE_SEARCH = 120.0f;
+    constexpr float ALTAR_ARRIVE  = 6.0f;
+    constexpr float CLICK_RADIUS  = 1.25f;
+    constexpr uint32 ALTAR_TIMEOUT = 60000;
+
+    // --- the Drakkari Colossus's Living Mojo ring -------------------------
+    //
+    // The five mojos the boss summons around himself (boss_drakkari_colossus.cpp
+    // mojoPosition[]) and the merge point they charge on ACTION_MERGE.
+    constexpr float MOJO_RING_X[5] = { 1663.10f, 1669.97f, 1680.70f, 1680.70f, 1670.40f };
+    constexpr float MOJO_RING_Y[5] = {  743.60f,  753.70f,  750.70f,  737.10f,  733.50f };
+
+    constexpr float COLOSSUS_X = 1672.96f;
+    constexpr float COLOSSUS_Y = 743.49f;
+    constexpr float COLOSSUS_Z = 142.94f;   // mesh under the (143.34) spawn
+
+    // The four PRE-PLACED trash mojos of the west corridor (guids 127076-127079).
+    // They are not TempSummons, so they aggro, fight, and inform NOBODY — hitting
+    // one does not start the encounter. MOJO_SEARCH exists to keep them out.
+    constexpr float MOJO_TRASH_X[4] = { 1634.21f, 1634.25f, 1624.94f, 1580.78f };
+    constexpr float MOJO_TRASH_Y[4] = {  760.22f,  750.15f,  762.23f,  726.10f };
+
+    constexpr float MOJO_SEARCH    = 20.0f;
+    constexpr float COLOSSUS_SCAN  = 40.0f;
+    constexpr uint32 MOJO_TIMEOUT  = 120000;
+
+    // --- Eck's pool (heroic) ---------------------------------------------
+    //
+    // Centroid of the FORMATION trio 127201/127202/127203 — the only three of the
+    // six Ruins Dwellers whose deaths summon Eck. Z is the WATER SHEET above their
+    // 107.28 spawns, not the spawns themselves.
+    constexpr float POOL_X      = 1646.40f;
+    constexpr float POOL_Y      = 938.85f;
+    constexpr float POOL_Z      = 108.22f;
+    constexpr float POOL_RADIUS = 15.0f;
+    constexpr float POOL_ZBAND  = 6.0f;
+    constexpr float POOL_ARRIVE = 18.0f;
+    constexpr uint32 POOL_TIMEOUT = 300000;
+
+    // The six Ruins Dweller spawns. The first three are the formation (leader
+    // 127203, groupAI 3); the last three are ungrouped and gate NOTHING — killing
+    // them is three pointless elite fights and no Eck.
+    constexpr float DWELLER_GATING_X[3]   = { 1651.26f, 1643.20f, 1644.73f };
+    constexpr float DWELLER_GATING_Y[3]   = {  936.455f, 943.617f, 936.472f };
+    constexpr float DWELLER_GATING_Z[3]   = {  107.277f, 107.276f, 107.288f };
+    constexpr float DWELLER_UNGROUPED_X[3] = { 1708.48f, 1701.66f, 1717.30f };
+    constexpr float DWELLER_UNGROUPED_Y[3] = {  926.962f, 951.026f, 935.615f };
+    constexpr float DWELLER_UNGROUPED_Z[3] = {  116.094f, 116.536f, 117.105f };
+
+    // Eck's HOME (boss_eck.cpp EckHomePosition), on the mesh: the water sheet at
+    // 108.00 rather than the 107.205 the script names. NEVER his summon point
+    // (1624.70, 891.43, 95.08) — no poly within 5yd of it.
+    constexpr float ECK_X = 1642.712f;
+    constexpr float ECK_Y = 934.646f;
+    constexpr float ECK_Z = 108.00f;
+
+    // --- the bridge crossing ---------------------------------------------
+    //
+    // The checkpoint is on comp#0, the landing on comp#1, and there is no walkable
+    // route between them at any Z. Both sit on the causeway CENTRELINES, back from
+    // the tips: the tips themselves measure 0.00 and 0.25yd of pad, which five
+    // bots cannot arrive on.
+    constexpr float CROSS_CHECK_X = 1746.00f;
+    constexpr float CROSS_CHECK_Y = 744.00f;
+    constexpr float CROSS_CHECK_Z = 119.10f;
+    constexpr float CROSS_LAND_X  = 1802.00f;
+    constexpr float CROSS_LAND_Y  = 743.50f;
+    constexpr float CROSS_LAND_Z  = 119.58f;
+    constexpr float CROSS_RADIUS  = 8.0f;
+    constexpr float CROSS_ARRIVE  = 5.0f;
+    constexpr uint32 BRIDGE_TIMEOUT = 60000;
+
+    // The two mesh gaps the crossing spans, for the tests: the west causeway ends
+    // at x 1753.50 and the east one begins at x 1796.50, with a 7-poly DEAD
+    // island (no links in any direction) between them.
+    constexpr float WEST_TIP_X   = 1753.50f;
+    constexpr float EAST_TIP_X   = 1796.50f;
+
+    // --- Gal'darah's sealed arena ----------------------------------------
+    constexpr float MUSTER_X = 1858.00f;
+    constexpr float MUSTER_Y = 743.60f;
+    constexpr float MUSTER_Z = 136.23f;
+
+    // Mojo Puddle, the only PERSISTENT_AREA_AURA on the map.
+    constexpr uint32 SPELL_MOJO_PUDDLE = 55627;
+
+    // Clear-order keys — one contiguous scale so the five hand-authored
+    // objectives have integer slots between the bosses.
+    constexpr int32 ORDER_SLADRAN        = 1;
+    constexpr int32 ORDER_ALTAR_SLADRAN  = 2;
+    constexpr int32 ORDER_COLOSSUS       = 3;
+    constexpr int32 ORDER_ALTAR_COLOSSUS = 4;
+    constexpr int32 ORDER_MOORABI        = 5;
+    constexpr int32 ORDER_ALTAR_MOORABI  = 6;
+    constexpr int32 ORDER_ECK_POOL       = 7;
+    constexpr int32 ORDER_ECK            = 8;
+    constexpr int32 ORDER_BRIDGE         = 9;
+    constexpr int32 ORDER_GALDARAH       = 10;
+
+    // Event ids on this map.
+    constexpr uint32 EVENT_ALTAR_SLADRAN  = 1;
+    constexpr uint32 EVENT_COLOSSUS_MOJO  = 2;
+    constexpr uint32 EVENT_ALTAR_COLOSSUS = 3;
+    constexpr uint32 EVENT_ALTAR_MOORABI  = 4;
+    constexpr uint32 EVENT_ECK_POOL       = 5;
+    constexpr uint32 EVENT_BRIDGE         = 6;
+}
+
+void RegisterGundrakEvents(std::vector<DungeonEvent>& out);
+
 // --- Blackwing Lair (map 469) ---------------------------------------------
 // The numbers Razorgore's two halves must agree on. The declarative half (the
 // event row and its activation predicate) is BlackwingLairEvents.cpp; the
@@ -1161,6 +1368,7 @@ void RegisterAzjolNerubRoster(std::vector<BossRosterPatch>& t);
 void RegisterAhnkahetRoster(std::vector<BossRosterPatch>& t);
 void RegisterDrakTharonKeepRoster(std::vector<BossRosterPatch>& t);
 void RegisterVioletHoldRoster(std::vector<BossRosterPatch>& t);
+void RegisterGundrakRoster(std::vector<BossRosterPatch>& t);
 void RegisterMoltenCoreRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------

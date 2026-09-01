@@ -433,6 +433,7 @@ namespace
             RegisterAzjolNerubEvents(t);
             RegisterAhnkahetEvents(t);
             RegisterDrakTharonKeepEvents(t);
+            RegisterGundrakEvents(t);
             RegisterMoltenCoreEvents(t);
             RegisterVioletHoldEvents(t);
             RegisterBlackwingLairEvents(t);

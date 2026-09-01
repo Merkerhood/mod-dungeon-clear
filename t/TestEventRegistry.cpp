@@ -198,6 +198,20 @@ namespace
             // Repeatable and its condition re-reads his live position, so a
             // completion with the tank far away latches nothing.
             {546, 2},
+            // Gundrak "Drakkari Colossus: pull a Living Mojo": GdColossusFrozen
+            // does a 40yd FindNearestCreature FROM THE BOT for a live Colossus
+            // still carrying UNIT_FLAG_NON_ATTACKABLE, so it cannot read true
+            // until the leader is standing in his arena. The flag is the
+            // encounter's own phase bit in both directions — Reset() sets it on a
+            // fresh spawn together with the five mojo summons, the fight clears
+            // it, and after an EVADE Reset() takes its IsInEvadeMode() branch and
+            // REMOVES it with no mojos summoned at all, so a post-wipe retry never
+            // re-fires (which is right: the boss is directly pullable then). Its
+            // lone step is a KillCreatureEngage, which DcRunEventAction walks the
+            // leader into through the engage pipeline, so the "far tank latches
+            // Done" state the tripwire guards against needs a boss that is both
+            // within 40yd and frozen — i.e. the tank is already there.
+            {604, 2},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)

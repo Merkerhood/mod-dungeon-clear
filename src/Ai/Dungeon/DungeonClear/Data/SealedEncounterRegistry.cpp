@@ -53,11 +53,76 @@ namespace
     // Prime Guards at y 341, so that pull runs under the ordinary gates.
     //
     // musterSpread 10yd, the same number and the same reasoning as Selin's.
+    // --- Gundrak (604) — Gal'darah ---------------------------------------------
+    //
+    // instance_gundrak registers GO_GAL_DARAH_DOORS0 (192568, hanging at
+    // (1848.03, 743.82, 135.95)) as DOOR_TYPE_ROOM against DATA_GAL_DARAH, so
+    // InstanceScript::UpdateDoorState holds it `open &= (state != IN_PROGRESS)` —
+    // shut for exactly as long as the fight lasts. It is the only way into the
+    // arena: the wing is one causeway east from the bridge crossing, and its two
+    // other doors (193208 / 193209) are PASSAGE doors on post-kill exit corridors
+    // that dead-end inside the same component.
+    //
+    // The volume. comp#1 splits cleanly at the door plane, with a 7.4yd DEAD BAND
+    // straddling the door that makes the cut unambiguous:
+    //
+    //   west of x 1849 — the approach causeway: 10 polys, X 1796.53-1841.60,
+    //                    Y 735.47-751.73, Z 119.20-135.74
+    //   east of x 1849 — the arena and its exits: 278 polys, X 1850.13-1981.07,
+    //                    Y 640.00-846.93, Z 135.20-137.60
+    //
+    // The geometrically ideal box is X 1849-1982, Y 648-848, Z 133-142, enclosing
+    // 275 comp#1 polys and zero foreign walkable geometry — but SealedEncounterRow
+    // has NO Z BAND (InSealedRoom is 2D), so this takes the fallback. minX 1855
+    // rather than 1849 keeps the box clear of the door corridor itself; minY 648
+    // excludes two comp#0 polys sitting in the arena's own Z band at the far
+    // south-west corner (X 1849.6-1854.9, Y 640.0-645.1), at the cost of a few
+    // yards of the south-east exit tail near (1915-1920, 641-647) — which is behind
+    // PASSAGE door 193209 and irrelevant to the "inside when the door shuts" test.
+    //
+    // KNOWN LIMITATION, ACCEPTED. Without a Z band the 2D footprint also contains
+    // 52 comp#0 polys spanning Z 110.67-178.14 — the entrance walkway passing
+    // OVERHEAD and the moat below — so a party member standing on that walkway
+    // would read as "in the sealed room". On a real run this cannot happen: by the
+    // time Gal'darah is pulled the party has been teleported to (1802, 743.5) and
+    // walked east, and there is no path from there back up to the entrance walkway.
+    // Recorded so a future reader does not mistake the loose box for an oversight.
+    // If a Z band is ever added to SealedEncounterRow, tighten this row to
+    // 1849 / 1982 / 648 / 848 / 133 / 142.
+    //
+    // approachRadius 75, and NOT the 45 the two rows above take. That number is not
+    // a house style — it is "far enough back that the gates arm before the party
+    // threads the door", and this room is much deeper than Selin's or Anub'arak's:
+    // its door is 66.76yd from its boss, where Selin's is 27yd. Measured along the
+    // causeway centreline, 3D from Gal'darah's spawn:
+    //
+    //     x 1835  z 130.26   80.00yd      x 1850  z 135.97   64.75yd
+    //     x 1840  z 132.84   74.84yd      x 1855  z 136.21   59.75yd
+    //     x 1848  z 135.34   66.76yd  <-- the door
+    //
+    // so 45 would arm the gates only at x ~1870, twenty yards INSIDE the room and
+    // past the muster point — the clump would never get a chance to close the party
+    // up, and the muster would be asking about a threshold everyone had already
+    // crossed or been left behind at. 75 arms at x ~1840, about 8yd west of the
+    // door on the ramp, which is where the party needs to be tightening. It does
+    // not reach back to the teleport landing at 114yd, so the crossing itself runs
+    // under the ordinary gates.
+    //
+    // The natural muster spot inside is (1858.00, 743.60, 136.23) — 10yd past the
+    // door plane, on 136.23 ground in comp#1 with an 11.5yd continuous walkable
+    // disc (x 1852 gives 5.25, x 1854 gives 7.25), 7 polys from the teleport
+    // landing and 3yd inside minX. There is no field for it here (the volume IS the
+    // muster), so it is recorded rather than authored.
+    //
+    // musterSpread 10yd, the same number and the same reasoning as Selin's:
+    // follow-tank trails at min(followDistance, 6yd), so the party sits inside it by
+    // construction while moving and it only bites on a genuine straggler.
     SealedEncounterRow const kRows[] =
     {
         // mapId  boss   minX    maxX    minY    maxY   approach  muster
         {   585, 24723, 216.0f, 260.0f, -45.0f, 45.0f,    45.0f,  10.0f },
         {   601, 29120, 526.0f, 574.0f, 234.0f, 278.0f,   45.0f,  10.0f },
+        {   604, 29306, 1855.0f, 1982.0f, 648.0f, 848.0f,  75.0f,  10.0f },
     };
 }
 

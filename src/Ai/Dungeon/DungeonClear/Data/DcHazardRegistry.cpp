@@ -363,7 +363,41 @@ namespace
     // AoE nuke plus a damage-taken debuff. There is no SPELL_EFFECT_PERSISTENT_
     // AREA_AURA leg, so no DynamicObject is ever spawned and there is nothing for
     // this table to key on. It is a healing fact, not a registry row.
-    constexpr std::array<DcGroundHazard, 8> kGroundHazards = {{
+    // Gundrak (map 604) — 55627 MOJO PUDDLE, the Living Mojo's pool, and the ONLY
+    // PERSISTENT_AREA_AURA anything on this map casts. From Spell.dbc: Effect[0] =
+    // 27 SPELL_EFFECT_PERSISTENT_AREA_AURA applying aura 3 SPELL_AURA_PERIODIC_
+    // DAMAGE, EffectRadiusIndex 15 = 3.0yd, EffectAmplitude 1000ms, DurationIndex 1
+    // = 10000ms. A small, short, ordinary DynamicObject pool, so it takes a shape
+    // scaled down from the map-600 rows rather than their 10/8: radius 6 keep-out
+    // over a 3yd aura, with the retreat aiming at vacate 3 + slack 6 = 9yd, a
+    // comfortable 3yd outside the keep-out cylinder PointIsHot rejects into.
+    //
+    // WHO ACTUALLY DROPS IT is worth being exact about, because it is NOT the ring
+    // the Colossus event pulls. npc_living_mojoAI::UpdateAI opens with
+    // `if (me->ToTempSummon() || !UpdateVictim()) return;`, so the five SUMMONED
+    // ring mojos never reach their EVENT_MOJO_MOJO_PUDDLE at all — they are inert
+    // until informed and despawn 1.2s later. The four PRE-PLACED trash mojos of the
+    // west corridor (guids 127076-127079) are the ones that cast it, every 13s, in
+    // an ordinary trash fight on the way to the Colossus. See GundrakEvents.cpp.
+    //
+    // ONE ROW, not two: SpellDifficulty.dbc has NO entry for ANY Gundrak spell
+    // (checked against all 25 of them), so the heroic templates cast the same ids
+    // and the DynamicObject reports 55627 on both difficulties.
+    //
+    // zBand 6: the corridor is one floor at z ~143 and the nearest other deck is
+    // the moat 33yd below.
+    //
+    // DELIBERATELY ABSENT — 54888 Elemental Spawn Effect, which has a
+    // PERSISTENT_AREA_AURA leg and is the only other candidate on the map. Its
+    // radius is EffectRadiusIndex 16 = 1.0yd carrying a DUMMY aura for 1000ms: a
+    // spawn visual, not damage. Also absent: 55081 Poison Nova, 55101 Quake and
+    // 55142 Ground Tremor are instant 60yd / 15yd novas with nothing to stand
+    // outside of (Moorabi's two are the whole room — a healing problem, not a
+    // positioning one), and 55250 Whirling Slash, 55292 Stomp, 54956 Impaling
+    // Charge and 55218 Stampede are self-auras, charges and summons. There is no
+    // GAMEOBJECT_TYPE_TRAP on map 604 and no creature carries a permanent pulsing
+    // aura, so map 604 needs neither a DcTrapHazard nor a DcHazardEmitter row.
+    constexpr std::array<DcGroundHazard, 9> kGroundHazards = {{
         //                   radius  zBand  vacate  hold  slack
         // Cloud of Disease — the pool a dying Diseased Ghoul (10495) leaves.
         { 289, 17742, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
@@ -380,6 +414,8 @@ namespace
         { 600, 49548, 10.0f, 6.0f, 8.0f, 2.0f, 6.0f },
         // Blizzard — Cyanigosa, on a random party member within 45yd. 10yd aura.
         { 608, 58693, 12.0f, 6.0f, 10.0f, 2.0f, 6.0f },
+        // Mojo Puddle — the west-corridor Living Mojo trash. 3yd aura, 10s.
+        { 604, 55627, 6.0f, 6.0f, 3.0f, 2.0f, 6.0f },
     }};
 
     // ---- the trap table --------------------------------------------------
