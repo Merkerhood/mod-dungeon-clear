@@ -76,9 +76,14 @@
 //  * No DcNeverTargetRegistry row. The obvious candidate, Slad'ran Summon Target
 //    (29682), already carries unit_flags NOT_SELECTABLE and flags_extra
 //    TRIGGER|CIVILIAN, so IsPossibleTarget rejects it without help.
-//  * No RoomAggro / FightInPlace / ScriptedPull / BossPullback rows: no Gundrak
-//    boss overrides CheckInRoom, none has a room-aggro pre-clear problem, and the
-//    Colossus is a scripted START, not a scripted pull sequence.
+//  * No FightInPlace / ScriptedPull / BossPullback rows: no Gundrak boss
+//    overrides CheckInRoom, and the Colossus is a scripted START, not a scripted
+//    pull sequence. There IS now a RoomAggroRegistry row for Slad'ran (29304,
+//    radius 75) — this bullet used to claim no Gundrak boss had a room-aggro
+//    pre-clear problem, and live runs disproved it: his summon targets sit 29-73yd
+//    south, inside the snake trash, so both add waves spawn in the packs and
+//    Poison Nova shoves the party outward into them. See RoomAggroRegistry.cpp for
+//    the measured room and why the member whitelist is load-bearing.
 //  * No DcNavPenaltyRegistry fence. A fence taxes the router away from mesh it
 //    should not use; Gundrak's problem is mesh that is MISSING, which no fence can
 //    add. The voids are avoided by not authoring anchors in them.

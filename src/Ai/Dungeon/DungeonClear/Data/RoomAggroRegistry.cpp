@@ -139,6 +139,69 @@ namespace
         { 650, 35572, 100.0f, {} }, // Mokra the Skullcrusher
         { 650, 35617, 100.0f, {} }, // Visceri
 
+        // Gundrak (604) — Slad'ran, the snake pit.
+        //
+        // Like Gilnid above, there is NO script force-pull to read a radius from:
+        // boss_slad_ran's Reset()/JustEngagedWith schedule only Poison Nova, Powerful
+        // Bite, Venom Bolt and the two summon waves. The row exists because the ROOM
+        // joins the fight anyway, by geometry rather than by CallForHelp — the boss
+        // spawns at the NORTH end of a ~70yd pit (1775.13, 674.98, 129.3) while his
+        // five Slad'ran Summon Targets (29682) sit 29-73yd SOUTH at y 606-646, i.e.
+        // right on top of the trash. The two Vipers at 90% and three Constrictors at
+        // 50% (75% heroic) therefore SPAWN inside the trash packs and run north
+        // through them, and Poison Nova (55081, 15yd) pushes the whole party 17yd
+        // outward into them every 16-53s.
+        //
+        // THE ROOM IS THE NINE ELITES, and only those:
+        //   * 29774 Spitting Cobra          x5, spawns 26.9-62.0yd — level 77, hp x4
+        //   * 29768 Unyielding Constrictor  x4, spawns 29.9-48.0yd — level 77, hp x4
+        //
+        // radius 75 is measured, not read from a script, and it is sized off the
+        // PATROL envelope rather than the spawn points. Two of the four constrictors
+        // are MovementType 2: guid 127014 runs path 1270140 (28 points, 24.9-69.9yd
+        // from the boss) and guid 127017 runs path 1270170 (26 points, 33.2-64.1yd).
+        // So the real far edge of the room is 69.9, not the 62.0 the spawn rows
+        // suggest — a radius sized to the spawns would drop a patrolling constrictor
+        // out of the set at the far end of its path and call the room clear while it
+        // was still walking back. 75 covers 69.9 and still stops short of the NEXT
+        // room's mobs of the same entries: the nearest non-room Spitting Cobra is
+        // 79.5yd out and the nearest non-room Unyielding Constrictor 88.9yd. (Of the
+        // 12 cobras and 12 constrictors on map 604 only these 9 are Slad'ran's; the
+        // rest reach 153 and 209yd.)
+        //
+        // WHY THE WHITELIST, given every entry on it reads hostile anyway. It is here
+        // to keep two NON-threats out of the room set:
+        //
+        // (1) 29630 Fanged Pit Viper, x86 at 21.1-71.3yd — the snakes carpeting the
+        //     pit floor. These were briefly whitelisted so the clear would sweep them;
+        //     a live run showed that going badly, and they should not have been in
+        //     scope to begin with. They are faction template 7 — FriendGroup 0,
+        //     EnemyGroup 0, no Enemies_* — so they stand NEUTRAL and never aggro on
+        //     proximity; nothing but a stray AoE brings them into the fight, and at
+        //     level 1 with HealthModifier 1 that same AoE kills them outright. They
+        //     were never part of the room-joins-the-fight problem, and clearing them
+        //     meant 86 individual engage cycles strung across a 70yd room against a
+        //     180s RoomClearTimeout. Leaving them alone is free.
+        // (2) 29834 Drakkari Frenzy, x8 within 73yd but at z 104-110 — down in the
+        //     MOAT, ~20yd below the boss platform (the column under the Slad'ran
+        //     altar has water at 110.14 and ground at 103.22, no 129 surface). These
+        //     DO read hostile, so an empty "any hostile" row would count them and
+        //     send the clear after mobs it cannot walk to: the Pandemonius failure
+        //     above, orbiting the boss until the timeout expires.
+        //
+        // The 13321 Frogs and 29637 Crafty Snake are critters and the 29682 Summon
+        // Targets carry UNIT_FLAG_NOT_SELECTABLE, so IsPossibleTarget already drops
+        // those three without help from the whitelist.
+        //
+        // No pullOutRadius / skirtRadius override. The computed sphere is ~26-28yd
+        // here (Slad'ran's aggro range + his 2.0 combat reach + the bot's + margin 2
+        // + padding 3), so at most the single closest Spitting Cobra (26.9yd) falls
+        // inside it and comes with the boss as a normal 1-boss + 1-add pull — the
+        // same call the Gilnid row makes for its two Craftsmen. Shrinking the
+        // exclusion to claw that one cobra back would force advanced pull-to-camp
+        // for the whole room (see pullOutRadius), which is not worth it for one add.
+        { 604, 29304, 75.0f, { 29774, 29768 } }, // Gundrak — Slad'ran
+
         // NOTE: The Mechanar (554) Mechano-Lord Capacitus had a room-aggro entry
         // here to pre-clear his SE Driller pack, back when the clear reached him
         // LAST on floor 1 (up the corridor from the dead Iron-Hand), which put that
