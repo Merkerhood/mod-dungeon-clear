@@ -93,4 +93,9 @@ void RegisterBlackwingLairHooks(ObjectiveHookRegistry::HookTable& out);
 // HallsOfStoneDriver.cpp. Ids 22-23.
 void RegisterHallsOfStoneHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Halls of Lightning (map 602) — the Slag Furnace transit, the Bjarngrim ->
+// Volkhan leg the ordinary clear has no driver for. See
+// HallsOfLightningDriver.cpp. Id 24.
+void RegisterHallsOfLightningHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif

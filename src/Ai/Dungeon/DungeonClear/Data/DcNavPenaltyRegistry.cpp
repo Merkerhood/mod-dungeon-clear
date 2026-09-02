@@ -192,7 +192,59 @@ namespace
     //     (+45yd, round the north tunnels). Entrance -> Pythas and Entrance ->
     //     Skum are unchanged.
     // costMult 40, the shortcut class (a line a real player cannot walk).
-    constexpr std::array<DcNavPenaltyPolygon, 8> kPolygons = {{
+    // Halls of Lightning (map 602) — the two NAV_SLIME moats that flank the Slag
+    // Furnace walkway, and the ONLY rows on this list that are not about a
+    // navmesh shortcut.
+    //
+    // The moats are navigable mesh: the mmap generator meshes the liquid SURFACE
+    // and stamps those polys NAV_SLIME (flags 0x04), so a route can sit perfectly
+    // on the navmesh and still have the party wading the length of the pit. That
+    // is what these rows price — exactly as Azjol-Nerub's lake had to be priced
+    // ([[dc-an-lower-kingdom-is-flooded]]), except there the answer was to move
+    // the authored anchors and here it is to tell the ROUTER, because the pit is
+    // also where the transit's stragglers and its recovery paths get re-routed.
+    //
+    // MEASURED, NOT EYEBALLED. t/TestHallsOfLightningRouteProbe scans the pit on a
+    // 4yd grid and asks each column whether the surface a bot would stand on is a
+    // NAV_SLIME poly — asked of the POLY, because both indirect tests tried first
+    // were wrong: "is there a NAV_GROUND poly nearby" calls a shoreline column dry
+    // (it carries both the slime and the walkway shelf 3.7yd above it), and the
+    // Azjol-Nerub ground-drop test disagrees with itself at the channel mouths,
+    // where the floor really is walkable at the slime's own height.
+    //
+    // The answer is an HOURGLASS rather than a pair of rectangles. Each channel
+    // runs y -200 .. -124 (the two mouths, y -204 and y -120, are dry across the
+    // whole pit), reaches x 1310 (west) / x 1350 (east) through most of its
+    // length, and pinches back to x 1294 / x 1370 at the waist, y -168 .. -160.
+    // A single box around either one would have to swallow 16yd of walkable
+    // walkway at the waist to cover the bulges. Hence polygons, which is what the
+    // DcNavPenaltyPolygon form is for.
+    //
+    // THE WALKWAY IS UNTAXED, and that is the property the probe asserts rather
+    // than "no dry column is ever inside a row". The dry span is at its narrowest
+    // x 1314..1346 (y -124, -140, -144, -188), the authored route hugs x
+    // 1330..1341 — dead centre — and NEITHER polygon's inner edge ever crosses
+    // x 1312 (west) or x 1348 (east), so the band the party actually walks can
+    // never be taxed. A handful of columns at the ragged channel edges fall on
+    // the wrong side of a straight polygon edge in both directions; on a 4yd grid
+    // against an 8-vertex ring that is unavoidable, and a costMult is survivable
+    // there in a way a rejection would not be.
+    //
+    // Nothing is caged: both channels are dead ends against the pit walls, so no
+    // pocket of floor is cut off on the far side of a row, and both consumers
+    // exempt a route that BEGINS inside one — which is what a bot knocked into
+    // the slime needs.
+    //
+    // Z BAND 16..22.5, DELIBERATELY BELOW THE FLOOR. The slime surface probes at
+    // z 20.18 and the walkway at z 23.88, so a ceiling under the floor means the
+    // rows can only ever tax an edge whose midpoint is ON the liquid. Widening
+    // this to cover the floor would tax the walkway's own edges at the pit walls
+    // for nothing.
+    //
+    // costMult 6 rather than the shortcut rows' 40: wading is slow and it hurts,
+    // but it is not a place a real player cannot be, and the pit is a corridor the
+    // party must cross either way. Same reasoning as the Arcatraz hazard rows.
+    constexpr std::array<DcNavPenaltyPolygon, 10> kPolygons = {{
         { 556, 15.0f, 38.0f, 40.0f, 5,
           { -233.29f, -230.34f, -209.82f, -192.94f, -192.04f },
           {  275.04f,  309.39f,  326.92f,  305.38f,  271.93f } },
@@ -217,6 +269,12 @@ namespace
         { 43, -63.5f, -52.0f, 40.0f, 4,   // wall leg 3 (the reported ramp)
           { -80.38f, -70.13f, -73.62f, -83.87f },
           { -257.90f, -265.22f, -270.10f, -262.78f } },
+        { 602, 16.0f, 22.5f, 6.0f, 8,   // Slag Furnace, WEST moat
+          { 1274.0f, 1274.0f, 1308.0f, 1312.0f, 1296.0f, 1296.0f, 1312.0f, 1312.0f },
+          { -122.0f, -202.0f, -202.0f, -174.0f, -170.0f, -158.0f, -154.0f, -122.0f } },
+        { 602, 16.0f, 22.5f, 6.0f, 8,   // Slag Furnace, EAST moat
+          { 1386.0f, 1386.0f, 1358.0f, 1348.0f, 1368.0f, 1368.0f, 1348.0f, 1348.0f },
+          { -122.0f, -202.0f, -202.0f, -174.0f, -170.0f, -158.0f, -154.0f, -122.0f } },
     }};
 
     // Even-odd ray cast — true iff (x,y) is inside the polygon's XY footprint.

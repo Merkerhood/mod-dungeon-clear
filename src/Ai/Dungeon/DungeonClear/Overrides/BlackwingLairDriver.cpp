@@ -5,6 +5,7 @@
 
 #include "ObjectiveHookRegistry.h"
 
+#include <cstdint>
 #include <list>
 #include <algorithm>
 #include <string>
@@ -682,7 +683,14 @@ namespace
     // straight chord across them, through a hole in the mesh.
     using BwlTransitRoute = DcTransit::RouteView;
 
-    BwlTransitRoute const* TransitRoute() { return DcTransit::Route(); }
+    // A TAIL slice: the crossing ends AT Broodlord, so the row simply stops
+    // there. (Halls of Lightning takes a middle slice for the opposite reason —
+    // its party still has a hairpin and a second ramp to walk afterwards.)
+    BwlTransitRoute const* TransitRoute()
+    {
+        return DcTransit::Route(MAP_ID, NPC_BROODLORD_LASHLAYER, TRANSIT_STAGE_ANCHOR_INDEX,
+                                SIZE_MAX);
+    }
 
     // How far the FURTHEST living member is from the CURSOR, and how many are
     // inside the gather radius OF THE CURSOR. One walk of the group for both,

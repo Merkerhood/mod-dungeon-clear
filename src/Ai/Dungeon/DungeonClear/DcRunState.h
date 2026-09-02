@@ -239,11 +239,14 @@ struct DcRunState
     // encounter.
     std::vector<ObjectGuid> razorEggSkipped;
 
-    // === Blackwing Lair — the Suppression Rooms transit (leader-owned) ===========
-    // The Vaelastrasz -> Broodlord crossing (see the transit block in
-    // DungeonEventTables.h). All of it belongs to the leader; the CURSOR is the
-    // only part read cross-bot, through DcLeaderSignal::GetTransitAnchor, by the
-    // pack rung on every other member.
+    // === TRANSIT state (leader-owned) ===========================================
+    // Blackwing Lair's Vaelastrasz -> Broodlord crossing and Halls of Lightning's
+    // Bjarngrim -> Volkhan Slag Furnace share this block, because a bot is only
+    // ever on one map and the two crossings can never be live at once (see the
+    // transit blocks in DungeonEventTables.h). All of it belongs to the leader;
+    // the CURSOR is the only part read cross-bot, through
+    // DcLeaderSignal::GetTransitAnchor, by the pack rung on every other member —
+    // and that rung is gated to map 469, so on 602 the publication is telemetry.
     //
     // The cursor is a POSITION, not an index into somebody else's copy of the
     // route: a follower must be able to answer "where is the leader taking us"
@@ -252,8 +255,8 @@ struct DcRunState
     // about which anchor index 7 is.
     //
     // getMSTime() of the last tick the transit driver had work to do — from the
-    // leader's arrival at the staging point to its arrival at the Broodlord
-    // standoff. Read cross-bot (DcLeaderSignal::IsLeaderTransitDriving) by the
+    // leader's arrival at the staging point to its arrival at the far end (the
+    // Broodlord standoff / the Slag Furnace's mid ledge). Read cross-bot (DcLeaderSignal::IsLeaderTransitDriving) by the
     // pack rung, so that rung arms and releases with the crossing and needs no
     // latch of its own: the driver simply stops stamping when the leg is over.
     uint32 transitDrivingMs = 0;

@@ -12,13 +12,18 @@
 
 #include "Define.h"
 
-// PURE kernel for Blackwing Lair's Suppression Rooms transit — the two decisions
-// the driver makes every tick, lifted out of the world so they can be tested
-// without a map: WHERE ON THE ROUTE ARE WE, and DO WE WALK OR DO WE STAND.
+// PURE kernel for a TRANSIT — the two decisions the driver makes every tick,
+// lifted out of the world so they can be tested without a map: WHERE ON THE
+// ROUTE ARE WE, and DO WE WALK OR DO WE STAND.
 //
-// The glue (grid scans, the party walk, the splines, the telemetry) lives in
-// Overrides/BlackwingLairDriver.cpp. Everything here is arithmetic over a
-// snapshot, in the same shape as DcRaidMusterDecision / DcRazorgoreDecision.
+// The glue (grid scans, the party walk, the splines, the telemetry) lives in the
+// per-map driver: Overrides/BlackwingLairDriver.cpp for the Suppression Rooms
+// and Overrides/HallsOfLightningDriver.cpp for the Slag Furnace. Everything here
+// is arithmetic over a snapshot, in the same shape as DcRaidMusterDecision /
+// DcRazorgoreDecision, and it is MAP-FREE: the leg described below is the one it
+// was written for, not the only one it serves. Halls of Lightning uses three of
+// the four holds and passes the fourth (Disarm) a radius of 0, which is this
+// file's own "no such probe".
 //
 // THE LEG, in the terms these functions use. Between Vaelastrasz the Corrupt and
 // Broodlord Lashlayer lie two Suppression Rooms holding 160 Corrupted Whelps on a

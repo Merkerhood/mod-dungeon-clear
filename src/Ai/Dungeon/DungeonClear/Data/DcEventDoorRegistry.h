@@ -156,6 +156,42 @@ namespace DcEventDoorRegistry
             case 193906:  // Halls of Stone — Sjonnir Console (Brann's, post-kill)
             case 193907:  // Halls of Stone — Tribunal Control Console (the defend point)
                 return true;
+            // Halls of Lightning (map 602) — the two progression doors, and the
+            // only two of the map's eleven GameObjects that gate anything.
+            //
+            // Both are GAMEOBJECT_TYPE_DOOR, both spawn `state 1` (shut) with
+            // Data0 = 0 (startOpen), and both are lockId 0 — so
+            // BotCanOpenDoorLikePlayer reads an empty lock as "any player can
+            // click this" and a door-blocked bot would GameObject::Use() either
+            // one. The ONLY thing that legitimately opens them is
+            // instance_halls_of_lightning's DoorData firing on
+            // SetBossState(..., DONE). The Ahn'kahet Taldaram Door shape, twice.
+            //
+            //   191325 VOLKHAN DOOR (1277.4, -164.7, 53.5) — DOOR_TYPE_PASSAGE
+            //     on DATA_VOLKHAN. Force-opening it walks the party past a LIVE
+            //     Volkhan into the Hall of the Watchers, which is 31 frozen
+            //     Titanium statues and three ambush areatriggers.
+            //
+            //   191326 IONAR DOOR (1074.3, -232.2, 62.6) — DOOR_TYPE_PASSAGE on
+            //     DATA_IONAR. Force-opening it unlocks the whole west corridor
+            //     AND Loken with Ionar still alive.
+            //
+            // In the normal case neither is ever the thing to solve: the roster
+            // order (DungeonEncounter.dbc — Bjarngrim, Volkhan, Ionar, Loken) is
+            // also the walking order, so the party kills the boss each door is
+            // keyed on before it ever reaches the door, and the instance opens
+            // it. These rows are what keeps that true when the order is
+            // perturbed — a `dc skip`, a wing filter, a wipe that leaves the
+            // party re-routing.
+            //
+            // Deliberately NOT navigation-invisible, unlike the Molten Core
+            // props and the Halls of Stone Sky Room Floor: these two ARE doors,
+            // the party really is stopped by them, and the at-boss stand-down
+            // needs to see them. Sjonnir's Door (191296) is on this list for the
+            // same reason and for the same one line of code.
+            case 191325:  // Halls of Lightning — Volkhan Door (opens on Volkhan's death)
+            case 191326:  // Halls of Lightning — Ionar Door (opens on Ionar's death)
+                return true;
             default:
                 return false;
         }

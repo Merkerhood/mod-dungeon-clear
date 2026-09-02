@@ -204,6 +204,19 @@ namespace
             // its "nothing to steer this tick" yield rather than a completion.
             // Repeatable besides: a momentary Done latches nothing.
             {469, 3},
+            // Halls of Lightning "Cross the Slag Furnace": the same shape one tier
+            // down. SlagFurnaceTransitDue is gated on TWO axis-aligned boxes
+            // (x 1298..1358, y -205..-44, z 18..44 for the descent and the pit
+            // floor; x 1330..1346, y -240..-205 for the climb out) that between
+            // them are the Slag Furnace and nothing else on map 602 — not
+            // Volkhan's gallery 29yd directly overhead, and not the gallery ramp
+            // 7.5yd east of the pit's own, which is why there are two of them. It
+            // is then gated on the leader NOT yet being within 10yd of the mid
+            // ledge, which is the crossing's own completion, so the far-tank
+            // false-latch state is the state the predicate exists to exclude. Its
+            // lone step (hook 24, DriveSlagFurnaceTransit) OWNS the travel, and
+            // it is Repeatable, so a momentary Done latches nothing.
+            {602, 1},
             // Underbog "Send Ghaz'an up to his platform": deliberately map-wide,
             // and the one case where near-gating would be WRONG. Its hook fires
             // the same DoAction areatrigger 4302 fires, and path 1383921 opens by
@@ -676,6 +689,16 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // flag's usual cost — which is why it yields the tick on every hold, and
         // why "advance" is the only branch that returns Running.
         {469, 3},
+        // Halls of Lightning "Cross the Slag Furnace". Blackwing Lair's argument
+        // verbatim, with smaller numbers that reach the same conclusion: fourteen
+        // Slag (28585) line the pit walkway on a TWENTY-SECOND respawn with an 8yd
+        // wander, and every one of them is inside aggro range of the route line —
+        // so AnyPartyEngagement never drops for the no-engage grace window,
+        // DcCombatFlag::MayDrive is false, and Advance (non-combat engine only)
+        // never runs. The leg is not slow, it is stopped. This driver steers the
+        // tank and so pays the flag's usual cost, which is why it yields the tick
+        // on every hold and "advance" is the only branch that returns Running.
+        {602, 1},
         // Halls of Stone "Repel the Tribunal wave". The Tribunal of Ages is a
         // FIXED 300-second survival timer, and brann_bronzebeardAI::JustSummoned
         // calls SetInCombatWithZone() on EVERY add it spawns — so from the first
@@ -1049,6 +1072,16 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // holds for the ramp's six Taskmasters, and a raid that spends that fight
         // claiming the tick is a raid with no rotation.
         {469, 3},
+        // Halls of Lightning "Cross the Slag Furnace": hook 24 issues every metre
+        // of the crossing through the same long-haul funnel (DcTransit::TravelTo),
+        // one authored leg at a time. With the per-tick hold in place each of
+        // those splines is cancelled the tick after it is issued and the party
+        // creeps down a 395yd route while every log line reports a healthy spline.
+        // The flag is also what makes a Done RETURN YIELD, which is load-bearing:
+        // the driver holds for the two Unbound Firestorms at the foot of the climb
+        // out, and a party that spends that fight claiming the tick has no
+        // rotation.
+        {602, 1},
         // Halls of Stone, all four events.
         //
         // Events 1-3 are the Brann sequence and each is a hook- or
@@ -1890,6 +1923,15 @@ TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
         // sibling run at 102yd), transit cursor falling 10/19 -> 6/19 and
         // re-walking the same four anchors — the tank ran the gauntlet backwards.
         {469, 3},
+        // Halls of Lightning "Cross the Slag Furnace". Same reason, plus one this
+        // map has on its own: the pull's Idle branch drags a camp BACKWARD looking
+        // for ground clear of hostiles, which among fourteen Slags on a 20s
+        // respawn is never nearby — and on this leg "backward" means UP THE
+        // DESCENT and then down again, because Volkhan's leash
+        // (GetDistance(1331.9, -106, 56) > 95 -> EnterEvadeMode) reaches 55yd into
+        // the pit floor. A camp dragged onto the ramp therefore takes the boss
+        // into the Slags over a path he cannot walk and evades him.
+        {602, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

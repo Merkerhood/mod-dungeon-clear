@@ -438,6 +438,7 @@ namespace
             RegisterVioletHoldEvents(t);
             RegisterBlackwingLairEvents(t);
             RegisterHallsOfStoneEvents(t);
+            RegisterHallsOfLightningEvents(t);
             return t;
         }();
         return kEvents;

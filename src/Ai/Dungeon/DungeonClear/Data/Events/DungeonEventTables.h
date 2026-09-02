@@ -550,6 +550,299 @@ namespace DcHallsOfStone
 
 void RegisterHallsOfStoneEvents(std::vector<DungeonEvent>& out);
 
+// --- Halls of Lightning (map 602) ------------------------------------------
+//
+// The numbers HallsOfLightningEvents.cpp authors, HallsOfLightningDriver.cpp
+// steers by and t/TestHallsOfLightning.cpp pins. Shared here for the same reason
+// DcBlackwingLair, DcVioletHold and DcHallsOfStone are: the transit's corridor
+// box, its route slice and the point it ends at need exactly ONE definition, and
+// the probe suite re-derives them against the real mesh.
+//
+// NO ROSTER PATCH, and that is worth writing down rather than leaving as an
+// absence. All four of map 602's instance_encounters rows are creditType 0
+// (ENCOUNTER_CREDIT_KILL_CREATURE) against real `creature` spawns, and
+// DungeonEncounter.dbc's order (Bjarngrim 0, Volkhan 1000, Ionar 2000, Loken
+// 3000) IS the walking order — so BossSpawnIndex::Build derives the whole list
+// with correct coordinates on both difficulties. This is the first WotLK map in
+// the module where that is true; the previous four (Halls of Stone, Drak'Tharon,
+// Gundrak, The Nexus) each needed a patch to be runnable at all. Do not add one
+// here: the transit below is a CONDITIONAL event, which needs no roster row, no
+// order keys and no OBJ() anchor, and a patch could only make things worse.
+//
+// DIFFICULTY TWINS ARE STAT TEMPLATES, NOT ENTRIES. Almost every creature on
+// this map has one (Slag 28585 -> 30970, Volkhan 28587 -> 31536, ...), and
+// Creature::InitEntry resolves DifficultyEntry[diff-1] into m_creatureInfo and
+// then does SetEntry(Entry) — "normal entry always" — so GetEntry() returns the
+// NORMAL id on heroic. Every entry-keyed constant below is the normal id and is
+// correct on both difficulties. Do not add the 30xxx/31xxx ids anywhere.
+//
+// EVERY COORDINATE HERE IS COLUMN-PROBED against the live 602 mmtiles
+// (t/TestHallsOfLightningRouteProbe), and on this map that is not ceremony. The
+// mmtiles carry flat sheets far below the dungeon — a continuous surface at
+// z ~ -1.9 and another at z ~ -13.9 under essentially the whole footprint — so
+// map 602 is in the flat-grid-height family ([[ac-map601-flat-gridheight-zero]])
+// and an anchor authored from a script literal rather than from the probed TOP
+// surface is a sink waiting to happen. The open centre of Bjarngrim's ring
+// (1330, 30) has NO dungeon floor at all: probing it returns 143.02, -1.88,
+// -13.88, so a hold point or camp placed there drops a bot 45-55yd.
+namespace DcHallsOfLightning
+{
+    constexpr uint32 MAP_ID = 602;
+
+    // The four bosses, in DungeonEncounter.dbc order — which is also the order
+    // the party walks them.
+    constexpr uint32 NPC_BJARNGRIM = 28586;
+    constexpr uint32 NPC_VOLKHAN   = 28587;
+    constexpr uint32 NPC_IONAR     = 28546;
+    constexpr uint32 NPC_LOKEN     = 28923;
+
+    // Volkhan's slot in instance_halls_of_lightning's OWN HoLBossIds enum, which
+    // is what GetBossState is keyed on. It is THREE, not one: the header's order
+    // is Bjarngrim 0, Ionar 1, Loken 2, Volkhan 3, and that is NOT the DBC bit
+    // order. Read from halls_of_lightning.h; never reuse an encounterIndex here.
+    constexpr uint32 VOLKHAN_ENCOUNTER_INDEX = 3;
+
+    // --- the Slag Furnace (the Bjarngrim -> Volkhan transit) ---------------
+    //
+    // The 395yd of pit between Bjarngrim's hall and Volkhan's gallery, and the
+    // one leg on this map the ordinary clear cannot cross. Three facts, and
+    // between them they are the whole design:
+    //
+    //   1. THE PIT IS THE ONLY WAY THROUGH. An A* over the map-602 mmtiles with
+    //      every poly below z 40 removed returns NO PATH from Bjarngrim's floor
+    //      to Volkhan. The party must descend 17yd from the hall's south arm
+    //      (z 40.7 -> z 23.9), walk ~110yd south along the pit floor, climb the
+    //      far wall to the mid ledge (z 38.6) and climb again to the gallery
+    //      (z 52.7) — 395yd of route for 80yd of straight line. There is no
+    //      upper gallery route.
+    //   2. FOURTEEN SLAG (28585) LINE THE WALKWAY ON A TWENTY-SECOND RESPAWN
+    //      (`creature.spawntimesecs = 20`, MovementType 1, wander_distance 8 —
+    //      the shortest respawn on any map this module runs). Twelve of the
+    //      fourteen are within 20yd of the route line in 2D; with the wander all
+    //      fourteen reach it, and level 79 against level 80 is inside base aggro
+    //      range for the whole walk.
+    //   3. SO THE CLEAR HAS NO DRIVER IN THERE. DcCombatFlag::MayDrive is false
+    //      while anything in the party is engaged and Advance is registered only
+    //      in the NON-combat engine, so party engagement never drops for the
+    //      no-engage grace window. The leg is not slow; it is stopped. This is
+    //      Blackwing Lair's Suppression Rooms one tier down.
+    //
+    // AND KILLING THEM IS NEGATIVE PROGRESS, which is why the answer is a
+    // transit and not a clear. Each Slag is 15 828 HP with DamageModifier 1 —
+    // trivial, harmless in melee — but smart_scripts 28585 id 1/3 is
+    // `On Just Died -> Blast Wave` (23113 normal / 22424 heroic): 10yd, and
+    // SPELL_AURA_MOD_DECREASE_SPEED -50% for 6s. Fourteen deaths inside a 110yd
+    // crossing is a party that spends most of the crossing at half speed.
+    //
+    // HONEST NOTE ON WHAT THIS IS *NOT*. Unlike Blackwing Lair's whelps this
+    // does NOT meet DcNeverTargetRegistry's class-3 arithmetic bar — 0.7
+    // spawns/s against fourteen low-HP mobs is a population a high-DPS party
+    // genuinely can clear, where BWL's 5.3/s across 375yd is not. The problem
+    // here is the SNARE and the MISSING DRIVER, and the fix addresses those. No
+    // never-target rows are authored for 28585; if the transit alone turns out
+    // not to cross the pit, the row wants a new justification written into that
+    // table's doc comment, not an existing class stretched to fit.
+
+    constexpr uint32 NPC_SLAG = 28585;
+
+    // The two things in the pit that ARE worth standing and killing: Unbound
+    // Firestorm (28584), 3600s respawn, two of them at (1300.0, -214.8, 23.3)
+    // and (1362.2, -215.2, 23.3) — at the foot of the climb out — plus the
+    // Blistering Steamragers (28583) that share their 3600s timer on the mid
+    // ledge above. A kill here is progress that stays bought; a Slag kill is
+    // not. This is BWL's Taskmaster/Hatcher role, and the driver's Elite hold
+    // is keyed on exactly these two entries.
+    constexpr uint32 NPC_UNBOUND_FIRESTORM       = 28584;
+    constexpr uint32 NPC_BLISTERING_STEAMRAGER   = 28583;
+
+    // WHERE THE TRANSIT'S SLICE OF THE ROUTE STARTS AND ENDS.
+    //
+    // The registry row for Volkhan is the WHOLE Bjarngrim -> Volkhan leg
+    // (29 anchors; see RegisterHallsOfLightningRoute), because the ordinary
+    // clear needs a polyline to walk and a cursor to project onto for the halves
+    // the transit does not own. The driver is handed the middle of it — anchors
+    // TRANSIT_STAGE_ANCHOR_INDEX .. TRANSIT_END_ANCHOR_INDEX — so that its
+    // cursor 0 IS the staging point and its LAST anchor IS the point the
+    // crossing ends at, which is what the kernel's gather gate (cursorIndex 0)
+    // and completion test (the last anchor) both mean.
+    //
+    // A MIDDLE slice, where Blackwing Lair takes a tail one. The difference is
+    // real geometry, not taste: BWL's crossing ends AT the next boss, so its
+    // route simply stops there; here the party still has a hairpin and a second
+    // ramp to climb after the pit, and those are ordinary ground the clear
+    // walks — and must NOT be steered by a driver whose route ends behind them.
+    constexpr std::size_t TRANSIT_STAGE_ANCHOR_INDEX = 5;
+    constexpr std::size_t TRANSIT_END_ANCHOR_INDEX   = 18;
+
+    // THE STAGING POINT — the top of the descent, and the last quiet ground
+    // before the gauntlet. Routed and column-probed: (1323.21, -46.56, 40.66) is
+    // the corridor point at which the hall's south arm stops being flat and
+    // starts dropping. Nearest Slag 78yd; nothing in the pit reaches it.
+    //
+    // The ordinary clear delivers the party here by itself (it is out of combat
+    // for the whole hall once Bjarngrim is down), so the transit's first act is
+    // a gather, not a haul.
+    constexpr float TRANSIT_STAGE_X = 1323.21f;
+    constexpr float TRANSIT_STAGE_Y = -46.56f;
+    constexpr float TRANSIT_STAGE_Z = 40.66f;
+
+    // THE MID LEDGE — where the crossing ends and the ordinary pipeline (pull,
+    // muster, standoff, engage) takes back over. The top of the climb out of the
+    // pit, z 38.55, with the four z38 trash spawns 18-30yd west and east of it.
+    //
+    // Those spawns are the REASON the transit stops here rather than running on
+    // to Volkhan: they are 3600s respawns on open ground, which is a fight worth
+    // setting up for, and NO_STOP is released at the same anchor.
+    constexpr float TRANSIT_END_X = 1340.53f;
+    constexpr float TRANSIT_END_Y = -233.26f;
+    constexpr float TRANSIT_END_Z = 38.55f;
+
+    // How close the leader has to get before the crossing is over. Also the
+    // predicate's own OFF switch: the event is due while the leader is inside the
+    // pit box and NOT yet here, so arriving simply stops it being due. There is
+    // no completion latch to reset — a party shoved back into the pit re-arms it,
+    // which is the correct answer, and a wipe leaves no stale flag behind.
+    constexpr float TRANSIT_END_RADIUS = 10.0f;
+
+    // --- THE CORRIDOR, and why it is TWO boxes ------------------------------
+    //
+    // The transit's activation predicate is gated on the leader standing inside
+    // this volume, which is what keeps a rung registered on every bot's combat
+    // engine inert for the other three encounters of this dungeon.
+    //
+    // ONE box cannot draw it, and the reason is a switchback. The climb OUT of
+    // the pit runs north-to-south at x 1340.5 from z 23.9 up to z 38.6; the climb
+    // on to Volkhan's gallery runs back south-to-north at x 1348-1350 from z 38.6
+    // up to z 52.7. Two ramps, 7.5yd apart in x, overlapping in y and in z for
+    // their whole lower halves. A single box wide enough to hold the pit also
+    // holds the gallery ramp, and a leader standing on THAT would have the
+    // transit re-arm behind it: ResolveCursor would project it back on to the pit
+    // ramp and the driver would walk the party back down the hole.
+    //
+    // So: box 1 is the descent and the pit floor, cut off at y -205 — north of
+    // the switchback entirely. Box 2 is the climb out, narrow in x (1330..1346)
+    // so it holds the pit ramp and excludes the gallery ramp (whose nearest
+    // point is x 1348.03). Both share a z ceiling of 44, which is what excludes
+    // the gallery itself (floor z 52.7) and Volkhan (z 57.0) from either.
+    //
+    // Certified against the authored anchors in t/TestHallsOfLightning: anchors
+    // 5..18 are inside, 0..4 and 19..28 are outside, and so are Bjarngrim, the
+    // entrance, Volkhan, Ionar, Loken and the Hall of the Watchers.
+    constexpr float PIT_BOX_MIN_X = 1298.0f;
+    constexpr float PIT_BOX_MAX_X = 1358.0f;
+    constexpr float PIT_BOX_MIN_Y = -205.0f;
+    constexpr float PIT_BOX_MAX_Y = -44.0f;
+    constexpr float PIT_BOX_MIN_Z = 18.0f;
+    constexpr float PIT_BOX_MAX_Z = 44.0f;
+
+    constexpr float CLIMB_BOX_MIN_X = 1330.0f;
+    constexpr float CLIMB_BOX_MAX_X = 1346.0f;
+    constexpr float CLIMB_BOX_MIN_Y = -240.0f;
+    constexpr float CLIMB_BOX_MAX_Y = -205.0f;
+    constexpr float CLIMB_BOX_MIN_Z = 18.0f;
+    constexpr float CLIMB_BOX_MAX_Z = 44.0f;
+
+    // Is `bot` standing inside the Slag Furnace corridor right now? Two bbox
+    // tests, and the transit's cheapest real gate after the map compare.
+    // Defined in HallsOfLightningEvents.cpp.
+    bool InTransitCorridor(Player* bot);
+
+    // --- the driver's knobs -------------------------------------------------
+    //
+    // CONSTANTS, NOT SETTINGS. Blackwing Lair's equivalents are DcSettings rows
+    // because that transit was retrofitted onto a raid mid-testing and the raid
+    // scale genuinely varies; nothing here does. A five-man's pit crossing has
+    // one right answer for each of these and a conf row nobody will ever turn is
+    // cost pushed onto every future reader of the config.
+
+    // The gather radius, and the pack leash — how tight a ball the party enters
+    // the gauntlet as, and how far off the leader's route cursor a member may be
+    // before the leg stops for it.
+    //
+    // Both are 5-man numbers and both are tighter than Blackwing Lair's 20/25.
+    // The argument for the transit is that a wide ball sweeps more of a pit whose
+    // spawns are the problem, and four followers behind one tank have no
+    // legitimate reason to be strung over 25yd on a walkway 41yd wide at its
+    // narrowest. TRANSIT_PACK_LEASH must stay comfortably above the gather
+    // radius' own floor — see DcSuppressionTransit::GatherRadiusFloor, which the
+    // driver applies for exactly the [[dc-party-gate-must-read-the-rungs-ring]]
+    // reason.
+    constexpr float TRANSIT_GATHER_RADIUS = 15.0f;
+    constexpr float TRANSIT_PACK_LEASH    = 20.0f;
+
+    // The fraction of living followers that must be inside the leash. 0.75 is
+    // three of four — one bot that cannot path in must never hold the other
+    // three at the top of a ramp, and stranded recovery (relevance 42) sits above
+    // this whole ladder and owns that member.
+    constexpr float TRANSIT_GATHER_QUORUM = 0.75f;
+
+    // How close a Firestorm / Steamrager has to be before the driver stands and
+    // fights it instead of walking past. 20yd is a little over the aggro band of
+    // the level-79/80 elites on this leg, so the hold arms as the party pulls
+    // them rather than after they are already in the middle of the column.
+    //
+    // SLAGS ARE DELIBERATELY NOT A HOLD. The tank face-pulls what walks into it
+    // and keeps moving; the party fights on the move. That is the whole point of
+    // NO_STOP plus OwnsThePull, and it is the difference between a transit and a
+    // clear.
+    constexpr float TRANSIT_ELITE_HOLD_RADIUS = 20.0f;
+
+    // Grid-scan radius for the driver's per-tick elite sweep. Wide enough to see
+    // a hold-worthy spawn from the middle of a leg (the widest hold radius is
+    // 20yd and the longest authored leg is 16), tight enough that it never
+    // reaches from the pit floor up on to the gallery.
+    constexpr float TRANSIT_SCAN = 40.0f;
+
+    // How far the leader may be from the staging point when the transit ARMS and
+    // still be asked to gather there. Past this the gather latches open and says
+    // so: you cannot gather at a point you have already walked past, and a driver
+    // that insisted would march a leader standing in the pit 200yd back up the
+    // ramp to form up. The case is a re-arm after a partial wipe, which is
+    // exactly when walking backwards is worst.
+    constexpr float TRANSIT_STAGE_SKIP_DIST = 40.0f;
+
+    // How far the leader may be from its own stored cursor before the projection
+    // is believed over it (DcSuppressionTransit::ResolveCursor). Inside a working
+    // crossing nothing is ever this far from the anchor it is walking to; a
+    // leader that is has died and come back, and the stored index is a fact about
+    // a previous attempt.
+    constexpr float TRANSIT_CURSOR_RESYNC_DIST = 50.0f;
+
+    // The three hold watchdogs. None of them is a target: each bounds ONE wait,
+    // and on expiry the driver walks on and logs which hold gave up. The elite
+    // budget is a quarter of Blackwing Lair's because the fights are — two
+    // Firestorms, not six Taskmasters — and the gather budget is halved for the
+    // same reason (four followers, not twenty-four, and no whelps at the staging
+    // point to keep them in combat).
+    constexpr uint32 TRANSIT_GATHER_TIMEOUT_MS = 30000;
+    constexpr uint32 TRANSIT_PACK_HOLD_TIMEOUT_MS  = 20000;
+    constexpr uint32 TRANSIT_ELITE_HOLD_TIMEOUT_MS = 30000;
+
+    // Throttle on the driver's per-tick telemetry line. Without the line a failed
+    // run says nothing about WHICH mechanism is still biting; without the
+    // throttle it says it several times a second, per bot.
+    constexpr uint32 TRANSIT_TELEMETRY_MS = 3000;
+
+    // Bound on the whole crossing, as the Custom step's timeout. The walk is
+    // 395yd of route; at a snared 3.5yd/s that is under two minutes, and the two
+    // Firestorm fights are seconds. Five minutes is a ceiling on a genuinely
+    // broken run and never the binding constraint on a working one — the event is
+    // Repeatable and every yielded tick re-bases the step clock, so this can only
+    // fire when the driver has held continuously for the whole budget, i.e. when
+    // a hold's own watchdog has failed to release.
+    constexpr uint32 TRANSIT_TIMEOUT_MS = 300000;
+
+    // The event row and the hook that drives it. Event ids are per-map; HOOK ids
+    // are ONE FLAT SPACE across every dungeon (see ObjectiveHookRegistry::AddHook,
+    // which LOG_ERRORs a collision rather than silently dropping one) — 1-14 are
+    // the older dungeons', 15-19 the Violet Hold's, 20-21 Blackwing Lair's and
+    // 22-23 Halls of Stone's, so this is 24.
+    constexpr uint32 EVENT_SLAG_FURNACE_TRANSIT = 1;
+    constexpr uint32 HOOK_SLAG_FURNACE_TRANSIT  = 24;
+}
+
+void RegisterHallsOfLightningEvents(std::vector<DungeonEvent>& out);
+
 // --- Gundrak (map 604) ----------------------------------------------------
 // The numbers GundrakEvents.cpp authors and t/TestGundrak.cpp pins. Shared here
 // for the same reason DcDrakTharonKeep and DcVioletHold are: several of them are
@@ -1713,5 +2006,11 @@ void RegisterAzjolNerubRoute();
 // position is not something a cursor can advance through. See
 // DcBlackwingLair's transit block.
 void RegisterBlackwingLairRoute();
+// Halls of Lightning (602) — Bjarngrim -> Volkhan, the Slag Furnace. Same reason
+// as the Blackwing Lair row and not the Azjol-Nerub one: the corridor routes
+// fine, but the SLAG FURNACE TRANSIT needs a fixed, monotone polyline to run a
+// cursor along, and the middle of that row is sliced out and handed to the driver
+// (DcHallsOfLightning::TRANSIT_STAGE_ANCHOR_INDEX .. TRANSIT_END_ANCHOR_INDEX).
+void RegisterHallsOfLightningRoute();
 
 #endif

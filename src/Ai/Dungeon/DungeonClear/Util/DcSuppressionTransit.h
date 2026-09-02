@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_DCSUPPRESSIONTRANSIT_H
 #define _PLAYERBOT_DCSUPPRESSIONTRANSIT_H
 
+#include <cstddef>
 #include <vector>
 
 #include "Position.h"
@@ -16,9 +17,14 @@
 class Player;
 class PlayerbotAI;
 
-// The movement half of Blackwing Lair's Suppression Rooms transit — the two
-// things the leader's driver and every follower's pack rung both need, shared so
-// the two halves can never disagree about them.
+// The movement half of a TRANSIT — the two things a leader's driver and (where
+// there is one) every follower's pack rung both need, shared so the two halves
+// can never disagree about them.
+//
+// Written for Blackwing Lair's Suppression Rooms and now also used by Halls of
+// Lightning's Slag Furnace, which is why the route slice and the hold point's
+// snap box are parameters rather than constants read out of DcBlackwingLair.
+// Nothing here knows about either map.
 //
 // It is a namespace of free functions rather than a class because there is no
 // state here: both are pure geometry plus a spline issue, and the decision that
@@ -101,21 +107,41 @@ namespace DcTransit
         bool viaRoute{false};  // the chord was off-mesh; this rides the corridor
     };
 
-    HoldTarget HoldPoint(Player* bot, Position const& anchor, float leash, float margin);
-
-    // The transit's authored track, sliced at TRANSIT_STAGE_ANCHOR_INDEX so anchor
-    // 0 IS the staging point — SHARED, so the leader's cursor and every follower's
-    // hold point are read off one row. Both halves used to be able to disagree
-    // about the route; now they cannot.
+    // The transit's authored track, SLICED so that anchor 0 is the crossing's
+    // staging point and the last anchor is the point the crossing ends at —
+    // SHARED, so the leader's cursor and every follower's hold point are read off
+    // one row. Both halves used to be able to disagree about the route; now they
+    // cannot.
     //
-    // nullptr when the registry row is missing or too short to slice.
+    // The slice matters to the KERNEL, not just to tidiness: DcSuppressionTransit
+    // keys its gather gate on `cursorIndex == 0`, its arm pins the cursor to 0,
+    // ResolveCursor clamps against a stored index in the same space, and the
+    // completion test is "the LAST anchor". Hand a driver the unsliced row and
+    // every one of those means something else.
+    //
+    // `firstAnchor`/`lastAnchor` are INCLUSIVE indices into the registry row, and
+    // `lastAnchor` past the end clamps. Blackwing Lair takes a TAIL slice (its
+    // crossing ends at the next boss, so the row simply stops there); Halls of
+    // Lightning takes a MIDDLE one (the party still has a hairpin and a second
+    // ramp to walk after its crossing, and those must not be steered by a driver
+    // whose route ends behind them).
+    //
+    // nullptr when the registry row is missing or too short to slice. Views are
+    // built once per (map, boss, slice) and cached; the cache is mutex-guarded
+    // because a route is looked up from the leader's driver and from every
+    // follower's pack rung, and there is no reason to reason about which thread
+    // won.
     struct RouteView
     {
-        std::vector<WaypointHint> hints;                    // anchor 20 onward
+        std::vector<WaypointHint> hints;                    // the slice, in route order
         std::vector<DcSuppressionTransit::Anchor> anchors;  // ...the same, projected
     };
 
-    RouteView const* Route();
+    RouteView const* Route(uint32 mapId, uint32 bossEntry, std::size_t firstAnchor,
+                           std::size_t lastAnchor);
+
+    HoldTarget HoldPoint(Player* bot, Position const& anchor, float leash, float margin,
+                         float snapRadius, float snapTolerance, RouteView const* route);
 }
 
 #endif  // _PLAYERBOT_DCSUPPRESSIONTRANSIT_H

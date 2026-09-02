@@ -7,6 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 
 #include "MotionMaster.h"
 #include "Player.h"
@@ -129,29 +132,82 @@ bool DcTransit::TravelTo(Player* bot, PlayerbotAI* botAI, float x, float y, floa
     return true;
 }
 
-DcTransit::RouteView const* DcTransit::Route()
+namespace
 {
-    using namespace DcBlackwingLair;
-
-    static RouteView const route = []
+    // One built view per (map, boss, slice). Registry rows are seeded once and
+    // never mutated, so a view is immutable after construction and the map only
+    // ever grows — but it IS looked up from more than one rung, so the build is
+    // guarded rather than reasoned about.
+    struct RouteKey
     {
-        RouteView r;
-        std::vector<WaypointHint> const* row = DungeonClearRouteRegistry::Get(
-            MAP_ID, DUNGEON_DIFFICULTY_NORMAL, NPC_BROODLORD_LASHLAYER);
-        if (!row || row->size() < TRANSIT_STAGE_ANCHOR_INDEX + 2)
-            return r;
+        uint32 mapId;
+        uint32 bossEntry;
+        std::size_t first;
+        std::size_t last;
 
-        r.hints.assign(row->begin() + TRANSIT_STAGE_ANCHOR_INDEX, row->end());
-        r.anchors.reserve(r.hints.size());
-        for (WaypointHint const& h : r.hints)
-            r.anchors.push_back({ h.x, h.y, h.z });
-        return r;
-    }();
-    return route.hints.empty() ? nullptr : &route;
+        bool operator==(RouteKey const& o) const
+        {
+            return mapId == o.mapId && bossEntry == o.bossEntry && first == o.first &&
+                   last == o.last;
+        }
+    };
+
+    struct RouteKeyHash
+    {
+        std::size_t operator()(RouteKey const& k) const noexcept
+        {
+            std::size_t h = std::hash<uint32>{}(k.mapId);
+            h = h * 31 + std::hash<uint32>{}(k.bossEntry);
+            h = h * 31 + std::hash<std::size_t>{}(k.first);
+            h = h * 31 + std::hash<std::size_t>{}(k.last);
+            return h;
+        }
+    };
+}
+
+DcTransit::RouteView const* DcTransit::Route(uint32 mapId, uint32 bossEntry,
+                                             std::size_t firstAnchor, std::size_t lastAnchor)
+{
+    static std::mutex mtx;
+    // unique_ptr so a rehash never moves a view a caller is already holding.
+    static std::unordered_map<RouteKey, std::unique_ptr<RouteView>, RouteKeyHash> cache;
+
+    RouteKey const key{ mapId, bossEntry, firstAnchor, lastAnchor };
+
+    std::lock_guard<std::mutex> guard(mtx);
+    auto const it = cache.find(key);
+    if (it != cache.end())
+        return it->second ? it->second.get() : nullptr;
+
+    std::unique_ptr<RouteView> built;
+    std::vector<WaypointHint> const* row =
+        DungeonClearRouteRegistry::Get(mapId, DUNGEON_DIFFICULTY_NORMAL, bossEntry);
+
+    // A slice needs at least two anchors to be a route: one to stand on and one
+    // to walk to. Anything shorter is a row that has been edited out from under
+    // the driver, and the honest answer is nullptr — the driver then reports Done
+    // and the leg goes back to being ordinary.
+    if (row && firstAnchor + 1 < row->size())
+    {
+        std::size_t const last = std::min(lastAnchor, row->size() - 1);
+        if (last > firstAnchor)
+        {
+            built = std::make_unique<RouteView>();
+            built->hints.assign(row->begin() + firstAnchor, row->begin() + last + 1);
+            built->anchors.reserve(built->hints.size());
+            for (WaypointHint const& h : built->hints)
+                built->anchors.push_back({ h.x, h.y, h.z });
+        }
+    }
+
+    RouteView const* const out = built.get();
+    cache.emplace(key, std::move(built));
+    return out;
 }
 
 DcTransit::HoldTarget DcTransit::HoldPoint(Player* bot, Position const& anchor, float leash,
-                                           float margin)
+                                           float margin, float snapRadius, float snapTolerance,
+                                           RouteView const* route)
 {
     HoldTarget out;
     out.x = anchor.GetPositionX();
@@ -171,8 +227,8 @@ DcTransit::HoldTarget DcTransit::HoldPoint(Player* bot, Position const& anchor, 
     // Is the chord standing on the corridor, or in the middle of the C?
     NavmeshSnap::Result const snap =
         NavmeshSnap::Snap(bot, chord.GetPositionX(), chord.GetPositionY(),
-                          chord.GetPositionZ(), DcBlackwingLair::TRANSIT_HOLD_SNAP_RADIUS);
-    if (snap.ok && snap.distance <= DcBlackwingLair::TRANSIT_HOLD_SNAP_TOLERANCE)
+                          chord.GetPositionZ(), snapRadius);
+    if (snap.ok && snap.distance <= snapTolerance)
     {
         // Take the SNAPPED point, not the raw chord. The two are within tolerance
         // of each other by construction here, and the snapped one is on a polygon
@@ -185,8 +241,7 @@ DcTransit::HoldTarget DcTransit::HoldPoint(Player* bot, Position const& anchor, 
 
     // The chord is off the floor. Ride the authored polyline instead: one leash
     // back along the corridor from the cursor, which is walkable ground by
-    // certification (t/TestBlackwingLairSuppressionRouteProbe).
-    RouteView const* const route = Route();
+    // certification (the per-map route probe suites).
     if (!route)
     {
         // No row to fall back to. The chord is still a better last word than

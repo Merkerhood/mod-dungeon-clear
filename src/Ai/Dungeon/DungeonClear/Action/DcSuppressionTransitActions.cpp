@@ -4,6 +4,8 @@
  */
 
 #include "Log.h"
+
+#include <cstdint>
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Playerbots.h"
@@ -96,8 +98,14 @@ bool DungeonClearTransitPackAction::Execute(Event /*event*/)
 
     float const leash = DcSettings::GetFloat(bot, "TransitPackLeash");
 
+    // The snap box, the tolerance and the polyline are Blackwing Lair's — this
+    // rung is BWL-gated on its first line (see the trigger), and the helper is
+    // shared with the Halls of Lightning driver, which passes its own.
     DcTransit::HoldTarget const hold =
-        DcTransit::HoldPoint(bot, anchor, leash, TRANSIT_PACK_HOLD_MARGIN);
+        DcTransit::HoldPoint(bot, anchor, leash, TRANSIT_PACK_HOLD_MARGIN,
+                             TRANSIT_HOLD_SNAP_RADIUS, TRANSIT_HOLD_SNAP_TOLERANCE,
+                             DcTransit::Route(MAP_ID, NPC_BROODLORD_LASHLAYER,
+                                              TRANSIT_STAGE_ANCHOR_INDEX, SIZE_MAX));
 
     // The arrival leash on the walk-back is deliberately tight — the hold point
     // is already inside the pack leash by TRANSIT_PACK_HOLD_MARGIN, so a loose
