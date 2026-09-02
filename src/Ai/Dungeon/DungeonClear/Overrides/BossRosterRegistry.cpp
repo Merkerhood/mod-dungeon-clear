@@ -65,6 +65,7 @@ namespace
             RegisterGundrakRoster(t);
             RegisterVioletHoldRoster(t);
             RegisterMoltenCoreRoster(t);
+            RegisterHallsOfStoneRoster(t);
             return t;
         }();
         return kPatches;

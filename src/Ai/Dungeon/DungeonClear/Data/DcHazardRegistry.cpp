@@ -158,7 +158,69 @@ namespace
     // at all (it lands wherever a random member was standing), so the live
     // predicates are the whole defence, exactly as for the ground pools.
 
-    constexpr std::array<DcHazardEmitter, 6> kEmitters = {{
+    // --- Halls of Stone (map 599), the Tribunal of Ages: TWO EMITTERS ------
+    //
+    // These are the rows the plan for this dungeon got WRONG, and the correction
+    // is worth stating because it is a whole-table mistake rather than a tuning
+    // one. Both hazards were sketched as DcGroundHazard rows keyed on the cast
+    // spell. `DcGroundHazard::spellId` is what DynamicObject::GetSpellId()
+    // returns, i.e. it only ever matches a spell with a
+    // SPELL_EFFECT_PERSISTENT_AREA_AURA (27) effect — and NEITHER of these has
+    // one, so both rows would have sat in the table matching nothing, forever,
+    // looking exactly like coverage. Read from Spell.dbc:
+    //
+    //   51136 Searing Gaze  eff0 APPLY_AURA(6)/DUMMY on the trigger itself,
+    //                       eff1 APPLY_AURA(6)/PERIODIC_TRIGGER_SPELL amplitude
+    //                       500ms -> 51125, whose SCHOOL_DAMAGE radius is 5.0yd.
+    //   51012 Dark Matter   eff0/eff1 APPLY_AURA(6) debuffs + eff2
+    //                       SCHOOL_DAMAGE, all at radius 5.0yd. A one-shot nova
+    //                       at the chaser's detonation point, not a pool at all.
+    //
+    // So both are CREATURES carrying/casting an aura, which is precisely what
+    // DcHazardEmitter is for, and both are keyed on the trigger's entry instead.
+    //
+    // 28265 SEARING GAZE is the textbook threat-2 emitter: brann_bronzebeard
+    // summons it AT A RANDOM PLAYER'S EXACT POSITION (TEMPSUMMON_TIMED_DESPAWN
+    // 10000) and it casts 51136 on itself, so it materialises under someone's feet
+    // and ticks 5yd of damage twice a second for its whole life. It is
+    // NOT_SELECTABLE, so there is nothing to kill and no reason to stay: vacate 5
+    // (the measured radius), keep-out 8 for placement drift, and the DEFAULT 2/6
+    // bands — a fixed patch of ground you step past once and then carry on.
+    //
+    // 28237 DARK MATTER TARGET is the same shape with a delay: it spawns at
+    // (899.843, 355.271, 214.301), waits ~5s, then MOVES to a random player's
+    // position and detonates. Vacating it is therefore worth more than vacating a
+    // static pool — the bot is walking out of the path of something still
+    // travelling — and it costs nothing when it detonates elsewhere. Same 5yd
+    // measured radius, same bands.
+    //
+    // The keep-out radii are deliberately MODEST (8, not 15). Both of these land
+    // on top of the party in the middle of a 300-second defend the party may not
+    // leave: the hold point is 25yd from Brann and the whole intercept line is
+    // ~10yd wide, so an over-wide keep-out would sterilise the one piece of ground
+    // the encounter requires the party to stand on and push it off the line to
+    // dodge a puddle that expires in ten seconds.
+    //
+    // DELIBERATELY ABSENT, all three checked against Spell.dbc rather than assumed:
+    //
+    //   50988 GLARE OF THE TRIBUNAL — no row is possible. It is a single-target
+    //     SCHOOL_DAMAGE beam on a random player within 100yd every 1.5s for ~250s.
+    //     There is no radius and nowhere to stand; it is sustained raid damage the
+    //     healer covers, and the reason to confirm a resto healer sustains normal
+    //     before attempting heroic.
+    //   50840 / 59848 / 51849 SJONNIR'S LIGHTNING RING — a row here would be
+    //     actively harmful. All three are self-auras on Sjonnir that periodically
+    //     trigger 50841/59849, a 10.0yd nova CENTRED ON HIM. A 10yd keep-out
+    //     around a melee boss is a keep-out around the tank's own position: it
+    //     would push the melee out of the fight for the whole encounter. This is
+    //     healed through, not dodged.
+    //   52341 / 59038 ELECTRICAL OVERLOAD — the Lightning Construct's on-death
+    //     10yd nova. One instant SCHOOL_DAMAGE with no aura, no DynamicObject and
+    //     no duration: by the time anything could react it has already resolved.
+    //     There is no persistent volume for the placement or vacate machinery to
+    //     act on.
+
+    constexpr std::array<DcHazardEmitter, 8> kEmitters = {{
         //                    radius  zBand  vacate  hold  slack
         { 552, 20869, /*Arcatraz Sentinel  (fought)      */ 22.0f, 12.0f,  0.0f, 2.0f, 6.0f },
         { 552, 21761, /*Destroyed Sentinel (leave once)  */ 15.0f, 12.0f, 15.0f, 2.0f, 6.0f },
@@ -166,6 +228,8 @@ namespace
         { 552, 21304, /*Warder Corpse                    */ 12.0f,  8.0f,  0.0f, 2.0f, 6.0f },
         { 349, 12222, /*Creeping Sludge    (STAY OUT)    */  8.0f,  6.0f,  5.0f, 6.0f, 9.0f },
         { 574, 23997, /*Ingvar Throw Dummy (leave once)  */  7.0f, 10.0f,  5.0f, 2.0f, 6.0f },
+        { 599, 28265, /*Searing Gaze trig  (leave once)  */  8.0f,  8.0f,  5.0f, 2.0f, 6.0f },
+        { 599, 28237, /*Dark Matter Target (leave once)  */  8.0f, 12.0f,  5.0f, 2.0f, 6.0f },
     }};
 
     // ---- the ground-pool table ------------------------------------------

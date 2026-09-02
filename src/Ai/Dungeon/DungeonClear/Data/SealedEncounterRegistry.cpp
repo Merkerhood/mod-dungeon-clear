@@ -117,12 +117,57 @@ namespace
     // musterSpread 10yd, the same number and the same reasoning as Selin's:
     // follow-tank trails at min(followDistance, 6yd), so the party sits inside it by
     // construction while moving and it only bites on a genuine straggler.
+    // --- Halls of Stone (599) — Sjonnir the Ironshaper -------------------------
+    //
+    // boss_sjonnirAI::JustEngagedWith puts GO_SJONNIR_DOOR (191296) into
+    // GO_STATE_READY — it SHUTS behind the party the moment he is pulled — and it
+    // is the only way into his room. That is the Selin shape exactly, with one
+    // difference in the party's favour: Reset() reopens it (`if BRANN_DOOR is DONE
+    // -> SetGoState(GO_STATE_ACTIVE)`), so a wipe here is cheap and does not cost
+    // the door. What a wipe cannot undo is a follower left OUTSIDE for the whole
+    // fight while four people solo a boss with an infinite add stream.
+    //
+    // Without this row that lockout is also invisible to the clear in a second,
+    // nastier way: a closed 191296 is precisely the signal five runs of
+    // tp-20260831-205458-3 ended on ("paused for over 60s: a closed door is
+    // blocking the path"). A straggler outside a legitimately-shut encounter door
+    // would report the same thing mid-fight and read as the very nav failure this
+    // dungeon's automation was written to remove.
+    //
+    // The volume is the boss's own evade box, which instance_halls_of_stone states
+    // outright: BossBoundaryData { BOSS_SJONNIR, new RectangleBoundary(1206.56f,
+    // 1341.4185f, 579.9434f, 753.9599f) }. minX is nudged from 1206.56 to 1210 to
+    // keep the box clear of the door corridor itself, so a bot standing IN the
+    // doorway is not counted as already inside.
+    //
+    // KNOWN LIMITATION, ACCEPTED — the same one the Gundrak row carries, and worth
+    // restating because map 599 is in the flat-grid-height family
+    // (ac-map601-flat-gridheight-zero). InSealedRoom is 2D and SealedEncounterRow
+    // has no Z band, and column probes inside this footprint return three surfaces:
+    // the real floor at z 189.76 plus phantoms at 162.29 and 0.16. Those two are
+    // artifacts of the map's flat grid height, not walkable floors with a path to
+    // them, so nothing can stand on them and the 2D test is exact in practice.
+    //
+    // approachRadius 100, and NOT the 45 the first two rows take, for the reason
+    // the Gundrak row spells out: the number has to arm the gates BEFORE the party
+    // threads the door, and this room is deep. Sjonnir sits at (1295.21, 667.16,
+    // 189.69), 88.7yd from his door — where Selin's is 27yd — so 45 would arm at
+    // x ~1250, forty yards INSIDE the room and long past the muster point. 100 arms
+    // at x ~1196, which is 1.5yd from objective 3's door-stage anchor: the party is
+    // tightening up exactly where the event already parks it to talk to Brann. It
+    // does not reach back to the Tribunal arena 400yd west, so the whole approach
+    // from the arena runs under the ordinary gates.
+    //
+    // musterSpread 10, the same number and the same reasoning as the rows above:
+    // follow-tank trails at min(followDistance, 6yd), so the party sits inside it
+    // by construction while moving and it only bites on a genuine straggler.
     SealedEncounterRow const kRows[] =
     {
         // mapId  boss   minX    maxX    minY    maxY   approach  muster
         {   585, 24723, 216.0f, 260.0f, -45.0f, 45.0f,    45.0f,  10.0f },
         {   601, 29120, 526.0f, 574.0f, 234.0f, 278.0f,   45.0f,  10.0f },
         {   604, 29306, 1855.0f, 1982.0f, 648.0f, 848.0f,  75.0f,  10.0f },
+        {   599, 27978, 1210.0f, 1342.0f, 580.0f, 754.0f, 100.0f,  10.0f },
     };
 }
 

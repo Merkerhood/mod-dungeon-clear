@@ -93,6 +93,14 @@ namespace
         { 585, 216.0f, 260.0f, -45.0f, 45.0f },  // Magisters' Terrace — Selin Fireheart's room
         { 601, 470.0f, 640.0f, 480.0f, 625.0f }, // Azjol-Nerub — Hadronox's shaft
         { 600, -282.0f, -240.0f, -700.0f, -628.0f }, // Drak'Tharon Keep — Trollgore's arena
+        // Halls of Stone — Sjonnir's room. instance_halls_of_stone gives him an
+        // explicit RectangleBoundary(1206.56, 1341.4185, 579.9434, 753.9599), and
+        // its WEST EDGE IS THE DOOR PLANE: any camp the advanced pull could drag
+        // him back to is on the far side of 191296, i.e. outside his own evade box,
+        // which evades the boss outright. Same shape as Trollgore's Y band above.
+        // The zone is the boundary verbatim — the room holds only Sjonnir and his
+        // summons, so there is nothing else in it a pull-to-camp would want.
+        { 599, 1206.56f, 1341.42f, 579.94f, 753.96f },
     };
 }
 

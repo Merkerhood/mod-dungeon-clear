@@ -279,6 +279,277 @@ namespace DcVioletHold
 void RegisterVioletHoldEvents(std::vector<DungeonEvent>& out);
 void RegisterMoltenCoreEvents(std::vector<DungeonEvent>& out);
 
+// --- Halls of Stone (map 599) ---------------------------------------------
+//
+// The numbers HallsOfStoneEvents.cpp authors, HallsOfStoneDriver.cpp steers by
+// and t/TestHallsOfStone.cpp pins. Shared here for the same reason
+// DcDrakTharonKeep, DcVioletHold and DcGundrak are: the hold point and the add
+// spawns it is placed against need exactly ONE definition, and several of these
+// are SAFETY numbers whose whole value is that a test can re-derive them.
+//
+// Every coordinate below was column-probed against the live 599 mmtiles
+// (7 tiles: 599.mmap + 2929/2930/2931/2932/3030/3031/3032). That is not
+// ceremony on this map: the columns under the Tribunal arena carry a PHANTOM
+// SURFACE at z ~ -142 and the columns under the eastern half carry one at
+// z ~ 0.16 — map 599 is in the flat-grid-height family
+// (ac-map601-flat-gridheight-zero), so an anchor authored from a script literal
+// rather than from the probed TOP surface is a sink waiting to happen.
+namespace DcHallsOfStone
+{
+    constexpr uint32 MAP = 599;
+
+    // --- creature entries -------------------------------------------------
+    //
+    // PLAIN NORMAL-MODE ENTRIES, ON BOTH DIFFICULTIES, and that is worth one
+    // paragraph because creature_template says otherwise at a glance.
+    //
+    // Almost every creature here carries a difficulty_entry_1 twin: Brann
+    // 28070 -> 31366, Sjonnir 27978 -> 31386, the three wave adds 27983/27984/
+    // 27985 -> 31876/31877/31380, the two hazard triggers 28237/28265 ->
+    // 31875/31878, the Earthen Dwarf 27980 -> 31391. Reading that column alone
+    // suggests every entry-keyed step and scan in this dungeon is normal-only and
+    // silently dead on heroic.
+    //
+    // IT IS NOT, because a difficulty twin is a STAT TEMPLATE, not a separate
+    // spawned entry. Creature::InitEntry resolves DifficultyEntry[diff-1] into
+    // `m_creatureInfo` — the stats, the flags, the damage — and then does
+    // `SetEntry(Entry); // normal entry always`. So Creature::GetEntry() returns
+    // the NORMAL id on heroic, and FindNearestCreature / GetCreatureListWithEntry
+    // InGrid match on it exactly as they do on normal.
+    //
+    // The two ways that could still have gone wrong are both checked and both
+    // clear: Brann is a DB spawn (guid 126801, id 28070), and every summon in
+    // brann_bronzebeard.cpp passes the bare normal constant — SummonCreature(
+    // NPC_KADDRAK...), SummonCreatureGroup(0..2) over creature_summon_groups rows
+    // whose entry column is 27983/27984/27985. Nothing in the script ever names a
+    // 318xx id; heroic differs only in the stat template and in three
+    // IsHeroic() ? ... : ... REPEAT CADENCES.
+    //
+    // So: no difficulty-gated event rows, no heroic entries in the scan lists.
+    // Recorded here because the obvious "fix" on reading difficulty_entry_1 is to
+    // add them, and adding them would be dead weight that reads as a safety net.
+    constexpr uint32 NPC_BRANN                   = 28070;
+    constexpr uint32 NPC_SJONNIR                 = 27978;
+    constexpr uint32 NPC_KRYSTALLUS              = 27977;
+    constexpr uint32 NPC_MAIDEN_OF_GRIEF         = 27975;
+
+    // The three stone faces. NullCreatureAI, faction 114, unit_flags 33554436
+    // (NOT_SELECTABLE | 0x4): they cannot be targeted, damaged or interrupted,
+    // and they are pure spell emitters. They exist ONLY between InitializeEvent()
+    // and EndTribunalFight(), which is what makes a bare aliveness probe on them
+    // a sound "the Tribunal is running" test — and the only probe that reads true
+    // during the quiet first 52 seconds, before any add has spawned. These three
+    // are also the only creatures on the map with NO difficulty twin at all.
+    constexpr uint32 NPC_KADDRAK                 = 30898;
+    constexpr uint32 NPC_MARNAK                  = 30897;
+    constexpr uint32 NPC_ABEDNEUM                = 30899;
+
+    // The wave adds (creature_summon_groups, summonerId 28070 — three rows of
+    // 27983 at (943.088, 401.378, 206.161), two of 27984 at (967.000, 376.832,
+    // 206.161), one of 27985 at (964.302, 381.942, 206.161)). Every one is a
+    // TempSummon with spawnId 0, so the spawn store cannot see them and both the
+    // predicate and the driver must grid-scan.
+    constexpr uint32 NPC_DARK_RUNE_PROTECTOR     = 27983;
+    constexpr uint32 NPC_DARK_RUNE_STORMCALLER   = 27984;
+    constexpr uint32 NPC_IRON_GOLEM_CUSTODIAN    = 27985;
+
+    // The two ground-hazard carriers, both NOT_SELECTABLE triggers. See the
+    // DcHazardRegistry rows — these are EMITTERS (a creature carrying a pulsing
+    // aura), NOT persistent-area-aura pools, and that distinction is load-bearing.
+    constexpr uint32 NPC_SEARING_GAZE_TRIGGER    = 28265;
+    constexpr uint32 NPC_DARK_MATTER_TARGET      = 28237;
+    constexpr uint32 NPC_DARK_MATTER_VISUAL      = 28235;
+
+    // Sjonnir's 25% adds. Summoned, then immediately handed a random PLAYER's
+    // faction — they fight on your side. See the DcNeverTargetRegistry row.
+    constexpr uint32 NPC_EARTHEN_DWARF           = 27980;
+
+    // The three constructs Brann walks into while REACT_AGGRESSIVE.
+    constexpr uint32 NPC_RAGING_CONSTRUCT        = 27970;
+    constexpr uint32 NPC_UNRELENTING_CONSTRUCT   = 27971;
+    constexpr uint32 NPC_LIGHTNING_CONSTRUCT     = 27972;
+
+    // THE ONLY FUNCTIONAL DOOR ON THE MAP, and the whole reason this dungeon
+    // needs automation. gameobject.state = 1 (closed), Data0 = 0, lockId 0. The
+    // only code path that opens it is instance_halls_of_stone's
+    // SetData(BRANN_DOOR, DONE), whose only caller is Brann arriving at
+    // POINT_SJONNIR_DOOR — 3.2s after a player takes gossip 10012.
+    //
+    // The map's other five doors (191292/191293/191294/191295/191459) all spawn
+    // state = 0 (open), are referenced by no C++ anywhere, and are deliberately
+    // NOT in DcEventDoorRegistry::IsScriptOnly — see the note there.
+    constexpr uint32 GO_SJONNIR_DOOR             = 191296;
+
+    // --- the instance index space (halls_of_stone.h) ----------------------
+    //
+    // READ THE MASK OR THE BOSS STATE, NEVER GetData, for indices 0-4:
+    //
+    //   * Krystallus (0) and the Maiden of Grief (1) never call SetBossState at
+    //     all, so GetBossState(0) / GetBossState(1) are permanently NOT_STARTED.
+    //   * GetData(BRANN_BRONZEBEARD) is permanently 0: the escort writes only the
+    //     boss state, and instance_halls_of_stone::GetData just returns the
+    //     SetData-written Encounter[] slot. So a garrison cannot gate on the
+    //     escort through instance data.
+    //   * GetData(BOSS_TRIBUNAL_OF_AGES) is unusable as a gate: it stays 0 through
+    //     the whole 300s fight and only starts toggling SPECIAL/DONE during the
+    //     256s of post-fight lore. Completion rides mask bit 2 / GetBossState(2).
+    //
+    // BRANN_DOOR (5) is the exception and the ONE clean instance-data reading on
+    // this map: brann_bronzebeard.cpp writes BOTH stores (SetBossState and
+    // SetData) when the door opens, so GetData(BRANN_DOOR) >= DONE is truthful
+    // and monotonic. That is what the escort step's data gate uses — see
+    // HallsOfStoneEvents.cpp for why that gate is load-bearing for a reason
+    // beyond completion.
+    constexpr uint32 BOSS_KRYSTALLUS           = 0;
+    constexpr uint32 BOSS_MAIDEN_OF_GRIEF      = 1;
+    constexpr uint32 BOSS_TRIBUNAL_OF_AGES     = 2;
+    constexpr uint32 BOSS_SJONNIR              = 3;
+    constexpr uint32 BRANN_BRONZEBEARD         = 4;
+    constexpr uint32 BRANN_DOOR                = 5;
+
+    // DungeonEncounter bits (instance_encounters, both difficulties). Bit 2 is
+    // creditType 1 (ENCOUNTER_CREDIT_CAST_SPELL) on spell 59046, which is exactly
+    // why BossSpawnIndex cannot derive it and why this dungeon ends at 2/3 today.
+    constexpr uint32 BIT_KRYSTALLUS            = 0;
+    constexpr uint32 BIT_MAIDEN_OF_GRIEF       = 1;
+    constexpr uint32 BIT_TRIBUNAL_OF_AGES      = 2;
+    constexpr uint32 BIT_SJONNIR               = 3;
+
+    // ObjectiveHookRegistry ids. Hook ids are one FLAT space across every
+    // dungeon; 1-10 and 12-21 are taken, 11 is retired and stays retired.
+    constexpr uint32 HOOK_TRIBUNAL             = 22;
+    constexpr uint32 HOOK_WAVE                 = 23;
+
+    // --- clear-path order keys --------------------------------------------
+    // ONE contiguous 1..6 scale shared by the three derived bosses (reordered in
+    // place, kill-bits untouched) and the three new objectives. The bosses'
+    // RELATIVE order is exactly what their DBC bits already gave them; the scale
+    // exists only so the objectives have somewhere to sit between the Maiden and
+    // Sjonnir.
+    constexpr int32 ORDER_KRYSTALLUS           = 1;
+    constexpr int32 ORDER_MAIDEN               = 2;
+    constexpr int32 ORDER_ESCORT               = 3;
+    constexpr int32 ORDER_TRIBUNAL             = 4;
+    constexpr int32 ORDER_DOOR                 = 5;
+    constexpr int32 ORDER_SJONNIR              = 6;
+
+    // --- geometry, every value column-probed ------------------------------
+
+    // Objective 1's anchor. 6.8yd from Brann's DB spawn (1077.41, 474.16, 207.80,
+    // guid 126801), which is inside the escort step's own 5yd gossip walk-in with
+    // a tick of drift to spare, so simply ARRIVING all but closes the gap. Probed:
+    // exactly ONE walkable surface in the column, z 208.07.
+    constexpr float MEET_X = 1077.40f, MEET_Y = 481.00f, MEET_Z = 208.07f;
+
+    // The escort pre-clear volume: the centroid of the FOUR constructs standing
+    // in Brann's first forty yards, measured from the live spawn rows —
+    // 27971 at (1032.59, 475.95) and (1049.09, 468.95), both within 8yd of
+    // waypoint 2/3 of path 280701, plus 27971 (1036.02, 501.23) and 27970
+    // (1058.29, 499.91) a further 25yd out. Radius 28 encloses all four with
+    // margin and reaches nothing else. Probed: one surface, z 208.39.
+    //
+    // DELIBERATELY NOT the whole route. Three more Lightning Constructs sit at
+    // the FAR end of the escort — (972.52, 420.20), (983.27, 390.11), (967.97,
+    // 381.01) — and sweeping those would mean walking the entire 170yd corridor
+    // ahead of Brann and then walking back for him. They are the escort step's
+    // own threat-engage job (ESCORT_THREAT_R below), which is what that primitive
+    // is for: the party is beside him by then.
+    constexpr float PRECLEAR_X = 1044.00f, PRECLEAR_Y = 486.50f, PRECLEAR_Z = 208.39f;
+    constexpr float PRECLEAR_R = 28.0f;
+
+    // Where path 280701 ends and Brann re-offers gossip (menu 9670). Probed:
+    // z 207.18 (plus the arena's phantom -142.03 beneath it).
+    constexpr float ESCORT_END_X = 939.65f, ESCORT_END_Y = 375.49f, ESCORT_END_Z = 207.18f;
+
+    // BRANN AT THE CONSOLE — the thing being defended for 300 seconds.
+    // MovePoint target (897.1759, 331.77386, 203.70638); probed z 203.93.
+    constexpr float CONSOLE_X = 897.18f, CONSOLE_Y = 331.77f, CONSOLE_Z = 203.93f;
+
+    // THE HOLD POINT — objective 2's anchor and the party's station for the whole
+    // Tribunal. Chosen from the probe, not estimated.
+    //
+    // It sits 25yd from Brann along the console -> add-spawn-centroid line. That
+    // line is the one every add walks: all three summon groups land within a 34yd
+    // cluster ((943.088, 401.378) / (967.000, 376.832) / (964.302, 381.942)) and
+    // every add is Taunt-wired to Brann (51774 -> 51775), 83yd away. At 25yd out
+    // the three approach lines have fanned to only ~10yd apart, so ONE camp
+    // straddles all of them; at the 40yd the first sketch of this plan proposed
+    // they are ~17yd apart and the party is covering a cone it cannot hold.
+    //
+    // Probed hard, because a hold point is where the party stands for five
+    // minutes: the column gives z 203.93, and an 8yd ring around it is walkable
+    // at every one of eight bearings (203.93 on the five toward Brann, 204.10 on
+    // the three toward the ramp the adds descend). No lip, no step, no hole.
+    //
+    // It is also 3.7yd from Brann's post-fight lore stop, which is a real bonus
+    // rather than a coincidence: both sit on the same line. The 10206 gossip that
+    // skips the 256s of lore therefore needs no travel at all — the party is
+    // already standing on it when he walks up.
+    constexpr float HOLD_X = 915.75f, HOLD_Y = 348.51f, HOLD_Z = 203.93f;
+
+    // Brann's post-fight lore stop, where he offers gossip 10206
+    // (POINT_TRIBUNAL_LORE, MovePoint target (917.253, 351.925, 203.699)).
+    constexpr float LORE_X = 917.25f, LORE_Y = 351.93f, LORE_Z = 203.93f;
+
+    // The three add spawn points, verbatim from creature_summon_groups. Exposed
+    // so the driver can hold the intercept line and the gtest can re-derive the
+    // hold point's placement from them rather than trusting a literal.
+    constexpr float SPAWN_PROTECTOR_X   = 943.088f, SPAWN_PROTECTOR_Y   = 401.378f;
+    constexpr float SPAWN_STORMCALLER_X = 967.000f, SPAWN_STORMCALLER_Y = 376.832f;
+    constexpr float SPAWN_GOLEM_X       = 964.302f, SPAWN_GOLEM_Y       = 381.942f;
+
+    // Objective 3's anchor. 2.2yd from where Reset() teleports the respawned
+    // Brann (1199.685, 667.155, 196.324) — comfortably inside INTERACTION_DISTANCE
+    // — and 9.1yd WEST of the closed door, i.e. on the party's side of it. Probed:
+    // top surface z 195.56 (with 162.29 and 0.16 beneath — see the header note).
+    constexpr float DOOR_STAGE_X = 1197.50f, DOOR_STAGE_Y = 667.10f, DOOR_STAGE_Z = 195.56f;
+
+    // --- the wave event's proximity gate ----------------------------------
+    // Centroid of the Tribunal arena. The wave event is due only within
+    // EVENT_DUE_RANGE of this, which is what keeps the driver from steering a bot
+    // that cannot see the fight (a corpse run) — and, just as importantly, keeps
+    // it not-due at Brann's DB spawn 183.5yd away, where the escort still owns
+    // the party. The Sjonnir door is 403yd off, far outside.
+    constexpr float ARENA_X = 930.0f, ARENA_Y = 365.0f;
+    constexpr float EVENT_DUE_RANGE = 150.0f;
+
+    // Grid-scan radius for the heads and the adds. From the hold point the
+    // furthest thing worth finding is the Stormcaller spawn at 58.5yd; 120 covers
+    // the whole bowl from anywhere in it without reaching out of the arena.
+    constexpr float ARENA_SCAN = 120.0f;
+
+    // --- escort tuning ----------------------------------------------------
+    // Brann walks 170yd alone as REACT_AGGRESSIVE with regeneration off and no
+    // immunity, and his death restarts the whole escort from his DB spawn. So the
+    // threat scan around him is deliberately WIDER than the 18yd default: the
+    // Lightning Construct at (967.97, 381.01) sits 22yd off his waypoint 14, and
+    // meeting it before he does is the difference between a 2-minute escort and
+    // two of them.
+    constexpr float ESCORT_STANDOFF  = 5.0f;
+    constexpr float ESCORT_THREAT_R  = 25.0f;
+    constexpr float ESCORT_THREAT_Z  = 15.0f;
+    constexpr float ESCORT_SEARCH_R  = 100.0f;
+
+    // --- step budgets -----------------------------------------------------
+    // The Tribunal is a FIXED 300s survival timer plus a 17s wrap-up; nothing the
+    // party does shortens it. 10 minutes bounds a run that has gone wrong without
+    // ever being the thing that ends a healthy one — the hook returns Done off
+    // mask bit 2 the moment the credit spell lands.
+    //
+    // NOTE there is deliberately NO escort timeout below. The EscortCreature step
+    // is watchdog-owned (DungeonEventExecutor never escalates it on elapsed time;
+    // DriveEscortCreature's own dead-air watchdog owns liveness), so authoring one
+    // would be a number that does nothing.
+    constexpr uint32 PRECLEAR_TIMEOUT_MS   = 180000;
+    constexpr uint32 TRIBUNAL_TIMEOUT_MS   = 600000;
+    constexpr uint32 LORE_SKIP_TIMEOUT_MS  = 120000;
+    constexpr uint32 DOOR_GOSSIP_TIMEOUT_MS = 120000;
+    constexpr uint32 DOOR_STATE_TIMEOUT_MS = 60000;
+    constexpr uint32 WAVE_TIMEOUT_MS       = 600000;
+}
+
+void RegisterHallsOfStoneEvents(std::vector<DungeonEvent>& out);
+
 // --- Gundrak (map 604) ----------------------------------------------------
 // The numbers GundrakEvents.cpp authors and t/TestGundrak.cpp pins. Shared here
 // for the same reason DcDrakTharonKeep and DcVioletHold are: several of them are
@@ -1341,6 +1612,27 @@ void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);
 // because none of them exists before the encounter creates it. The six caged
 // prisoners and Erekem's guards are world spawns and are NOT here — see
 // VioletHoldPrisonerEntries().
+// --- Halls of Stone shared entry lists (HallsOfStoneEvents.cpp) -----------
+
+// The three Tribunal wave adds. Every one is a TempSummon with spawnId 0, so the
+// spawn store cannot see them and both the activation predicate and the wave
+// driver grid-scan this list instead.
+//
+// It must stay COMPLETE: an entry missing here reads as "the arena is quiet",
+// hands the tick back to the plain garrison, and lets that add walk to Brann —
+// whose death is the encounter's only fail condition and restarts the entire
+// escort. It must also stay EXCLUSIVE of the three heads, which are probed
+// separately (they exist for the WHOLE fight, including the quiet first 52
+// seconds, and are what arms the driver before any add has spawned).
+//
+// NORMAL ENTRIES ONLY, on both difficulties — see the difficulty-twin note in
+// namespace DcHallsOfStone for why adding 31876/31877/31380 would be dead weight.
+std::vector<uint32> const& HallsOfStoneWaveEntries();
+
+// Kaddrak / Marnak / Abedneum, probed for mere ALIVENESS — sound because they
+// exist only between InitializeEvent() and EndTribunalFight()/ResetEvent().
+std::vector<uint32> const& HallsOfStoneHeadEntries();
+
 std::vector<uint32> const& VioletHoldWaveEntries();
 
 // Portal Guardian 30660 / Portal Keeper 30695 / 30893 — the ONLY thing whose
@@ -1393,6 +1685,7 @@ void RegisterAzjolNerubRoster(std::vector<BossRosterPatch>& t);
 void RegisterAhnkahetRoster(std::vector<BossRosterPatch>& t);
 void RegisterDrakTharonKeepRoster(std::vector<BossRosterPatch>& t);
 void RegisterVioletHoldRoster(std::vector<BossRosterPatch>& t);
+void RegisterHallsOfStoneRoster(std::vector<BossRosterPatch>& t);
 void RegisterGundrakRoster(std::vector<BossRosterPatch>& t);
 void RegisterMoltenCoreRoster(std::vector<BossRosterPatch>& t);
 

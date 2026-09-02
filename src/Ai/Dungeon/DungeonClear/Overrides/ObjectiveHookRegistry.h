@@ -88,4 +88,9 @@ void RegisterVioletHoldHooks(ObjectiveHookRegistry::HookTable& out);
 // drives INSIDE a raid boss encounter. See BlackwingLairDriver.cpp. Id 20.
 void RegisterBlackwingLairHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Halls of Stone (map 599) — the Tribunal of Ages garrison (and the one recovery
+// path this dungeon needs, for a dead Brann) plus the wave driver. See
+// HallsOfStoneDriver.cpp. Ids 22-23.
+void RegisterHallsOfStoneHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif

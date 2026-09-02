@@ -73,6 +73,14 @@
 // short a boss today. MakeBossWithBit is written to be reused for them; each is
 // one patch of its own and is deliberately NOT bundled into this change.
 //
+// UPDATE — Halls of Stone is now done (Data/Events/HallsOfStoneEvents.cpp), and
+// it did NOT use MakeBossWithBit. Its missing encounter has no creature to anchor
+// or target at all, and on that map the missing bit was not merely a scoreboard
+// gap: the Tribunal is the only thing that opens the door to the last boss, so
+// the patch is three objectives and a wave driver rather than one roster row. See
+// the note on MakeBossWithBit in DungeonRosterBuilders.h. 595 and 650 remain
+// straightforward users of this builder — both hide REAL creature spawns.
+//
 // --- 2. Novos: the gate, the pool, and the decoy pile ----------------------
 //
 // boss_novos.cpp, verified against the live script:

@@ -212,6 +212,46 @@ namespace
     // Taskmasters stand on the only ramp between the two rooms — killing those is
     // real progress that stays bought, and the transit driver stands and fights
     // them on purpose. Class 3 is about a spawn rate, not about difficulty.
+    // --- Halls of Stone (599) — Sjonnir's Earthen Dwarves (27980) -----------
+    //
+    // CLASS 2: killing it is NEGATIVE PROGRESS, and here that is not a figure of
+    // speech — these fight ON YOUR SIDE.
+    //
+    // boss_sjonnir's 25% health-check cancels the previous add spawner and starts
+    // one that summons THREE Earthen Dwarves every 10-20s, and for each one does
+    // `if (Player* plr = SelectTargetFromPlayerList(100.0f)) dwarf->SetFaction(
+    // plr->GetFaction());` before `dwarf->AI()->AttackStart(me)`. They are handed
+    // a player's own faction and sent at the boss: free DPS for the last quarter
+    // of the fight, and the reason achievement 2155 exists.
+    //
+    // The reason a row is needed at all rather than leaning on the faction copy is
+    // the `if`. SelectTargetFromPlayerList(100.0f) returns nullptr when nobody is
+    // inside 100yd — a corpse run, a kited tank, a party spread across Sjonnir's
+    // 135yd-long room — and the dwarf then keeps its TEMPLATE faction 1868, which
+    // is hostile. IsPossibleTarget passes it, the clear's pickers select it, and
+    // the party turns away from a boss that is summoning three more every ten
+    // seconds to kill an ally that would have despawned on its own in twenty
+    // (TEMPSUMMON_CORPSE_TIMED_DESPAWN, 20000ms).
+    //
+    // NOT PACIFISM: the stock combat engine is untouched, so a dwarf that somehow
+    // attacks a bot is still fought. All this removes is the clear's decision to
+    // go looking.
+    //
+    // DELIBERATELY ABSENT — the rest of map 599, and it is a long list, because
+    // AttackersValue::IsPossibleTarget already rejects UNIT_FLAG_NOT_SELECTABLE
+    // and UNIT_FLAG_IMMUNE_TO_PC and every other candidate is one or the other:
+    //   30898 Kaddrak / 30897 Marnak / 30899 Abedneum  unit_flags 33554436
+    //   28235 Dark Matter / 28237 Dark Matter Target   unit_flags 33554432
+    //   28265 Searing Gaze / 28824 Brann Flying Machine        "
+    //   28130 Invis Lightning Stalker / 28055 Channel Target   "
+    //   22515 World Trigger                            unit_flags 33555200
+    //   28149 Earthen Protector                        unit_flags 768 (IMMUNE_TO_PC|NPC)
+    //   30535 Elder Yurauk                             faction 35, friendly
+    // Adding them would be dead rows that read as a safety net and are not one.
+    // Sjonnir's own infinite pipe adds (27979/27981/27982) are NOT here either:
+    // they are ordinary hostile trash that dies, and each HP threshold REPLACES
+    // the previous spawner rather than stacking, so the stream stops at his death
+    // — that is difficulty, not a fixed point the party can never move.
     DcNeverTargetRow const kRows[] =
     {
         { 576, 26793 },  // The Nexus — Crystalline Frayer (seed pod; unkillable until Ormorok dies)
@@ -219,6 +259,7 @@ namespace
         { 619, 30385 },  // Ahn'kahet — Twilight Volunteer (24/25 permanently unattackable; the 25th walks in)
         { 600, 27583 },  // Drak'Tharon Keep — Novos Summon Target (killing one softlocks the Novos gate)
         { 608, 31079 },  // The Violet Hold — Azure Saboteur (IMMUNE_TO_PC bait that walks the whole room)
+        { 599, 27980 },  // Halls of Stone — Earthen Dwarf (Sjonnir 25%: faction copied from a player; they fight FOR you)
         { 469, 14022 },  // Blackwing Lair — Corrupted Red Whelp    (160 whelps, 30s respawn: infinite)
         { 469, 14023 },  // Blackwing Lair — Corrupted Green Whelp  (see the class-3 note above)
         { 469, 14024 },  // Blackwing Lair — Corrupted Blue Whelp

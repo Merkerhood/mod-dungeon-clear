@@ -165,6 +165,20 @@ namespace
             // completion, and it is Repeatable besides: a momentary Done latches
             // nothing and the next wave re-fires it.
             {608, 5},
+            // Halls of Stone "Repel the Tribunal wave": HosTribunalWaveActive
+            // requires the leader on map 599 AND within 150yd of the arena
+            // centroid (930, 365) — which excludes Brann's DB spawn 183.5yd away,
+            // where the escort still owns the party, and the Sjonnir door 403yd
+            // east. It then probes a 120yd grid scan OF THE BOT for one of the
+            // three Tribunal heads or one of the three wave adds, every one of
+            // which is a TempSummon that exists only between InitializeEvent() and
+            // EndTribunalFight(). Its lone step (hook 23, HosDriveWave) OWNS the
+            // travel — it walks the tank to the add nearest Brann and back to the
+            // intercept line — so there is nothing an arrival step would add. Done
+            // is its "nothing to steer this tick" yield, not a completion, and it
+            // is Repeatable besides: a momentary Done latches nothing and the next
+            // wave re-fires it.
+            {599, 4},
             // Blackwing Lair "Razorgore — orb and egg run": RazorgoreEggRunDue
             // requires the leader on map 469 AND within 200yd of the orb, then a
             // live Razorgore and at least one un-broken egg in a 150yd grid scan
@@ -662,6 +676,19 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // flag's usual cost — which is why it yields the tick on every hold, and
         // why "advance" is the only branch that returns Running.
         {469, 3},
+        // Halls of Stone "Repel the Tribunal wave". The Tribunal of Ages is a
+        // FIXED 300-second survival timer, and brann_bronzebeardAI::JustSummoned
+        // calls SetInCombatWithZone() on EVERY add it spawns — so from the first
+        // Dark Rune Protector at t ~ 52s the party is in unbroken combat to
+        // t = 300s with no gaps at all. The non-combat rung would not run once in
+        // those four minutes, and the tank would fight wherever the last pull left
+        // it instead of on the intercept line between the three spawn points and
+        // Brann. That matters more here than on the other four rows: the adds are
+        // Taunt-wired to Brann (51774 / 51775), he is REACT_PASSIVE with
+        // SetRegeneratingHealth(false), and HIS DEATH IS THE ENCOUNTER'S ONLY FAIL
+        // CONDITION — it resets boss state 2 to NOT_STARTED and sends him back to
+        // a DB spawn 200yd away, costing a second full escort.
+        {599, 4},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1022,6 +1049,25 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // holds for the ramp's six Taskmasters, and a raid that spends that fight
         // claiming the tick is a raid with no rotation.
         {469, 3},
+        // Halls of Stone, all four events.
+        //
+        // Events 1-3 are the Brann sequence and each is a hook- or
+        // primitive-driven glide the per-tick hold would cancel the tick after it
+        // is issued. Event 1's EscortCreature step follows Brann for 170yd and
+        // breaks off to engage what attacks him; event 2's hook 22 garrisons the
+        // hold point through the whole 300s defend AND owns the 200yd walk back to
+        // his DB spawn when he dies; event 3 walks 300yd east to the door stage.
+        // On events 1-3 the flag is also what makes the garrison YIELD rather than
+        // claim the tick, which the tank's rotation depends on for five minutes of
+        // continuous combat.
+        //
+        // Event 4 is the wave driver: hook 23 issues its own repositioning to the
+        // add nearest Brann and back to the intercept line, and returns Done to
+        // hand the tick to the rotation the moment it has nothing to steer.
+        {599, 1},
+        {599, 2},
+        {599, 3},
+        {599, 4},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

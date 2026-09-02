@@ -111,6 +111,50 @@ namespace DcEventDoorRegistry
             case 191606:  // Violet Hold — Moragg cell
             case 191722:  // Violet Hold — Ichoron cell
             case 191723:  // Violet Hold — Prison Seal (the main door)
+            // Halls of Stone (map 599) — the seven script-owned objects.
+            //
+            // 191296 SJONNIR DOOR is the whole reason map 599 needs automation and
+            // the one object here a bot might plausibly try to click: it is
+            // GAMEOBJECT_TYPE_DOOR with lockId 0 and template Data0 = 0, so
+            // BotCanOpenDoorLikePlayer reads it as freely clickable, and it is the
+            // ONLY closed door on the map — five runs of tp-20260831-205458-3 ended
+            // parked in front of it. It is opened by exactly one code path
+            // (instance_halls_of_stone's SetData(BRANN_DOOR, DONE), called 3.2s
+            // after Brann arrives at POINT_SJONNIR_DOOR) and it SHUTS AGAIN behind
+            // the party when Sjonnir is engaged, reopening on his death or a wipe.
+            // A bot Use() would desync it against the client and, worse, could walk
+            // the party through to Sjonnir with the Tribunal never done — skipping
+            // the very encounter this dungeon's automation exists to complete.
+            //
+            // 191527 SKY ROOM FLOOR is toggled back and forth by the Tribunal's
+            // post-fight lore state machine (SetData(BOSS_TRIBUNAL_OF_AGES,
+            // SPECIAL/DONE) drives it against the three head GOs). It is a
+            // TYPE_DOOR the party can stand on; a click mid-sequence drops it out
+            // from under the cutscene.
+            //
+            // 191669/191670/191671 TRIBUNAL HEADS are TYPE_DOOR too, not scenery,
+            // and their GO state IS the lore state machine's memory — SetData reads
+            // GetGoState() on all three to decide which face speaks next. A click
+            // does not merely desync a visual, it corrupts that read.
+            //
+            // 193906 SJONNIR CONSOLE and 193907 TRIBUNAL CONTROL CONSOLE are
+            // Brann's, and are only ever set by SetGameObjectState from his own
+            // MovementInform / PathEndReached. 193907 is the object he channels on
+            // for the entire 300-second defend.
+            //
+            // NOT LISTED, deliberately: 191292 / 191293 / 191294 / 191295 / 191459.
+            // All five are Doodad_UL_Ulduar_doors* that spawn state = 0 (OPEN),
+            // carry template Data0 = 1 (startOpen), and are referenced by no C++
+            // anywhere. Nothing ever closes them and nothing in Halls of Stone
+            // traps the party behind one, so listing them would be noise in a table
+            // whose whole value is that every row means something.
+            case 191296:  // Halls of Stone — Sjonnir's Door (Brann opens it; shuts on engage)
+            case 191527:  // Halls of Stone — Sky Room Floor (Tribunal lore state machine)
+            case 191669:  // Halls of Stone — Tribunal Head, Center
+            case 191670:  // Halls of Stone — Tribunal Head, Right
+            case 191671:  // Halls of Stone — Tribunal Head, Left
+            case 193906:  // Halls of Stone — Sjonnir Console (Brann's, post-kill)
+            case 193907:  // Halls of Stone — Tribunal Control Console (the defend point)
                 return true;
             default:
                 return false;
@@ -473,6 +517,63 @@ namespace DcEventDoorRegistry
             case 177000:  // Hot Coal (Majordomo's chamber approach)
             case 178107:  // Lava Steam (on Ragnaros' anchor)
             case 178108:  // Lava Splash (on Ragnaros' anchor)
+                return true;
+            // Halls of Stone (map 599) — the Tribunal room's five script-owned
+            // props. Every one is GAMEOBJECT_TYPE_DOOR with Data0 = 0
+            // (startOpen) and spawns GO_STATE_READY, so the closed-door
+            // predicate reads all five as shut gates, and all five sit in or
+            // beside the room the party MUST stand in between the Tribunal and
+            // Sjonnir. They are already IsScriptOnly above; this is the other
+            // half of the fix, for the reason the Molten Core row spells out —
+            // IsScriptOnly only refuses the click, so the prop is still
+            // flagged, still parked at, still auto-paused on.
+            //
+            //   191527 SKY ROOM FLOOR (guid 65556) at (909.7,345.1,203.4) is
+            //     the one that fires. It is the FLOOR of the Tribunal room, and
+            //     Brann's post-fight lore shuts it deterministically
+            //     (brann_bronzebeard.cpp: SetData(BOSS_TRIBUNAL_OF_AGES,
+            //     SPECIAL) -> pSkyRoomFloor->SetGoState(GO_STATE_READY)) —
+            //     exactly when the party is parked at his console
+            //     (897.2,331.8,203.7) waiting out the door gossip. That leaves
+            //     the tank ~11-17yd from a "shut door" it can never open.
+            //
+            //     tp-20260901-080112-1: EIGHT of ten tanks flagged it
+            //     ("blocking-door: flagged ... 'Doodad_UL_SkyRoom_Floor01'
+            //     (entry 191527) 13.6yd from bot as corridor-blocking").
+            //     Seven cleared within 6-30s because they still had a corridor
+            //     and took the walk-in branch. tr-20260901-080117-8 did not:
+            //     the 4th Brann gossip had just fired, and the route to Sjonnir
+            //     stays UNREACHABLE for the whole 400yd Brann walks from the
+            //     console to his door, so the door-blocked action fell to its
+            //     no-corridor branch — parkAndStall(IsWithinDistInMap(door,
+            //     DC_DOOR_USE_RANGE)), and 13.6yd is inside that 25yd — which
+            //     pauses on the spot. "door-blocked: no long-path corridor
+            //     (13.6yd from door) -> park in place" and "can't open ... ->
+            //     auto-pausing" are stamped the SAME SECOND as the flag. The
+            //     pause never lifts: the floor is not a door anyone opens, so
+            //     DungeonClearDoorReopenedTrigger polls it forever. 5/6 bosses.
+            //
+            //   191669 / 191670 / 191671 TRIBUNAL HEADS at (888.6,323.3),
+            //     (887.3,367.8) and (931.0,323.8), z 205.3 — 20-35yd from the
+            //     same console park spot, and shut until the Tribunal is DONE.
+            //     Same landmine, three more triggers on the same standing spot.
+            //
+            //   193906 SJONNIR CONSOLE (1314.2,666.2,189.4) is shut inside
+            //     Sjonnir's chamber, on the far side of the room the party
+            //     fights him in.
+            //
+            // NOT listed, deliberately: 191296, Sjonnir's Door. It is the one
+            // genuine gate on the map — the party really is stopped by it, and
+            // the run really does need Brann to open it, so it must stay
+            // navigation-VISIBLE for the at-boss stand-down to work. The other
+            // four Doodad_UL_Ulduar_doors* (191292/3/4/5, 191459) spawn OPEN
+            // with Data0 = 1 and are never shut by anything, so they never
+            // reach the closed-door predicate at all.
+            case 191527:  // Sky Room Floor (the Tribunal room's floor)
+            case 191669:  // Tribunal Head, Center
+            case 191670:  // Tribunal Head, Right
+            case 191671:  // Tribunal Head, Left
+            case 193906:  // Sjonnir Console (Brann's, post-kill)
                 return true;
             default:
                 return false;

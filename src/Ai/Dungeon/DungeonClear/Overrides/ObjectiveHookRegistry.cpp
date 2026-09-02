@@ -816,6 +816,7 @@ namespace
             RegisterBlackMorassHooks(t);
             RegisterVioletHoldHooks(t);
             RegisterBlackwingLairHooks(t);
+            RegisterHallsOfStoneHooks(t);
             return t;
         }();
         return kHooks;

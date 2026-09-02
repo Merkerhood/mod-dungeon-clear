@@ -815,3 +815,19 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (the registry lint and the shared progress kernel's clock arithmetic —
 #    unarmed/off/rollover. Suite names start Dc so t/run_tests.sh's filter picks
 #    them up.)
+#
+# New files added: Data/Events/HallsOfStoneEvents.cpp,
+#   Overrides/HallsOfStoneDriver.cpp, t/TestHallsOfStone.cpp
+#   (Halls of Stone, map 599 — the Tribunal of Ages. The dungeon's bit-2
+#    encounter is creditType 1 (ENCOUNTER_CREDIT_CAST_SPELL, spell 59046), so
+#    BossSpawnIndex cannot derive it and the roster reads 0, 1, 3. On this map
+#    that missing encounter is not a scoreboard row: GO 191296 is the only
+#    functional door and the ONLY thing that opens it is Brann arriving there
+#    after four gossip selections, the second of which starts a fixed 300-second
+#    defend event. Five runs of tp-20260831-205458-3 finished 2/3 with zero
+#    deaths, all five ending "paused for over 60s: a closed door".
+#    Three objectives (escort / Tribunal / door) plus a Conditional +
+#    DrivesInCombat wave driver; hooks 22-23. Unlike CoT Stratholme's Mal'ganis
+#    and ToC's champions — the other creditType-1 dungeons MakeBossWithBit was
+#    written for — the Tribunal has NO creature at all to anchor or target, so it
+#    is authored as an objective whose event owns completion.)

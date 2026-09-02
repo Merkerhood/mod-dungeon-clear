@@ -82,10 +82,24 @@ namespace DcRoster
     // failed.
     //
     // Drak'Tharon Keep's The Prophet Tharon'ja (26632, bit 3, credit spell 61863)
-    // is the first user. CoT Stratholme's Mal'ganis (595), Halls of Stone's
-    // Tribunal of Ages (599) and Trial of the Champion's four (650) are the same
-    // shape and are the reason this is a named builder rather than an inline
-    // struct fill.
+    // is the first user. CoT Stratholme's Mal'ganis (595) and Trial of the
+    // Champion's four (650) are the same shape and are the reason this is a named
+    // builder rather than an inline struct fill.
+    //
+    // HALLS OF STONE (599) IS THE EXCEPTION, and it is worth naming because an
+    // earlier draft of this comment listed it as an intended user. Its bit-2
+    // encounter, the Tribunal of Ages (credit spell 59046), is hidden by the same
+    // credit-type filter — but unlike Mal'ganis and the Grand Champions it has NO
+    // CREATURE AT ALL. Brann Bronzebeard is friendly and is the escort, not the
+    // encounter; the three stone faces (30898/30897/30899) are NOT_SELECTABLE
+    // faction-114 NullCreatureAI spell emitters that cannot be targeted, damaged
+    // or interrupted; and the encounter itself is a fixed 300-second survival
+    // timer with no kill in it anywhere. This builder needs an `entry` to anchor
+    // and to target, and there is nothing to put there. So map 599 authors the
+    // Tribunal as MakeObjective(OBJ(2), ...) whose EVENT owns completion — the
+    // shape the Violet Hold uses for its prisoner encounters — and the roster
+    // patch in Data/Events/HallsOfStoneEvents.cpp says so at the call site.
+    // Do not "fix" that by routing it through here.
     inline DungeonBossInfo MakeBossWithBit(uint32 entry, uint32 mapId, char const* name,
                                            float x, float y, float z, uint32 encounterIndex,
                                            int32 orderOverride = -1)

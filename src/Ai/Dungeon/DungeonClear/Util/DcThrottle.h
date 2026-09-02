@@ -45,6 +45,7 @@ enum class DcThrottle : uint8
     BmTravelIssue,       // BmTravelTo — the Black Morass arena
     RazorgoreOrbIssue,   // the BWL egg runner's walk between eggs
     DtkCampIssue,        // the Drak'Tharon camp-return point move (time only)
+    HosTravelIssue,      // HosTravelTo — the Halls of Stone Tribunal arena
 
     // --- log throttles (time only) -----------------------------------------
     TransitLog,          // BwlTransitLog — one crossing telemetry line per 3s
@@ -56,6 +57,9 @@ enum class DcThrottle : uint8
     VhWaveLog,           // the Violet Hold wave telemetry line
     BmTravelLog,         // BmTravelLog
     BmWaveLog,           // the Black Morass wave telemetry line
+    HosTravelLog,        // HosTravelLog
+    HosTribunalLog,      // the Halls of Stone Tribunal garrison line
+    HosWaveLog,          // the Halls of Stone wave telemetry line
     RezRefusalLog,       // RezRefusalDiag — why a party rez was refused
 
     Count
