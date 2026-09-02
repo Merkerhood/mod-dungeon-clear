@@ -2542,6 +2542,32 @@ TEST(DungeonClearMathTest, RejoinRefusalRidesAWorkingReEntry)
     EXPECT_FLOAT_EQ(DungeonClearMath::DecideRejoinRefusal(0.5f, 6.2f, 3.0f).bestDeviation, 0.5f);
 }
 
+TEST(DungeonClearMathTest, RejoinRefusalIsBlindToABotThatNeverMovesAtAll)
+{
+    // THE BLIND SPOT — and the whole reason DcApproachState::rejoinRefusals had to
+    // be added alongside this verdict. DecideRejoinRefusal only ever asks "is the
+    // move in flight carrying me AWAY?". A bot whose DcMoveTo is refused on
+    // GEOMETRY rather than on contention never moves at all, so its deviation is
+    // perfectly CONSTANT — which reads here, correctly and uselessly, as a re-entry
+    // holding its ground. tr-20260901-223655-10 (Halls of Lightning) sat frozen at
+    // 267.2yd for 3924 consecutive refused ticks and this verdict never once asked
+    // for a halt, while the rung it advises reset stuckCount and cleared the stall
+    // on every one of them.
+    //
+    // The fix is NOT to tighten the slack here — that would break
+    // RejoinRefusalRidesAWorkingReEntry above, which needs a held deviation to mean
+    // "ride it". Liveness is a different question and is counted by the rung.
+    float best = std::numeric_limits<float>::max();
+    for (int tick = 0; tick < 10; ++tick)
+    {
+        DungeonClearMath::RejoinRefusalVerdict const v =
+            DungeonClearMath::DecideRejoinRefusal(267.2f, best, 3.0f);
+        EXPECT_FALSE(v.haltStaleMove) << "tick " << tick;
+        best = v.bestDeviation;
+    }
+    EXPECT_FLOAT_EQ(best, 267.2f);
+}
+
 TEST(DungeonClearMathTest, RejoinRefusalToleratesRoundingWideWithinSlack)
 {
     // A pathed re-entry rounding a corner may swing a couple of yards wider

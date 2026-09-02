@@ -145,6 +145,29 @@ struct DcApproachState
     // healthy case into a stop/re-issue loop) from one that is not (halt it).
     float rejoinBestDev = std::numeric_limits<float>::max();
 
+    // Consecutive off-line rejoin ticks that issued NO movement. rejoinBestDev
+    // above only measures DRIFT, and drift is the wrong question when the answer
+    // is zero: a bot whose DcMoveTo is refused every tick never moves at all, so
+    // its deviation is CONSTANT, `deviation > best + slack` is false forever, and
+    // the rung rides a move that does not exist. Measured on tr-20260901-223655-10
+    // (Halls of Lightning): 3924 consecutive refusals over 10m30s at a fixed
+    // 267.2yd, zero halts logged, every watchdog reading clear, the run ending
+    // only on the 600s no-progress timer. Counting the refusals themselves is the
+    // liveness signal the deviation cannot carry.
+    uint32 rejoinRefusals = 0;
+
+    // Deadline (getMSTime) while a LONG re-entry glide owns the bot; 0 = none.
+    // A deliberate re-entry from far off the route reads, to every rung that
+    // measures against the route, exactly like the wedge it is curing: IsOffPath
+    // is true for its whole length, so DoOffPathRebuild would fire on the third
+    // tick and ResolveEscortConflict would cancel the glide DC just launched —
+    // two ticks of travel per attempt, forever. This latch says "the distance is
+    // known and being walked off", and the off-path rebuild stands down while it
+    // holds. A DEADLINE rather than a bool, sized to the glide's own travel time
+    // (the module's longPathExpiresMs idiom), so a glide that dies silently can
+    // never wedge the rung that is meant to notice.
+    uint32 rejoinGlideUntilMs = 0;
+
     // --- chase leash (approach to a MOVING trash target) ------------------
     // A trash target is latched by GUID and read live, so a walking mob turns
     // every approach into a pursuit: the tank follows it across the room and
@@ -278,6 +301,8 @@ struct DcApproachState
         skirtOrbitDir       = 0;
         offLineLatched      = false;
         rejoinBestDev       = std::numeric_limits<float>::max();
+        rejoinRefusals      = 0;
+        rejoinGlideUntilMs  = 0;
         skirtOrbitTarget.Clear();
         avoidOrbitDir       = 0;
         avoidOrbitSphere.Clear();

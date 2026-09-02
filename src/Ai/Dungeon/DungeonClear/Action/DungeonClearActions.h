@@ -253,6 +253,7 @@ private:
     Step DoJumpLeg(AdvanceState& st);
     Step DoRideLiveGlide(AdvanceState& st);
     Step DoOffLineRejoin(AdvanceState& st);
+    bool TryChunkedRejoin(AdvanceState& st);         // long re-entry; one MoveTo can't reach
     Step DoIssueSplineWindow(AdvanceState& st);
     Step DoMoveToFallback(AdvanceState& st);         // terminal: always handles the tick
 };

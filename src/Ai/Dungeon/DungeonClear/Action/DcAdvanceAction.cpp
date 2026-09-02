@@ -109,6 +109,53 @@ namespace
     // thing this rung exists to prevent. See DcApproachState::rejoinBestDev.
     constexpr float DC_REJOIN_DEV_SLACK = 3.0f;
 
+    // Consecutive REFUSED off-line rejoin ticks (nothing issued, no ground bought)
+    // before the rung stops believing a re-entry is in flight and escalates to the
+    // chunked re-entry below. Refusal is benign in the common case — DcMoveTo is
+    // refused while the previous tick's re-entry is still walking — so this has to
+    // be patient enough not to fire on a healthy rejoin. Sized like DC_STUCK_LIMIT
+    // for the same reason (dedup while real progress is being made), and cheap to
+    // reach: at a ~150ms bot tick this is ~1.2s of genuinely nothing happening.
+    constexpr uint32 DC_REJOIN_REFUSAL_LIMIT = 8;
+
+    // Re-entry legs longer than this get the chunked builder instead of a single
+    // MoveTo. PathGenerator caps ONE call at 74 smoothed points at 4yd spacing
+    // (MAX_POINT_PATH_LENGTH / SMOOTH_PATH_STEP_SIZE, ~296yd of straight corridor
+    // and far less around bends); over the cap it returns PATHFIND_SHORT, which is
+    // not in SearchForBestPath's accepted set, so modified_z stays INVALID_HEIGHT
+    // and MoveTo refuses — every tick, forever, with no diagnostic. That is not a
+    // transient refusal the rung can ride out; the leg is simply unrepresentable as
+    // one move. Set well under the theoretical cap because a winding corridor
+    // spends points far faster than 4yd of progress each: the leg that exposed this
+    // (tr-20260901-223655-10, entrance corridor back to Bjarngrim's hall) was
+    // 267yd of route but 80 points — over the 74 cap — and DC's own opening spline
+    // down it that same run logged "80 pts, 320.7yd".
+    constexpr float DC_REJOIN_CHUNKED_DISTANCE = 150.0f;
+
+    // Slack added to a long re-entry glide's own travel time before its latch
+    // expires: enough to absorb the launch tick and ordinary spline pacing, short
+    // enough that a glide which dies on the way still returns the bot to the
+    // normal ladder within a couple of seconds.
+    constexpr uint32 DC_REJOIN_GLIDE_SLACK_MS = 2000;
+
+    // Is a long re-entry glide (TryChunkedRejoin) still carrying the bot? Both
+    // halves matter: the deadline bounds a glide that dies silently, and the live
+    // ESCORT check drops the latch the moment something else takes the bot, so the
+    // off-path rebuild stands down for travel that is actually happening and for
+    // nothing else. Clears the latch as a side effect once either half fails.
+    bool RejoinGlideInFlight(DcApproachState& appr, Player* bot)
+    {
+        if (appr.rejoinGlideUntilMs == 0)
+            return false;
+        MotionMaster* const mm = bot->GetMotionMaster();
+        bool const live = getMSTime() < appr.rejoinGlideUntilMs && mm &&
+                          mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE &&
+                          bot->isMoving();
+        if (!live)
+            appr.rejoinGlideUntilMs = 0;
+        return live;
+    }
+
     // The creature store (Map::GetCreatureBySpawnIdStore) only contains
     // creatures in LOADED grids; grids stream in within ~MAX_VISIBILITY_DISTANCE
     // (250yd) of a moving player. Beyond this distance, a boss simply not being
@@ -1106,6 +1153,15 @@ void DungeonClearAdvanceAction::FillPathObs(AdvanceState& st, DungeonClearApproa
         return;  // off-path is meaningless while unreachable
     }
 
+    // A long re-entry glide is off the route BY CONSTRUCTION and for its whole
+    // length — that is what it is walking off. Letting the off-path rebuild judge
+    // it would cancel the cure on its third tick (DoOffPathRebuild →
+    // ResolveEscortConflict) and re-enter this rung from a standstill, forever.
+    // The latch is deadline-bounded and drops itself the moment the glide stops,
+    // so this stands the rebuild down only while real travel is in flight.
+    if (RejoinGlideInFlight(appr, bot))
+        return;
+
     if (DungeonPathFollower::IsOffPath(bot, path, follower) &&
         follower.offPathTicks >= DungeonPathFollower::OFF_PATH_TICK_LIMIT)
     {
@@ -1338,7 +1394,14 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
         // exactly the step-pause the tank was reported doing on approach.
         bool interrupt = false;
         uint32 const nowMs = getMSTime();
-        if (DcSettings::GetFloat(bot, "AdvanceWindowYards") > 0.0f &&
+        // The probe measures the ROUTE's remaining window. During a long re-entry
+        // the bot is nowhere near that route, so the window it would build is not
+        // the ground being travelled and any sphere it reports is nonsense — halt
+        // on it and the re-entry is torn down for a hazard it was never near.
+        // Ride the re-entry; hazards on it are the normal route's job once the bot
+        // is back on the line.
+        if (!RejoinGlideInFlight(appr, bot) &&
+            DcSettings::GetFloat(bot, "AdvanceWindowYards") > 0.0f &&
             DcSettings::GetBool(bot, "PullEnRouteAvoid") &&
             nowMs - appr.glideHazardProbeMs >= DC_GLIDE_HAZARD_PROBE_MS)
         {
@@ -1407,8 +1470,10 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
 
     // Back on the corridor: the rejoin rung is done, so its net-progress baseline
     // must not survive into the NEXT off-line episode (a stale low best would make
-    // the first refused tick of that episode read as drift).
+    // the first refused tick of that episode read as drift). Same for the refusal
+    // count, which is per-episode by the same argument.
     appr.rejoinBestDev = std::numeric_limits<float>::max();
+    appr.rejoinRefusals = 0;
 
     // Normal case: is a >=2-point spline window available? Build it once here and
     // carry it into DoIssueSplineWindow so the launch reuses this exact window.
@@ -1645,8 +1710,6 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffLineRejoin(Advan
               "({:.1f},{:.1f},{:.1f}) (seg {} pt {}, moved={})",
               bot->GetName(), st.routeDeviation, hop.point.x, hop.point.y, hop.point.z,
               follower.segmentIdx, follower.pointIdx, rejoining);
-    appr.stuckCount = 0;
-    ClearStall(context);
     SetPhase(context, "moving");
 
     // A REFUSAL IS NOT AUTOMATICALLY BENIGN. This rung used to return ReturnTrue
@@ -1674,6 +1737,13 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffLineRejoin(Advan
     if (rejoining)
     {
         appr.rejoinBestDev = st.routeDeviation;
+        appr.rejoinRefusals = 0;
+        // ONLY a re-entry that actually issued may clear the watchdogs. These two
+        // lines used to run unconditionally, above the refusal split — so the rung
+        // that was failing was also the rung disarming every detector that could
+        // have noticed. See the liveness note below.
+        appr.stuckCount = 0;
+        ClearStall(context);
         return Step::ReturnTrue;
     }
 
@@ -1689,9 +1759,128 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffLineRejoin(Advan
         bot->StopMovingOnCurrentPos();
     }
     appr.rejoinBestDev = rv.bestDeviation;
-    // Own the tick either way: we must never fall through to launch the straight
-    // escort spline while the bot is still off the line.
-    return Step::ReturnTrue;
+
+    // LIVENESS, not just drift. DecideRejoinRefusal asks "is the move in flight
+    // carrying me AWAY?" — which a bot that is not moving at all answers "no",
+    // because its deviation is constant, forever. Riding that is riding nothing.
+    // So count the refusals themselves: they are the one signal a frozen bot still
+    // produces. tr-20260901-223655-10 (Halls of Lightning) is the case — the tank
+    // finished Bjarngrim 267.9yd behind anchor 0 of the Volkhan route, and this
+    // rung refused 3924 times in a row at an unchanging 267.2yd while reporting
+    // success, resetting stuckCount and clearing the stall on every one of them.
+    // Diag read `stuck=0/0/0, watchdogs: all clear` through ten and a half minutes
+    // of a party standing perfectly still.
+    if (++appr.rejoinRefusals < DC_REJOIN_REFUSAL_LIMIT)
+    {
+        // Own the tick: we must never fall through to launch the straight escort
+        // spline while the bot is still off the line.
+        return Step::ReturnTrue;
+    }
+
+    // The re-entry is not happening. Before giving the tick back to the recovery
+    // ladder, try the one cause this rung can fix itself: a leg too long for a
+    // single MoveTo to represent at all (DC_REJOIN_CHUNKED_DISTANCE).
+    if (st.routeDeviation >= DC_REJOIN_CHUNKED_DISTANCE && TryChunkedRejoin(st))
+    {
+        appr.rejoinRefusals = 0;
+        appr.stuckCount = 0;
+        ClearStall(context);
+        return Step::ReturnTrue;
+    }
+
+    // Out of ideas for this cycle. Hand the tick DOWN rather than owning it, and
+    // COUNT it — the position-based detector cannot do that for us here: it only
+    // ticks for a bot that `isMoving()`, and this bot is issuing nothing at all
+    // (the live diag read `moving=0 gen=IDLE(0)` for ten minutes). stuckCount is
+    // the one counter that measures refusals, which is exactly the failure, so
+    // this rung has to feed it the same way DoMoveToFallback does.
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] off-line rejoin issued nothing for {} ticks at {:.1f}yd "
+             "(strike {}/{})",
+             bot->GetName(), appr.rejoinRefusals, st.routeDeviation,
+             appr.stuckCount + 1, DC_STUCK_LIMIT);
+    appr.rejoinRefusals = 0;
+    if (++appr.stuckCount < DC_STUCK_LIMIT)
+        return Step::ReturnFalse;
+
+    // Every cycle spent and the chunked re-entry could not be issued either. Stall
+    // for real: force a fresh path build from wherever the bot actually is, and
+    // surface the `dc skip` prompt. Before this, the rung absorbed the wedge in
+    // silence and the ONLY thing that ever ended the run was the 600s no-progress
+    // watchdog, ten minutes later, with every diag counter reading clear.
+    appr.stuckCount = 0;
+    appr.longPathExpiresMs = 0;
+    follower = DungeonFollowerState{};
+    StallDungeonClear(botAI,
+        "Stuck off the route to " + next->name + " — I can't path back to it from here. "
+        "I'll try to clear nearby mobs; use 'dc skip' if it persists.");
+    return Step::ReturnFalse;
+}
+
+// Long re-entry. The corridor back to the route is longer than ONE PathGenerator
+// call can express (see DC_REJOIN_CHUNKED_DISTANCE), so the plain MoveTo above
+// cannot fail its way to success no matter how many ticks it is given — it is
+// refused on geometry, not on contention. Build the way back with the module's
+// own chunked builder, which exists for exactly this cap ("PathGenerator caps
+// each call at ~296yd ... for any longer route we have to chain calls" —
+// ChunkedPathfinder.h), and glide the first window of it.
+//
+// The points come from the chunked builder's smoothed navmesh corridor, measured
+// from where the bot ACTUALLY is, so gliding them keeps the wall-safety the plain
+// MoveTo was chosen for in the first place — this is not the straight escort
+// chord the rung above warns about. bossEntry 0 forces anchor-free chunking: we
+// want a raw path back to a route point, never a route-registry lookup.
+bool DungeonClearAdvanceAction::TryChunkedRejoin(AdvanceState& st)
+{
+    DungeonBossInfo const* next = st.next;
+    DungeonPathFollower::Hop const& hop = st.hop;
+
+    ChunkedPathfinder::Result const back = ChunkedPathfinder::Build(
+        bot, next->mapId, /*bossEntry*/ 0, hop.point.x, hop.point.y, hop.point.z);
+    if (!back.reachable || back.segments.empty())
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] long re-entry: no chunked path back to the route "
+                 "({:.1f}yd to seg {} pt {}): {}",
+                 bot->GetName(), st.routeDeviation, st.follower->segmentIdx,
+                 st.follower->pointIdx,
+                 back.failureReason.empty() ? "no navigable route" : back.failureReason);
+        return false;
+    }
+
+    // Same window cap as the route glide (AdvanceWindowYards; 0 = unbounded), so a
+    // re-entry can no more outrun the blocking-trash detector than a normal leg
+    // can. window[0] is the live position, exactly as BuildSplineWindow builds it.
+    float const windowYards = DcSettings::GetFloat(bot, "AdvanceWindowYards");
+    Movement::PointsArray pts;
+    pts.push_back(G3D::Vector3(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()));
+    float travelled = 0.0f;
+    for (PathSegment const& seg : back.segments)
+    {
+        for (G3D::Vector3 const& p : seg.polyline)
+        {
+            travelled += (p - pts.back()).magnitude();
+            pts.push_back(p);
+            if (windowYards > 0.0f && travelled >= windowYards)
+                break;
+        }
+        if (windowYards > 0.0f && travelled >= windowYards)
+            break;
+    }
+    if (pts.size() < 2 || !DcMovement::SplinePath(botAI, pts))
+        return false;
+
+    // Latch the glide so the off-path rebuild stands down for exactly as long as
+    // it is walking (see DcApproachState::rejoinGlideUntilMs).
+    float const speed = std::max(1.0f, bot->GetSpeed(MOVE_RUN));
+    st.appr->rejoinGlideUntilMs =
+        getMSTime() + static_cast<uint32>(1000.0f * travelled / speed) + DC_REJOIN_GLIDE_SLACK_MS;
+
+    LOG_INFO("playerbots.dungeonclear",
+             "[DC:{}] long re-entry: {:.1f}yd off-line is past the single-MoveTo "
+             "reach -> gliding {} chunked pts ({:.1f}yd) back to the route",
+             bot->GetName(), st.routeDeviation, pts.size(), travelled);
+    return true;
 }
 
 // Normal case: hand the whole upcoming polyline run (built in FillHopObs) to the
