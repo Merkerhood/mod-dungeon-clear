@@ -8,6 +8,9 @@
 # in-party chat keywords (`dc on`, `dungeon clear on`, …) — no config needed.
 # The settings below tune behaviour, debugging, and pathing.
 #
+# TO TURN THE WHOLE MODULE OFF without rebuilding, set DungeonClear.Enable = 0
+# (MODULE MASTER SWITCH, first section below) and restart the worldserver.
+#
 # PER-PLAYER OVERRIDES: the GENERAL SETTINGS below are the server-wide DEFAULT.
 # Players running the DungeonClear companion addon can override any of them for
 # the duration of their own dungeon run (the override is keyed to their group's
@@ -41,6 +44,38 @@
 # full order: per-player override -> "<key>.Raid" (raid maps) -> built-in raid
 # default -> "<key>.Heroic" (heroic-tier maps) -> built-in heroic default ->
 # "<key>" -> built-in default.
+
+########################################
+# MODULE MASTER SWITCH
+########################################
+
+#
+#    DungeonClear.Enable
+#        1 (default): mod-dungeon-clear is active.
+#        0: the module stays compiled and linked but is COMPLETELY INERT. It
+#        registers no strategies, actions, triggers or values with
+#        mod-playerbots, so no bot's AI engine can even name one; no bot is ever
+#        given the "dungeon clear" / "dungeon clear combat" strategies; every
+#        `.dc` command and companion-addon button answers "module is disabled"
+#        instead of acting; and every hook the module owns (pull brake,
+#        spectator camera, the per-tick reaper, the `.dc test` harness, the two
+#        core-bug workaround scripts, and the self-bot loot-roll override) does
+#        nothing. Bots behave exactly as they would with the module absent.
+#
+#        Use this when you want the code present — ready to switch on without a
+#        rebuild — but the behaviour off.
+#
+#        READ ONCE AT STARTUP. Registration into mod-playerbots' shared contexts
+#        is a one-way append that already-built bots hold by reference, so it
+#        cannot be undone (or added) live: changing this value and running
+#        `.reload config` logs a warning and changes nothing. Restart the
+#        worldserver for a new value to take effect. Every OTHER setting in this
+#        file is still honoured live on `.reload config`.
+#
+#        Default: 1
+#
+
+DungeonClear.Enable = 1
 
 ########################################
 # GENERAL SETTINGS  (per-player overridable — see note above)

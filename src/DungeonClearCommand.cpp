@@ -33,6 +33,7 @@
 
 #include "PlayerbotAIConfig.h"
 
+#include "DcModuleEnable.h"
 #include "DungeonClearDispatch.h"
 #include "TestRun/DcTestDriver.h"
 #include "TestRun/DcTestDungeonRegistry.h"
@@ -50,8 +51,27 @@ using namespace Acore::ChatCommands;
 
 namespace
 {
+    // Master switch, checked at the top of every `.dc` subcommand. With the
+    // module disabled nothing is registered with mod-playerbots, so a dispatch
+    // would silently do nothing at all — say why instead of leaving the operator
+    // to guess. Returns true when the command must stop here.
+    // See DcModuleEnable.h.
+    bool DcDisabledNotice(ChatHandler* handler)
+    {
+        if (DcModule::IsEnabled())
+            return false;
+
+        handler->SendSysMessage(
+            "mod-dungeon-clear is disabled on this server (DungeonClear.Enable = 0 "
+            "in mod_dungeon_clear.conf). Set it to 1 and restart the worldserver.");
+        return true;
+    }
+
     bool RunDcCommand(ChatHandler* handler, std::string const& action, std::string const& param = "")
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!issuer)
         {
@@ -89,6 +109,9 @@ namespace
     // use it to confirm whether a conf edit took effect (no `.reload config`).
     bool HandleConfig(ChatHandler* handler)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!issuer)
         {
@@ -147,6 +170,9 @@ namespace
     // outside the party has to type the command.
     bool HandleSpectate(ChatHandler* handler, Optional<std::string> param)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!issuer)
         {
@@ -351,6 +377,9 @@ public:
     // characters, the roster is the comp, and real characters are never re-geared.
     static bool HandleTestStart(ChatHandler* handler, Tail args)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         Player* issuer = ResolveTestIssuer(handler);
         if (!issuer)
             return true;
@@ -452,6 +481,9 @@ public:
 
     static bool HandleTestStatus(ChatHandler* handler)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         handler->SendSysMessage(DcTestRunManager::Instance().StatusText());
         if (DcTestPlanManager::Instance().HasActivePlans())
             handler->SendSysMessage(DcTestPlanManager::Instance().StatusText());
@@ -464,6 +496,9 @@ public:
     // otherwise the plan scheduler would relaunch the runs it just aborted.
     static bool HandleTestStop(ChatHandler* handler, Tail selector)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         if (std::string(selector) == "all" && DcTestPlanManager::Instance().HasActivePlans())
         {
             DcTestPlanManager::Instance().StopAll("stopped via .dc test stop all");
@@ -502,6 +537,9 @@ public:
     // when there is nowhere to go — see DcTestRunManager::NextWatchTarget.
     static bool HandleTestWatch(ChatHandler* handler, Tail selectorArg)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         Player* gm = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!gm)
         {
@@ -727,6 +765,9 @@ public:
     // exactly the request that caused the driver to come online.
     static bool HandleTestPlanStart(ChatHandler* handler, Tail args)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         Player* issuer = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
         if (!issuer)
         {
@@ -755,6 +796,9 @@ public:
 
     static bool HandleTestPlanStatus(ChatHandler* handler)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         handler->SendSysMessage(DcTestPlanManager::Instance().StatusText());
         return true;
     }
@@ -762,6 +806,9 @@ public:
     // `.dc test plan stop [planId|all]` — bare = the single active plan.
     static bool HandleTestPlanStop(ChatHandler* handler, Tail selector)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         std::string msg;
         DcTestPlanManager::Instance().Stop(std::string(selector), &msg);
         handler->SendSysMessage(msg);
@@ -770,6 +817,9 @@ public:
 
     static bool HandleTestList(ChatHandler* handler)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         handler->SendSysMessage("Supported test dungeons (.dc test start <token> [heroic]):");
         for (DcTestDungeonRegistry::Row const& row : DcTestDungeonRegistry::All())
             handler->SendSysMessage(Acore::StringFormat(
@@ -786,6 +836,9 @@ public:
     // gear below it (see DcTestGearTiers).
     static bool HandleTestGear(ChatHandler* handler, Tail args)
     {
+        if (DcDisabledNotice(handler))
+            return true;
+
         std::string token;
         bool heroic = false;
         std::istringstream in{std::string(args)};

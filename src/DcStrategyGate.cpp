@@ -4,6 +4,7 @@
  */
 
 #include "DcStrategyGate.h"
+#include "DcModuleEnable.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Map.h"
@@ -59,6 +60,13 @@ namespace DcStrategyGate
 {
     void Reconcile(Player* bot)
     {
+        // Master switch. With the module disabled nothing was ever registered
+        // into the shared contexts, so there is no DC strategy to install — and
+        // nothing to strip either, which is why this is a plain return rather
+        // than a forced teardown. See DcModuleEnable.h.
+        if (!DcModule::IsEnabled())
+            return;
+
         if (!bot)
             return;
 
@@ -126,6 +134,9 @@ namespace DcStrategyGate
 
     void ReconcileAllBots()
     {
+        if (!DcModule::IsEnabled())
+            return;  // nothing registered -> nothing to reconcile; skip the walk
+
         // Iterate every online player and reconcile the ones that are bots.
         // Reconcile() no-ops on real players (no bot AI) and on already-compliant
         // bots, so this is cheap. Runs on the world thread inside World::Update,

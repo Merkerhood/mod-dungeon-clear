@@ -89,6 +89,23 @@ inline bool DcHasHeroicDefault(DcSettingDef const& d)
 // rejects overrides for them and the addon hides them).
 inline constexpr DcSettingDef kDcSettings[] =
 {
+    // Module master switch. 1 (default): mod-dungeon-clear runs. 0: the module
+    // is compiled in but completely inert — it registers NO strategies, actions,
+    // triggers or values into mod-playerbots' shared contexts, installs no
+    // strategy on any bot, and every hook, `.dc` command and addon message is a
+    // no-op. A server that wants the code present but the behaviour off sets
+    // this rather than rebuilding without the module.
+    //
+    // Read ONCE, at the first world tick, and latched for the process lifetime
+    // (DcModule::IsEnabled) — the context registration is a one-way append into
+    // registries that already-built bots hold by reference, so it cannot be
+    // undone on `.reload config`. Flipping the conf line live logs a warning and
+    // takes effect on the next worldserver restart.
+    //
+    // Server-only: a master switch is an admin decision, never something an
+    // addon override may reach.
+    { "Enable",                DcType::Bool,   1,   0,   1,  false },
+
     { "LootMinQuality",        DcType::UInt,   0,   0,   6,  true  },
 
     // Better Loot Rolling. Master toggle for a set of fixes to mod-playerbots'

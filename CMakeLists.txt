@@ -130,6 +130,12 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #   (Dire Maul East: Ironbark the Redeemed anchored objective/event — gossip him
 #    to open the Conservatory Door to Alzzin; ordered just before Alzzin via the
 #    BossRosterRegistry map-429 patch + East-wing objective entry)
+# src/DcModuleEnable.{h,cpp}
+#   (module master switch: `DungeonClear.Enable` (conf, default 1) latched once
+#    on the first world tick. With it off the registrar appends NO context into
+#    mod-playerbots, DcStrategyGate installs nothing, and every hook, `.dc`
+#    command and addon message is inert. Latch semantics are headless-tested by
+#    t/TestModuleEnable.cpp.)
 # src/DcStrategyGate.{h,cpp}
 #   (dungeon-gated strategy install: the DC strategies are installed on a bot iff
 #    it is on a dungeon/raid map — Map::IsDungeon() — instead of on every bot in
