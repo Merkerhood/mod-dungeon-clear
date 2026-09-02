@@ -130,6 +130,12 @@ namespace DcTestDungeonRegistry
         return hit;
     }
 
+    std::uint32_t ExpansionOf(Row const& row)
+    {
+        MapEntry const* mapEntry = sMapStore.LookupEntry(row.mapId);
+        return mapEntry ? mapEntry->Expansion() : 0u;
+    }
+
     void WriteSidecar()
     {
         char const* path = "dc_test_dungeons.json";
@@ -190,6 +196,7 @@ namespace DcTestDungeonRegistry
             s << "{\"token\":\"" << EscapeJson(row.token) << '"'
               << ",\"name\":\"" << EscapeJson(row.name) << '"'
               << ",\"mapId\":" << row.mapId
+              << ",\"expansion\":" << ExpansionOf(row)
               << ",\"level\":" << row.recommendedLevel
               << ",\"heroicLevel\":" << row.heroicLevel
               << ",\"wing\":\"" << EscapeJson(row.wing) << '"';

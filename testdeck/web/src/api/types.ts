@@ -37,6 +37,10 @@ export interface Dungeon {
   token: string;
   name: string;
   mapId: number;
+  /* Map.dbc's expansion id (0 classic, 1 TBC, 2 WotLK), straight from the
+   * module. Optional only because an older worldserver's sidecar predates the
+   * field — see expansionOfRow(). */
+  expansion?: number;
   level: number;
   heroicLevel: number;   // 0 = no heroic mode
   wing: string;

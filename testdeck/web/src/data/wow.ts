@@ -111,10 +111,12 @@ export const ROLE_ORDER: Record<string, number> = {
 /* Roles are POSITIONAL — the order is the contract with the worldserver. */
 export const ROSTER_SLOTS = ["tank", "heal", "dps", "dps", "dps"] as const;
 
-/* Instance map → expansion. Fixed by the 3.3.5a client build, like the class
- * tables above. Naxxramas (533) is the level-80 WotLK raid on this build.
- * Anything unlisted is Classic, so a new module row degrades to a sane shelf
- * rather than to "unknown". */
+/* Instance map → expansion. A FALLBACK only: the module reads each row's
+ * expansion out of Map.dbc and emits it in the catalogue, so expansionOfRow()
+ * below prefers that and this table is what answers for a sidecar written by a
+ * worldserver older than the field. Naxxramas (533) is the level-80 WotLK raid
+ * on this build. Anything unlisted is Classic, so a new module row degrades to
+ * a sane shelf rather than to "unknown". */
 export const EXPANSION_NAME = [
   "Classic",
   "The Burning Crusade",
@@ -134,4 +136,15 @@ export function expansionOf(mapId: number): 0 | 1 | 2 {
   if (TBC_MAPS.has(mapId)) return 1;
   if (WOTLK_MAPS.has(mapId)) return 2;
   return 0;
+}
+
+/* The expansion of a catalogue row: the module's own value when it sent one,
+ * the map-id table otherwise. Use this rather than expansionOf() anywhere a
+ * Dungeon row is in hand — it cannot drift from the server's Map.dbc. */
+export function expansionOfRow(d: {
+  mapId: number;
+  expansion?: number;
+}): 0 | 1 | 2 {
+  const e = d.expansion;
+  return e === 0 || e === 1 || e === 2 ? e : expansionOf(d.mapId);
 }

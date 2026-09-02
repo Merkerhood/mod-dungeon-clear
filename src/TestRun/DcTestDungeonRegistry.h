@@ -47,6 +47,14 @@ namespace DcTestDungeonRegistry
 
     std::vector<Row> const& All();
 
+    // Map.dbc's own expansion id for a row's map: 0 classic, 1 TBC, 2 WotLK.
+    // Read from the DBC rather than carried as a hand-typed column, so the
+    // catalogue cannot drift from the client build the server actually loaded
+    // — and a row added to the wrong section of the table still reports the
+    // truth. 0 for a map the store does not know.
+    inline constexpr std::uint32_t kExpansionWrath = 2;
+    std::uint32_t ExpansionOf(Row const& row);
+
     // Dump the catalogue (plus the test-run caps the dashboard's start form
     // needs) to dc_test_dungeons.json in the worldserver cwd — the same
     // sidecar pattern as the live/record files (env override

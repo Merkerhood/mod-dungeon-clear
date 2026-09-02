@@ -45,9 +45,11 @@ forces `ONLINE`. `health.problems` is the config-validation banner. Cached 5s.
 ## Catalogue
 
 `GET /api/testdungeons` → the module's `dc_test_dungeons.json` verbatim:
-`{limits, gearDefaults, qualities, dungeons:[{token, name, mapId, level,
-heroicLevel, wing, gear:[{ilvl,label}], gearHeroic?}]}`. Empty shape until the
-worldserver has written it.
+`{limits, gearDefaults, qualities, dungeons:[{token, name, mapId, expansion,
+level, heroicLevel, wing, gear:[{ilvl,label}], gearHeroic?}]}`. Empty shape
+until the worldserver has written it. `expansion` is Map.dbc's own id (0
+classic, 1 TBC, 2 WotLK), so the UI shelves rows by the server's client build
+instead of its own map-id table.
 
 ## Runs
 

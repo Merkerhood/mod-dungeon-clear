@@ -26,21 +26,41 @@ namespace DcTestComp
             return z ^ (z >> 15);
         }
 
-        // Draw one entry from `pool` whose class is not already used, advancing
-        // the PRNG. Callers guarantee at least one such entry exists.
+        constexpr std::uint8_t kDeathKnightClassId = 6;
+
+        // Whether `roster` admits this pool entry. Filtering the shared pools
+        // beats holding a second copy of each: the death-knight rows are last,
+        // so dropping them leaves the pre-Wrath candidate list byte-identical
+        // to what it was before the class was added and every recorded seed
+        // still replays its original comp.
+        bool Eligible(Slot const& slot, Roster roster)
+        {
+            return roster == Roster::WithDeathKnights || slot.classId != kDeathKnightClassId;
+        }
+
+        // Draw one entry from `pool` whose class is eligible and not already
+        // used, advancing the PRNG. Callers guarantee at least one such entry
+        // exists.
         Slot Draw(Slot const* pool, std::size_t count, std::set<std::uint8_t> const& used,
-                  std::uint32_t& state)
+                  Roster roster, std::uint32_t& state)
         {
             std::vector<Slot> candidates;
             candidates.reserve(count);
             for (std::size_t i = 0; i < count; ++i)
-                if (used.find(pool[i].classId) == used.end())
+                if (Eligible(pool[i], roster) && used.find(pool[i].classId) == used.end())
                     candidates.push_back(pool[i]);
 
             // Defensive: should never happen given the pool sizes, but returning
-            // a valid slot beats indexing an empty vector.
+            // a valid slot beats indexing an empty vector. It still has to
+            // respect `roster` — falling back to pool[0] blindly would be fine
+            // today only because no pool LEADS with a death knight.
             if (candidates.empty())
+            {
+                for (std::size_t i = 0; i < count; ++i)
+                    if (Eligible(pool[i], roster))
+                        return pool[i];
                 return pool[0];
+            }
 
             return candidates[NextRand(state) % candidates.size()];
         }
@@ -50,11 +70,13 @@ namespace DcTestComp
         // the role pools permit instead of stacking one lucky class.
         Slot DrawSpread(Slot const* pool, std::size_t count,
                         std::map<std::uint8_t, std::size_t>& classUse,
-                        std::uint32_t& state)
+                        Roster roster, std::uint32_t& state)
         {
             std::size_t best = SIZE_MAX;
             for (std::size_t i = 0; i < count; ++i)
             {
+                if (!Eligible(pool[i], roster))
+                    continue;
                 auto const it = classUse.find(pool[i].classId);
                 std::size_t const uses = it == classUse.end() ? 0 : it->second;
                 if (uses < best)
@@ -64,6 +86,8 @@ namespace DcTestComp
             candidates.reserve(count);
             for (std::size_t i = 0; i < count; ++i)
             {
+                if (!Eligible(pool[i], roster))
+                    continue;
                 auto const it = classUse.find(pool[i].classId);
                 std::size_t const uses = it == classUse.end() ? 0 : it->second;
                 if (uses == best)
@@ -94,28 +118,28 @@ namespace DcTestComp
         return q;
     }
 
-    std::array<Slot, kPartySize> BuildComp(std::uint32_t seed)
+    std::array<Slot, kPartySize> BuildComp(std::uint32_t seed, Roster roster)
     {
         std::uint32_t state = seed;
         std::set<std::uint8_t> used;
         std::array<Slot, kPartySize> comp{};
 
-        comp[0] = Draw(kTankPool, std::size(kTankPool), used, state);
+        comp[0] = Draw(kTankPool, std::size(kTankPool), used, roster, state);
         used.insert(comp[0].classId);
 
-        comp[1] = Draw(kHealPool, std::size(kHealPool), used, state);
+        comp[1] = Draw(kHealPool, std::size(kHealPool), used, roster, state);
         used.insert(comp[1].classId);
 
         for (std::size_t i = 2; i < kPartySize; ++i)
         {
-            comp[i] = Draw(kDpsPool, std::size(kDpsPool), used, state);
+            comp[i] = Draw(kDpsPool, std::size(kDpsPool), used, roster, state);
             used.insert(comp[i].classId);
         }
 
         return comp;
     }
 
-    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size)
+    std::vector<Slot> BuildComp(std::uint32_t seed, std::size_t size, Roster roster)
     {
         Quota const q = RoleQuota(size);
         std::uint32_t state = seed;
@@ -124,22 +148,41 @@ namespace DcTestComp
         comp.reserve(q.tanks + q.healers + q.dps);
 
         for (std::size_t i = 0; i < q.tanks; ++i)
-            comp.push_back(DrawSpread(kTankPool, std::size(kTankPool), classUse, state));
+            comp.push_back(DrawSpread(kTankPool, std::size(kTankPool), classUse, roster, state));
         for (std::size_t i = 0; i < q.healers; ++i)
-            comp.push_back(DrawSpread(kHealPool, std::size(kHealPool), classUse, state));
+            comp.push_back(DrawSpread(kHealPool, std::size(kHealPool), classUse, roster, state));
         for (std::size_t i = 0; i < q.dps; ++i)
-            comp.push_back(DrawSpread(kDpsPool, std::size(kDpsPool), classUse, state));
+            comp.push_back(DrawSpread(kDpsPool, std::size(kDpsPool), classUse, roster, state));
         return comp;
     }
 
-    std::vector<Slot> RolePool(std::string_view role)
+    std::vector<Slot> RolePool(std::string_view role, Roster roster)
     {
+        Slot const* pool = nullptr;
+        std::size_t count = 0;
         if (role == "tank")
-            return { std::begin(kTankPool), std::end(kTankPool) };
-        if (role == "heal")
-            return { std::begin(kHealPool), std::end(kHealPool) };
-        if (role == "dps")
-            return { std::begin(kDpsPool), std::end(kDpsPool) };
-        return {};
+        {
+            pool = kTankPool;
+            count = std::size(kTankPool);
+        }
+        else if (role == "heal")
+        {
+            pool = kHealPool;
+            count = std::size(kHealPool);
+        }
+        else if (role == "dps")
+        {
+            pool = kDpsPool;
+            count = std::size(kDpsPool);
+        }
+        else
+            return {};
+
+        std::vector<Slot> out;
+        out.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+            if (Eligible(pool[i], roster))
+                out.push_back(pool[i]);
+        return out;
     }
 }

@@ -15,7 +15,7 @@ import { api, ApiError } from "../api/client";
 import { usePoll } from "../api/hooks";
 import { startRosterRun, startRun } from "../api/launch";
 import type { Catalogue, CommandReply, Dungeon, SavedRoster } from "../api/types";
-import { EXPANSION_NAME, expansionOf, QUALITY_CHOICES } from "../data/wow";
+import { EXPANSION_NAME, expansionOfRow, QUALITY_CHOICES } from "../data/wow";
 import {
   EmptyState,
   Field,
@@ -60,7 +60,7 @@ const EXP_SHELF = ["classic", "tbc", "wotlk"] as const;
 function sectionsFor(dungeons: Dungeon[], shelf: Shelf) {
   const buckets: Dungeon[][] = [[], [], [], [], [], []];
   for (const d of dungeons)
-    buckets[expansionOf(d.mapId) + (d.raid ? 3 : 0)].push(d);
+    buckets[expansionOfRow(d) + (d.raid ? 3 : 0)].push(d);
   const titles = [
     ...EXPANSION_NAME,
     ...EXPANSION_NAME.map((n) => `${n} — raids`),
@@ -121,7 +121,7 @@ export default function LaunchPage() {
       raids: 0,
     };
     for (const d of all) {
-      c[EXP_SHELF[expansionOf(d.mapId)]]++;
+      c[EXP_SHELF[expansionOfRow(d)]]++;
       if (d.raid) c.raids++;
     }
     return c;

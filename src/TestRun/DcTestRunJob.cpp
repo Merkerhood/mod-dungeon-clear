@@ -286,16 +286,26 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     job->_record.gearIlvl = job->_gear.ilvl;
     job->_record.gearQuality = job->_gear.quality;
 
+    // Death knights are a Wrath class whose kit starts at 55, so they are on
+    // the table only for a WotLK row — and only when the run's LEVEL actually
+    // reaches the floor, because `level=N` can drop a WotLK run under it and
+    // the factory levels every test bot to whatever the run asked for.
+    DcTestComp::Roster const roster =
+        DcTestDungeonRegistry::ExpansionOf(row) >= DcTestDungeonRegistry::kExpansionWrath &&
+                level >= DcTestComp::kDeathKnightMinLevel
+            ? DcTestComp::Roster::WithDeathKnights
+            : DcTestComp::Roster::NoDeathKnights;
+
     // size 0 keeps the classic 5-man draw (distinct classes) bit-for-bit; a
     // requested size uses the quota'd raid comp (duplicates spread evenly).
     std::vector<DcTestComp::Slot> comp;
     if (size == 0)
     {
-        auto const classic = DcTestComp::BuildComp(seed);
+        auto const classic = DcTestComp::BuildComp(seed, roster);
         comp.assign(classic.begin(), classic.end());
     }
     else
-        comp = DcTestComp::BuildComp(seed, size);
+        comp = DcTestComp::BuildComp(seed, size, roster);
     job->_record.size = static_cast<uint32>(comp.size());
     for (DcTestComp::Slot const& c : comp)
     {
@@ -356,7 +366,7 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
             // is impossible anyway, so a raid-sized run may substitute a class
             // already in the party rather than fail the role.
             bool const allowDuplicates = job->_slots.size() > 9;
-            for (DcTestComp::Slot const& alt : DcTestComp::RolePool(slot.role))
+            for (DcTestComp::Slot const& alt : DcTestComp::RolePool(slot.role, roster))
             {
                 if (alt.classId == slot.classId)
                     continue;
