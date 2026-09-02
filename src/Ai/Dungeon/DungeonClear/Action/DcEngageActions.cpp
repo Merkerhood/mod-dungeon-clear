@@ -1408,10 +1408,17 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
             return true;
         }
         DcMovement::StopBot(bot, DcMovement::Stop::Soft);
-        if (DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
-            LOG_INFO("playerbots.dungeonclear",
-                     "[dungeon-clear] {} started the escort of {} (gossip option {})",
-                     bot->GetName(), escortee->GetName(), step.gossipOption);
+        // Same rule as the resume branch below: a refused select is not progress,
+        // and hiding it behind a reset clock costs a whole run to diagnose.
+        if (!DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
+        {
+            EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ false,
+                           escortee->GetName());
+            return true;
+        }
+        LOG_INFO("playerbots.dungeonclear",
+                 "[dungeon-clear] {} started the escort of {} (gossip option {})",
+                 bot->GetName(), escortee->GetName(), step.gossipOption);
         prog.escortProgressMs = now;  // starting the escort IS progress
         ClearStall(context);
         return true;
@@ -1442,11 +1449,22 @@ bool DungeonClearEngageActionBase::DriveEscortCreature(EventStep const& step,
             return true;
         }
         DcMovement::StopBot(bot, DcMovement::Stop::Soft);
-        if (DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
-            LOG_INFO("playerbots.dungeonclear",
-                     "[dungeon-clear] {} resumed the escort of {} at a checkpoint "
-                     "(gossip option {})",
-                     bot->GetName(), escortee->GetName(), step.gossipOption);
+        // ONLY A GOSSIP THAT ACTUALLY LANDED COUNTS AS PROGRESS. Stamping the
+        // clock unconditionally made a permanently-failing gossip invisible: the
+        // dead-air watchdog reset on every tick, so the run stood at the escortee
+        // with all watchdogs clear until the 600s no-progress timer ended it, and
+        // no line was ever logged saying why (tr-20260831-225609-1, Halls of
+        // Stone). A refused select now ages the same clock a lost escortee does.
+        if (!DungeonEventExecutor::SelectGossip(bot, escortee, step.gossipOption))
+        {
+            EscortWatchdog(botAI, context, prog, now, /*keepingUp*/ false,
+                           escortee->GetName());
+            return true;
+        }
+        LOG_INFO("playerbots.dungeonclear",
+                 "[dungeon-clear] {} resumed the escort of {} at a checkpoint "
+                 "(gossip option {})",
+                 bot->GetName(), escortee->GetName(), step.gossipOption);
         prog.escortProgressMs = now;  // resuming IS progress
         ClearStall(context);
         return true;

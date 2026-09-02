@@ -214,9 +214,13 @@ void RegisterHallsOfStoneEvents(std::vector<DungeonEvent>& out)
     //
     // One step, both clicks, and the mid-escort death case recovers for free.
     //
-    // Both menus have exactly ONE option, and SelectGossip indexes by menu POSITION
-    // (menu.GetItem(option)), not by OptionID — so option 0 is correct for 9669 and
-    // 9670 alike even though their raw OptionIDs are 37476 and 36142.
+    // Both menus have exactly ONE option, so the POSITIONAL 0 is right for 9669 and
+    // 9670 alike. Their raw OptionIDs are 37476 and 36142, and that distinction is
+    // not cosmetic: GossipMenu keys its items by OptionID, so a positional argument
+    // only works because SelectGossip translates it (see ResolveGossipListId). An
+    // earlier revision of this comment claimed GetItem indexed by position and
+    // passed 0 straight through to the protocol — every Brann gossip silently
+    // no-opped and the dungeon could never start the escort.
     //
     // THE COMPLETION MARKER IS KADDRAK (30898), not "reached the end". The
     // primitive explicitly refuses to complete on arrival (the DM-West / RFD

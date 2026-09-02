@@ -12,6 +12,7 @@
 class Player;
 class Creature;
 class GameObject;
+class GossipMenu;
 class AiObjectContext;
 
 // Result of running ONE event step on a tick.
@@ -149,6 +150,21 @@ public:
     // place. The caller is responsible for being in interact range and (if it
     // matters) facing the NPC.
     static bool SelectGossip(Player* bot, Creature* npc, int32 option);
+
+    // Translate a POSITIONAL gossip option into the gossipListId the protocol
+    // wants. GossipMenu keys its items by the DB's gossip_menu_option.OptionID
+    // (Player::PrepareGossipMenu adds each row as AddMenuItem(OptionID, ...)), so
+    // GetItem(n) is a key find(), NOT the n-th option — and every caller in the
+    // dungeon tables passes a position. Most gossip NPCs happen to use OptionID 0,
+    // which is why passing the position straight through read as correct until
+    // Brann Bronzebeard (OptionIDs 37476/36142/36412/36236) made every Halls of
+    // Stone gossip a silent no-op. Returns false when the menu is empty or has no
+    // option at that position; callers treat that as "retry next tick".
+    //
+    // Exposed (rather than file-static) so the translation is directly testable —
+    // it is the one line standing between an authored `option 0` and a dungeon
+    // that cannot start.
+    static bool ResolveGossipListId(GossipMenu const& menu, int32 option, uint32& listId);
 
     // Static-geometry (vmap-only) line of sight from the bot to a step's
     // GameObject, eye-bumped on both ends. Shared by the UseItemOnGO RunStep and

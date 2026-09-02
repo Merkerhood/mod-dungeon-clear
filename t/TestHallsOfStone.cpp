@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "GossipDef.h"       // GossipMenu — the option-id translation under test
 #include "InstanceScript.h"  // EncounterState — DONE is 3 on AC (FAIL takes 2)
 
 #include "Ai/Dungeon/DungeonClear/Data/DcEventDoorRegistry.h"
@@ -23,6 +24,7 @@
 #include "Ai/Dungeon/DungeonClear/Data/SealedEncounterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
 #include "TestRun/DcTestDungeonRegistry.h"
 
 // Halls of Stone (map 599) — the authored-data lints for the dungeon whose
@@ -167,12 +169,13 @@ TEST(DungeonEventHallsOfStoneTest, EscortStepCarriesTheDataGateThatArmsItsGossip
 
     EXPECT_EQ(escort->creatureEntry, NPC_BRANN);
 
-    // Index 0, not an OptionID: DungeonEventExecutor::SelectGossip resolves by
-    // menu POSITION (menu.GetItem(option)). Menus 9669 and 9670 each carry exactly
-    // one option, so 0 is correct for both clicks this one step makes.
+    // A POSITION, not an OptionID. Menus 9669 and 9670 each carry exactly one
+    // option, so 0 is correct for both clicks this one step makes — but only
+    // because SelectGossip translates the position into the menu's real key. Their
+    // OptionIDs are 37476 and 36142; see GossipOptionIsAPositionNotTheDbOptionId.
     EXPECT_EQ(escort->gossipOption, 0)
-        << "both 9669 and 9670 have exactly one option; SelectGossip indexes by"
-           " position, so option 0 is the only correct value";
+        << "both 9669 and 9670 have exactly one option, so position 0 is the only"
+           " correct value; SelectGossip maps it onto the real OptionID";
 
     // THE GATE. Losing this silently disarms the gossip — see the comment above.
     EXPECT_GE(escort->instanceDataId, 0)
@@ -204,6 +207,70 @@ TEST(DungeonEventHallsOfStoneTest, EscortStepCarriesTheDataGateThatArmsItsGossip
     // would read as a budget somebody could tune.
     EXPECT_EQ(escort->timeoutMs, 0u)
         << "EscortCreature is watchdog-owned; a timeout here does nothing";
+}
+
+// --- the option is a POSITION, and something must translate it ---------------
+//
+// The bug this locks: GossipMenu keys its items by the DB's
+// gossip_menu_option.OptionID (Player::PrepareGossipMenu -> AddMenuItem(OptionID,
+// ...)), so GetItem(n) is a key lookup, not the n-th option. Every gossip option
+// authored in the dungeon tables is a POSITION. Nearly all of those NPCs use
+// OptionID 0, so passing the position straight through to the protocol was
+// indistinguishable from correct — until Brann, whose four menus carry 37476 /
+// 36142 / 36412 / 36236. Live (tr-20260831-225609-1) every Brann gossip silently
+// no-opped: the party stood 7.9yd from him for eleven minutes with every watchdog
+// reporting clear, and the run died to the 600s no-progress timer.
+//
+// Brann's real OptionIDs are asserted as literals on purpose. They are world-DB
+// facts this dungeon depends on, and the whole failure was a claim about them
+// that nobody had checked.
+TEST(DungeonEventHallsOfStoneTest, GossipOptionIsAPositionNotTheDbOptionId)
+{
+    GossipMenu menu;
+
+    // Menu 9669 as PrepareGossipMenu builds it: one option, keyed by its OptionID.
+    menu.AddMenuItem(/*menuItemId*/ 37476, GOSSIP_ICON_CHAT,
+                     "Brann, it would be our honor!", /*sender*/ 0, /*action*/ 0,
+                     /*boxMessage*/ "", /*boxMoney*/ 0);
+
+    ASSERT_EQ(menu.GetMenuItems().size(), 1u);
+    EXPECT_EQ(menu.GetItem(0), nullptr)
+        << "a positional 0 is NOT a key here — this is exactly what silently"
+           " refused every Brann gossip";
+
+    uint32 listId = 0;
+    EXPECT_TRUE(DungeonEventExecutor::ResolveGossipListId(menu, /*option*/ 0, listId));
+    EXPECT_EQ(listId, 37476u)
+        << "position 0 must resolve to the menu's real OptionID, or the select"
+           " packet is rejected by HandleGossipSelectOptionOpcode";
+
+    // Out of range stays a clean false, so a caller keeps retrying rather than
+    // sending a garbage id.
+    uint32 unused = 0;
+    EXPECT_FALSE(DungeonEventExecutor::ResolveGossipListId(menu, /*option*/ 1, unused));
+    EXPECT_FALSE(DungeonEventExecutor::ResolveGossipListId(menu, /*option*/ -1, unused));
+
+    GossipMenu empty;
+    EXPECT_FALSE(DungeonEventExecutor::ResolveGossipListId(empty, /*option*/ 0, unused));
+}
+
+// The other half of the same guarantee: every OptionID-0 NPC the module talks to
+// (Shadowfang, Wailing Caverns, Zul'Farrak, Black Morass, Old Hillsbrad, Dire
+// Maul, Blackwing Lair) must keep resolving position 0 -> key 0, or this fix
+// would trade one broken dungeon for eight.
+TEST(DungeonEventHallsOfStoneTest, PositionZeroStillResolvesToKeyZeroForOrdinaryMenus)
+{
+    GossipMenu menu;
+    menu.AddMenuItem(/*menuItemId*/ 0, GOSSIP_ICON_CHAT, "Please unlock the door.",
+                     /*sender*/ 0, /*action*/ 0, /*boxMessage*/ "", /*boxMoney*/ 0);
+    menu.AddMenuItem(/*menuItemId*/ 1, GOSSIP_ICON_CHAT, "second option",
+                     /*sender*/ 0, /*action*/ 0, /*boxMessage*/ "", /*boxMoney*/ 0);
+
+    uint32 listId = 99;
+    ASSERT_TRUE(DungeonEventExecutor::ResolveGossipListId(menu, /*option*/ 0, listId));
+    EXPECT_EQ(listId, 0u);
+    ASSERT_TRUE(DungeonEventExecutor::ResolveGossipListId(menu, /*option*/ 1, listId));
+    EXPECT_EQ(listId, 1u);
 }
 
 // --- the door leg VERIFIES the door -----------------------------------------

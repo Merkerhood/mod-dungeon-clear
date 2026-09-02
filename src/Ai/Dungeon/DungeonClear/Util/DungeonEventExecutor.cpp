@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <list>
 #include <optional>
 #include <unordered_set>
@@ -342,6 +343,26 @@ bool DungeonEventExecutor::HasGameObjectLos(Player* bot, GameObject* go)
                                 VMAP::ModelIgnoreFlags::Nothing);
 }
 
+// Translate a POSITIONAL gossip option into the gossipListId the protocol wants —
+// the DB OptionID the menu map is keyed by. See the header for why this exists.
+bool DungeonEventExecutor::ResolveGossipListId(GossipMenu const& menu, int32 option,
+                                               uint32& listId)
+{
+    if (option < 0)
+        return false;
+
+    auto const& items = menu.GetMenuItems();
+    if (static_cast<size_t>(option) >= items.size())
+        return false;
+
+    // std::map iterates in ascending key order, so ordinal 0 is still key 0
+    // wherever the DB uses 0 — every OptionID-0 caller is unaffected.
+    auto it = items.begin();
+    std::advance(it, option);
+    listId = it->first;
+    return true;
+}
+
 bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option)
 {
     if (!bot || !npc)
@@ -354,9 +375,16 @@ bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option
     hello << npc->GetGUID();
     bot->GetSession()->HandleGossipHelloOpcode(hello);
 
+    // THE `option` ARGUMENT IS AN ORDINAL AND MUST BE TRANSLATED — GetItem() is a
+    // find() on the DB OptionID, not the n-th option, and so is the gossipListId
+    // the select packet carries (ResolveGossipListId documents the whole trap).
+    // Passing a positional 0 straight through read as correct for a long time
+    // because nearly every gossip NPC here uses OptionID 0; Brann does not, and
+    // that cost a whole Halls of Stone run (tr-20260831-225609-1) to a gossip that
+    // refused silently on every tick.
     GossipMenu& menu = bot->PlayerTalkClass->GetGossipMenu();
-    if (menu.GetMenuItems().empty() ||
-        !menu.GetItem(static_cast<uint32>(option)))
+    uint32 gossipListId = 0;
+    if (!ResolveGossipListId(menu, option, gossipListId))
         return false;  // menu/option not ready yet — caller retries
 
     // Send the NPC's OWN guid: HandleGossipSelectOptionOpcode rejects the select
@@ -374,7 +402,7 @@ bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option
     // in place (opening a submenu), so `menu.GetMenuId()` would already read the
     // submenu's id afterward.
     uint32 lastMenuId = menu.GetMenuId();
-    sendSelect(lastMenuId, static_cast<uint32>(option));
+    sendSelect(lastMenuId, gossipListId);
 
     // DRILL DOWN through submenus: some scripted NPCs put the option that fires
     // their action behind one or more nested gossip menus (Old Hillsbrad's Thrall,
@@ -388,12 +416,13 @@ bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option
     for (int guard = 0; guard < 6; ++guard)
     {
         GossipMenu& sub = bot->PlayerTalkClass->GetGossipMenu();
-        if (sub.GetMenuItems().empty() || !sub.GetItem(0))
+        uint32 subListId = 0;
+        if (!ResolveGossipListId(sub, 0, subListId))
             break;  // menu closed -> the terminal option fired
         if (sub.GetMenuId() == lastMenuId)
             break;  // no new submenu opened -> nothing more to drill
         lastMenuId = sub.GetMenuId();
-        sendSelect(sub.GetMenuId(), 0);
+        sendSelect(sub.GetMenuId(), subListId);
     }
     return true;
 }
