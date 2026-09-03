@@ -81,6 +81,7 @@
 #include "WarlockAiObjectContext.h"
 #include "WarriorAiObjectContext.h"
 
+#include "DungeonQueueFill/DcDungeonQueueFillManager.h"
 #include "Util/DcProvisionBudget.h"
 #include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
@@ -480,6 +481,20 @@ public:
         // because the module happened to be off would leave the flag stuck
         // false and stall the next provisioner that runs.
         DcProvisionBudget::Reset();
+
+        // RDF instant queue fill: one state machine per player who just used
+        // the dungeon finder. Ticked BEFORE the module gate on purpose — a
+        // fill in flight owns logged-in bots sitting in a queue, and the
+        // manager's own first act when the module (or the feature) is off is
+        // to release them. Gating it would strand exactly the state that most
+        // needs unwinding.
+        //
+        // It therefore also gets first claim on the tick's provisioning
+        // ration, ahead of the `.dc test` harness. That is the right way
+        // round: a live player is waiting on the fill, and nobody is waiting
+        // on a background test plan. Cheap no-op (an empty vector test)
+        // whenever nobody is queueing.
+        DcDungeonQueueFillManager::Instance().Tick(diff);
 
         if (!DcModule::IsEnabled())
             return;

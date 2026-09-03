@@ -111,6 +111,7 @@ if (BUILD_TESTING)
             "${MOD_PATH}/t/TestWipeContext.cpp"
             "${MOD_PATH}/t/TestDcDiagSnapshot.cpp"
             "${MOD_PATH}/t/TestTestComp.cpp"
+            "${MOD_PATH}/t/TestDungeonQueueFill.cpp"
             "${MOD_PATH}/t/TestTestPlanSchedule.cpp"
             "${MOD_PATH}/t/TestTestPlanSummary.cpp"
             "${MOD_PATH}/t/NavHarness.cpp"

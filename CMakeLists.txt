@@ -17,6 +17,24 @@ AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
 AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 
+# New files added: Util/DcBotProvisioning.{h,cpp}
+#   (the order-sensitive PlayerbotFactory sequence — strip, Randomize at the
+#    wanted level, force the spec and re-gear/re-glyph/re-enchant for it, pet,
+#    ammo, ResetStrategies — lifted verbatim out of DcTestRunJob so the RDF
+#    queue fill rolls its bots through exactly the same pass. Three orderings
+#    in it each cost a live run to find; a second copy would drift.)
+# New files added: DungeonQueueFill/DcDungeonQueueFillPlanner.{h,cpp},
+#   DungeonQueueFill/DcDungeonQueueFillJob.{h,cpp},
+#   DungeonQueueFill/DcDungeonQueueFillManager.{h,cpp},
+#   DungeonQueueFill/DcDungeonQueueFillHooks.cpp
+#   (RDF INSTANT QUEUE FILL. A real player clicks Find Group; bots with the
+#    roles the party is missing queue for the same dungeon through the same
+#    queue, and the STOCK matchmaker pairs them — the player gets the ordinary
+#    Dungeon Found popup. No core change: PLAYERHOOK_CAN_JOIN_LFG is a pure
+#    observer that always returns true, and the job reads the AUTHORITATIVE
+#    post-validation dungeon set and roles back out of LFGMgr only once the
+#    queue has settled into LFG_STATE_QUEUED, so RBAC/deserter/cooldown/lock
+#    checks have all already run. The planner half is engine-free and gtested.)
 # New files added: Util/DcProvisionBudget.{h,cpp}
 #   (module-root src/Util/ — the realm-wide "one PlayerbotFactory::Randomize per
 #    world tick" ration, hoisted out of DcTestRunManager::Tick's local bool so
