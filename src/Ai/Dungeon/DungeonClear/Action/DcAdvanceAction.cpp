@@ -389,8 +389,15 @@ namespace
             ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
         DungeonFollowerState& follower =
             ctx->GetValue<DungeonFollowerState&>(DcKey::FollowerState)->Get();
+        // A Resnap that re-picks the point the cursor already held has repaired
+        // nothing, and reporting it as the cheap cure is what pinned this ladder on
+        // rung 1 for whole runs (S1089, and again on sparse anchor routes where the
+        // cursor is always its own nearest forward candidate). Require DISPLACEMENT,
+        // not just a successful anchor search: no movement means fall through to the
+        // rebuild, which is the escalation the caller is asking for.
+        bool resnapMoved = false;
         if (allowResnap && path.reachable && !path.segments.empty() &&
-            DungeonPathFollower::Resnap(bot, path, follower))
+            DungeonPathFollower::Resnap(bot, path, follower, &resnapMoved) && resnapMoved)
             return true;
 
         appr.longPathExpiresMs = 0;
@@ -897,14 +904,15 @@ void DungeonClearAdvanceAction::FillStuckObs(AdvanceState& st, DungeonClearAppro
     // shuttle can never satisfy it (its near end only ties the best, its far end is
     // worse), while genuinely resumed travel satisfies it on the very next tick. It
     // cannot mis-fire on a boss that WANDERS away either: the counters are only ever
-    // INCREMENTED on a posStuck tick (moving with ~0 displacement), which a bot that is
-    // actually travelling never produces.
-    if (appr.recoveryProgressWatch.TickClosing(st.engageDist, DC_STUCK_DISPLACEMENT, getMSTime()))
-    {
-        rebuildAttempts = 0;
-        appr.resnapAttempts = 0;
-        appr.nudgeAttempts = 0;   // a nudge that bought ground costs nothing
-    }
+    // INCREMENTED on a failure (a refused move, a resnap that cured nothing), which a
+    // bot that is actually travelling never produces.
+    //
+    // This is now the ONE place any recovery counter is cleared — see
+    // DcApproachState::NoteRecoveryProgress for why that is structural rather than a
+    // convention. The rungs below no longer zero their own counters on "I issued a
+    // move": issuing is not arriving, and every livelock in this file's history came
+    // from a rung that could not tell the difference.
+    appr.NoteRecoveryProgress(st.engageDist, DC_STUCK_DISPLACEMENT, getMSTime());
 
     // Per-tick advance telemetry — the three signals the spline-issue lines
     // can't show on their own: did the bot physically move since the last
@@ -1104,7 +1112,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoPursue(AdvanceState
     bool const moveAlive = chasing || bot->isMoving() ||
                            IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL);
 
-    appr.stuckCount = 0;
+    // stuckCount is NOT cleared here: issuing a chase is not closing on the boss.
+    // NoteRecoveryProgress owns every recovery counter (see DcApproachState).
     ClearStall(context);
     SetPhase(context, "pursuing");
     LOG_DEBUG("playerbots.dungeonclear",
@@ -1304,13 +1313,44 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryReanchorStaleCurso
     bool const behind = DungeonPathFollower::HopIsBehind(bot, path, follower, hop);
     if (staleDist > DC_REANCHOR_DISTANCE || behind)
     {
-        bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower);
+        bool moved = false;
+        bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower, &moved);
         LOG_DEBUG("playerbots.dungeonclear",
                   "[DC:{}] re-anchor: next hop {:.1f}yd (limit {}yd, behind={}) -> {}",
                   bot->GetName(), staleDist, DC_REANCHOR_DISTANCE, behind,
-                  reanchored ? "Resnapped + refetched hop" : "Resnap failed, falling through");
-        if (reanchored)
+                  !reanchored  ? "Resnap failed, falling through"
+                  : moved      ? "Resnapped + refetched hop"
+                               : "Resnap held the same cursor");
+        if (reanchored && moved)
             hop = DungeonPathFollower::NextHop(bot, path, follower);
+
+        // FIXED POINT. Resnap searches forward FROM the cursor, so the cursor is a
+        // candidate of its own search — and on an authored anchor route (points
+        // 15-20yd apart) a bot that has overshot by a few yards is nearer to the
+        // point it just passed than to the next one. Resnap therefore re-picks it,
+        // reports success, and leaves the hop exactly as behind as it found it, so
+        // this rung asks again next tick and every tick after. Live in
+        // tr-20260902-134056-2: 198 re-anchors at an unchanging 4.0-4.4yd, the tank
+        // bouncing against a hop it had already walked past for eight minutes, with
+        // no counter to notice because this rung only ever Continues.
+        //
+        // A hop the bot has PASSED is not a target, so retire it: step the cursor
+        // one point forward and refetch. That is the one escape Resnap structurally
+        // cannot provide, and it is safe for the reason HopIsBehind established —
+        // the ground being skipped is ground already covered.
+        if (behind && !moved)
+        {
+            G3D::Vector3 skipped;
+            if (DungeonPathFollower::SkipPassedPoint(path, follower, skipped))
+            {
+                LOG_DEBUG("playerbots.dungeonclear",
+                          "[DC:{}] re-anchor: hop still behind after resnap -> retiring "
+                          "passed point ({:.1f},{:.1f},{:.1f}), cursor now seg {} pt {}",
+                          bot->GetName(), skipped.x, skipped.y, skipped.z,
+                          follower.segmentIdx, follower.pointIdx);
+                hop = DungeonPathFollower::NextHop(bot, path, follower);
+            }
+        }
     }
     return Step::Continue;
 }
@@ -1468,12 +1508,25 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
     if (obs.offLine)
         return;  // off-line outranks window
 
-    // Back on the corridor: the rejoin rung is done, so its net-progress baseline
-    // must not survive into the NEXT off-line episode (a stale low best would make
-    // the first refused tick of that episode read as drift). Same for the refusal
-    // count, which is per-episode by the same argument.
+    // Back on the corridor: the rejoin rung is done, so its DRIFT baseline must not
+    // survive into the NEXT off-line episode (a stale low best would make the first
+    // refused tick of that episode read as drift).
     appr.rejoinBestDev = std::numeric_limits<float>::max();
-    appr.rejoinRefusals = 0;
+
+    // rejoinRefusals is deliberately NOT cleared here, and the difference is the
+    // whole bug. rejoinBestDev is a per-EPISODE baseline; rejoinRefusals is a
+    // LIVENESS counter, and a liveness counter that resets on an episode boundary
+    // is worthless whenever something else owns that boundary. Here something does:
+    // an off-path rebuild (DoOffPathRebuild, one tier up) reseeds the follower, the
+    // fresh cursor drops RouteDeviation to ~0, the hysteresis releases, and control
+    // arrives at this line having moved the bot precisely nowhere. tr-20260902-134056-1
+    // rode that circuit for seven minutes: 68 consecutive refused rejoins to the same
+    // point (472.9,-259.7,104.7) at seg 11, the rebuild resetting the count every 2-3
+    // ticks, so the 8-refusal escalation below — chunked re-entry, then a `dc skip`
+    // stall — was unreachable by construction and the run died on the 600s watchdog
+    // with every counter reading clear. The counter now falls to
+    // NoteRecoveryProgress, which clears it when the bot is actually nearer the
+    // objective and at no other time.
 
     // Normal case: is a >=2-point spline window available? Build it once here and
     // carry it into DoIssueSplineWindow so the launch reuses this exact window.
@@ -1679,7 +1732,10 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoJumpLeg(AdvanceStat
 // StopMoving + Launch a fresh escort and hitch.
 DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoRideLiveGlide(AdvanceState& st)
 {
-    st.appr->stuckCount = 0;
+    // A glide being IN FLIGHT is the weakest possible evidence of progress — it is
+    // the state a bot wedged against geometry sits in indefinitely, and clearing
+    // the ladder from here made "ride the spline" a way to never escalate. If the
+    // glide is carrying the bot anywhere, NoteRecoveryProgress sees it this tick.
     ClearStall(context);
     SetPhase(context, "moving");
     return Step::ReturnTrue;
@@ -1737,12 +1793,14 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffLineRejoin(Advan
     if (rejoining)
     {
         appr.rejoinBestDev = st.routeDeviation;
+        // ONLY a re-entry that actually issued may clear this. It used to run
+        // unconditionally, above the refusal split — so the rung that was failing
+        // was also the rung disarming the one detector that could have noticed.
+        // rejoinRefusals counts CONSECUTIVE ticks that issued nothing, so a tick
+        // that issued genuinely breaks the streak; that is the counter's own
+        // definition rather than a claim about progress. stuckCount makes no such
+        // claim and is left to NoteRecoveryProgress.
         appr.rejoinRefusals = 0;
-        // ONLY a re-entry that actually issued may clear the watchdogs. These two
-        // lines used to run unconditionally, above the refusal split — so the rung
-        // that was failing was also the rung disarming every detector that could
-        // have noticed. See the liveness note below.
-        appr.stuckCount = 0;
         ClearStall(context);
         return Step::ReturnTrue;
     }
@@ -1782,8 +1840,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffLineRejoin(Advan
     // single MoveTo to represent at all (DC_REJOIN_CHUNKED_DISTANCE).
     if (st.routeDeviation >= DC_REJOIN_CHUNKED_DISTANCE && TryChunkedRejoin(st))
     {
-        appr.rejoinRefusals = 0;
-        appr.stuckCount = 0;
+        appr.rejoinRefusals = 0;  // a glide was issued: the no-issue streak is broken
         ClearStall(context);
         return Step::ReturnTrue;
     }
@@ -1897,7 +1954,9 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoIssueSplineWindow(A
     Movement::PointsArray points(st.splineWindow.begin(), st.splineWindow.end());
     if (DcMovement::SplinePath(botAI, points))
     {
-        st.appr->stuckCount = 0;
+        // Launching a spline is an issue, not an arrival — the wall-clip and
+        // ping-pong reports are all bots with a freshly issued spline going
+        // nowhere. NoteRecoveryProgress clears the ladder if it travels.
         ClearStall(context);
         SetPhase(context, "moving");
         return Step::ReturnTrue;

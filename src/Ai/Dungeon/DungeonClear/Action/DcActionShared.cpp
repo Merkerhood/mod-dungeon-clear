@@ -1029,16 +1029,39 @@ DcMovementAction::GlideOutcome DcMovementAction::DriveGlideToEnd(
 
         if (!hop.isJump && DungeonPathFollower::HopIsBehind(bot, path, follower, hop))
         {
-            bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower);
+            bool moved = false;
+            bool const reanchored = DungeonPathFollower::Resnap(bot, path, follower, &moved);
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] {} re-anchor: next hop is behind the bot -> {}",
                       bot->GetName(), tag,
-                      reanchored ? "Resnapped + refetched hop" : "Resnap failed, falling through");
-            if (reanchored)
+                      !reanchored ? "Resnap failed, falling through"
+                      : moved     ? "Resnapped + refetched hop"
+                                  : "Resnap held the same cursor");
+            if (reanchored && moved)
             {
                 hop = DungeonPathFollower::NextHop(bot, path, follower);
                 if (hop.isDone)
                     return GlideOutcome::ReachedEnd;
+            }
+            // Same fixed point guard (1) above already documents for the STRANDED
+            // cursor: Resnap considers the cursor point itself first, so once the
+            // next route point is farther off than the passed one it re-picks the
+            // cursor forever. The stranded case got SkipStrandedPoint; the behind
+            // case had no escape at all and simply looped. Retire the passed point.
+            else if (!moved)
+            {
+                G3D::Vector3 passed;
+                if (DungeonPathFollower::SkipPassedPoint(path, follower, passed))
+                {
+                    LOG_DEBUG("playerbots.dungeonclear",
+                              "[DC:{}] {} re-anchor: hop still behind -> retiring passed point "
+                              "({:.1f},{:.1f},{:.1f}), cursor now seg {} pt {}",
+                              bot->GetName(), tag, passed.x, passed.y, passed.z,
+                              follower.segmentIdx, follower.pointIdx);
+                    hop = DungeonPathFollower::NextHop(bot, path, follower);
+                    if (hop.isDone)
+                        return GlideOutcome::ReachedEnd;
+                }
             }
         }
     }
