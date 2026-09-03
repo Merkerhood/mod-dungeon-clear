@@ -81,6 +81,7 @@
 #include "WarlockAiObjectContext.h"
 #include "WarriorAiObjectContext.h"
 
+#include "Util/DcProvisionBudget.h"
 #include "Util/DcSpectator.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/DungeonClearActionContext.h"
@@ -473,6 +474,13 @@ public:
 
     void OnPlayerbotUpdate(uint32 diff) override
     {
+        // Re-arm the realm-wide one-PlayerbotFactory-roll-per-tick ration
+        // shared by every provisioning subsystem (the `.dc test` harness and
+        // the RDF queue fill). Unconditional, and first: a Reset() skipped
+        // because the module happened to be off would leave the flag stuck
+        // false and stall the next provisioner that runs.
+        DcProvisionBudget::Reset();
+
         if (!DcModule::IsEnabled())
             return;
 

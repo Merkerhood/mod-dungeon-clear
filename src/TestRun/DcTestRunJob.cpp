@@ -39,6 +39,7 @@
 #include "Random.h"
 
 #include "DcStrategyGate.h"
+#include "Util/DcProvisionBudget.h"
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
@@ -626,7 +627,7 @@ std::vector<ObjectGuid> DcTestRunJob::BotGuids() const
     return out;
 }
 
-void DcTestRunJob::Tick(uint32 diff, bool& provisionBudget)
+void DcTestRunJob::Tick(uint32 diff)
 {
     Stage const stage = _stage.load();
     if (stage == Stage::TearingDown || _done)
@@ -653,7 +654,7 @@ void DcTestRunJob::Tick(uint32 diff, bool& provisionBudget)
             TickSpawning();
             break;
         case Stage::Provisioning:
-            TickProvisioning(provisionBudget);
+            TickProvisioning();
             break;
         case Stage::Grouping:
             TickGrouping();
@@ -728,7 +729,7 @@ void DcTestRunJob::TickSpawning()
     }
 }
 
-void DcTestRunJob::TickProvisioning(bool& provisionBudget)
+void DcTestRunJob::TickProvisioning()
 {
     if (_stageMs >= Scaled(PROVISION_TIMEOUT_MS))
     {
@@ -766,13 +767,12 @@ void DcTestRunJob::TickProvisioning(bool& provisionBudget)
         return;
     }
 
-    // One factory roll per world tick across ALL runs — Randomize is heavyweight
+    // One factory roll per world tick REALM-WIDE — Randomize is heavyweight
     // (full gear/spell/talent roll) and several in one tick would be a visible
-    // stall. If another run already spent this tick's budget, retry next tick;
-    // the stage timeout bounds the wait.
-    if (!provisionBudget)
+    // stall. If another run, or the RDF queue-fill subsystem, already spent
+    // this tick's ration, retry next tick; the stage timeout bounds the wait.
+    if (!DcProvisionBudget::Take())
         return;
-    provisionBudget = false;
 
     // Gear ceiling: the run's own (_gear, resolved at Create from the `ilvl=` /
     // `quality=` options or the AutoGear* conf values), applied exactly the way

@@ -17,6 +17,11 @@ AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
 AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 
+# New files added: Util/DcProvisionBudget.{h,cpp}
+#   (module-root src/Util/ — the realm-wide "one PlayerbotFactory::Randomize per
+#    world tick" ration, hoisted out of DcTestRunManager::Tick's local bool so
+#    the `.dc test` harness and the RDF queue fill share one budget instead of
+#    each rationing itself and rolling two factories in a tick),
 # New files added: Value/DungeonClearGroundHazardsValue.{h,cpp} (live
 #   persistent-area-aura ground pools — DynamicObjects, not creatures — near the
 #   bot; the DcHazard half that covers Scholomance's Cloud of Disease),
