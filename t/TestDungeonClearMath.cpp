@@ -1444,6 +1444,51 @@ TEST(DungeonClearStuckCombatTest, AnyRealFightSignalIsNotPhantom)
     EXPECT_FALSE(DungeonClearMath::IsPhantomCombat(true, false, false, true));
 }
 
+// A holder the party can never attack is not a fight, however close and willing it
+// is. This is the guard that ends the Utgarde Pinnacle Skadi-gauntlet wedge, where a
+// Flame Breath Trigger (28351) chased a hunter pet 80yd out of the hall and held the
+// whole party PvE-flagged until the 600s no-progress watchdog killed the run
+// (tr-20260902-121659-12, -13).
+TEST(DungeonClearStuckCombatTest, TriggerCreatureIsNeverAResolvableHolder)
+{
+    // The wedge itself: a creature carrying CREATURE_FLAG_EXTRA_TRIGGER.
+    EXPECT_TRUE(DungeonClearMath::IsUnresolvableCombatHolder(true, true));
+
+    // An ordinary creature is resolvable — the party can kill it and the fight ends.
+    EXPECT_FALSE(DungeonClearMath::IsUnresolvableCombatHolder(true, false));
+}
+
+TEST(DungeonClearStuckCombatTest, NonCreatureHoldersStayResolvable)
+{
+    // A PLAYER holder is never "unresolvable" — the trigger flag is a creature
+    // template property and a non-creature can never carry it. Both arms pinned so
+    // a future caller that forgets to pass isCreature can't silently start
+    // force-clearing PvP combat.
+    EXPECT_FALSE(DungeonClearMath::IsUnresolvableCombatHolder(false, false));
+    EXPECT_FALSE(DungeonClearMath::IsUnresolvableCombatHolder(false, true));
+}
+
+// The ordering property the fix depends on: unresolvable OUTRANKS prosecuting.
+// A trigger parked on top of the party is at distance 0.0, so IsHolderProsecutingFight
+// says "toe to toe, this is a real fight" forever — which is exactly how it hid. The
+// scan drops the holder before that question is ever asked.
+TEST(DungeonClearStuckCombatTest, TriggerOnTopOfUsWouldOtherwiseReadAsProsecuting)
+{
+    constexpr float engageRange = 22.0f;
+
+    // What the old code saw: dist 0.0, not closing -> prosecuting, so never phantom.
+    EXPECT_TRUE(DungeonClearMath::IsHolderProsecutingFight(true, 0.0f, engageRange, false));
+
+    // What the new guard says about that same holder, before distance is consulted.
+    EXPECT_TRUE(DungeonClearMath::IsUnresolvableCombatHolder(true, true));
+
+    // Composed the way ScanCombatHolders composes them: dropping the holder leaves
+    // no legitimate holder at all, which is what finally arms the phantom hatch.
+    bool const haveHolder = !DungeonClearMath::IsUnresolvableCombatHolder(true, true);
+    EXPECT_FALSE(DungeonClearMath::IsHolderProsecutingFight(haveHolder, 0.0f, engageRange, false));
+    EXPECT_TRUE(DungeonClearMath::IsPhantomCombat(true, false, false, haveHolder));
+}
+
 // Reachability says a holder COULD come; IsHolderProsecutingFight says whether it IS.
 TEST(DungeonClearStuckCombatTest, HolderInEngageRangeAlwaysProsecutes)
 {

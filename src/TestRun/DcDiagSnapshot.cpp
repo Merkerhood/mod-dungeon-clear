@@ -118,7 +118,16 @@ namespace
             Creature* const asCreature = other->ToCreature();
             bool const canAttackMe =
                 !asCreature || !asCreature->AI() || asCreature->AI()->CanAIAttack(member);
-            bool const legitimate = reachable && canAttackMe;
+            // A TRIGGER holder can never be attacked back, so it can never end the
+            // fight — the matching guard in ScanCombatHolders. Recorded as its own
+            // field rather than folded silently into `legitimate` because this is
+            // precisely the row a reader has to be able to see: before the guard
+            // existed the teardown printed `Flame Breath Trigger (Skadi) 0.0yd
+            // 100% reach LEGIT` and the wedge looked like a healthy fight.
+            bool const trigger =
+                DungeonClearMath::IsUnresolvableCombatHolder(asCreature != nullptr,
+                                                             asCreature && asCreature->IsTrigger());
+            bool const legitimate = reachable && canAttackMe && !trigger;
             if (DcDiag::IsLegitimatePvECombatHolder(pvp, legitimate))
                 anyLegitimatePvEHolder = true;
 
@@ -152,6 +161,7 @@ namespace
             // whole time printing the answer next to a LEGITIMATE verdict
             // (tr-20260803-211838-7, 334s wedged) before it was wired into one.
             h.canAttackMe = canAttackMe;
+            h.trigger = trigger;
             // Scripted-out-of-the-fight state. See the header: a boss playing a
             // defeat sequence is alive, reachable and attack-permitted, and the
             // row said exactly that for eleven seconds while a run was thrown away.
@@ -656,6 +666,7 @@ namespace DcDiag
                     AppendBool(s, "reachable", c.reachable);
                     AppendBool(s, "reachChecked", c.reachChecked);
                     AppendBool(s, "canAttackMe", c.canAttackMe);
+                    AppendBool(s, "trigger", c.trigger);
                     AppendBool(s, "immune", c.immune);
                     AppendBool(s, "passive", c.passive);
                     AppendBool(s, "atOneHp", c.atOneHp);
@@ -828,6 +839,7 @@ namespace DcDiag
                   << (!c.reachChecked ? " path-not-tested"
                                       : (c.reachable ? " reachable" : " UNREACHABLE"))
                   << (c.canAttackMe ? "" : " CANNOT-ATTACK-ME")
+                  << (c.trigger ? " TRIGGER" : "")
                   << (c.legitimate ? " -> LEGITIMATE" : " -> phantom");
                 if (!c.victim.empty())
                     s << " fighting=" << c.victim;

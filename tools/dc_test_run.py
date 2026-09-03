@@ -650,6 +650,12 @@ def render_combat_blame(members):
                 flags.append("SUPPRESSED")
             if not c.get("canAttackMe"):
                 flags.append("CANNOT-ATTACK-ME")
+            # A trigger creature is an invisible script helper no bot can target,
+            # so it can never be killed and the fight it holds has no end state.
+            # Absent on schema <= 11 records, where such a holder scored LEGIT --
+            # tr-20260902-121659-12/-13 are the reference pre-fix records.
+            if c.get("trigger"):
+                flags.append("TRIGGER")
             if c.get("pvp"):
                 flags.append("pvp-ref")
             # "-" is not "unreachable": the pathfind is skipped for a holder

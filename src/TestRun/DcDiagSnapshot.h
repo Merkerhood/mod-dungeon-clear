@@ -69,6 +69,11 @@ namespace DcDiag
         bool reachable = false;
         bool reachChecked = false;
         bool canAttackMe = true;      // CreatureAI::CanAIAttack(member)
+        // CREATURE_FLAG_EXTRA_TRIGGER: an invisible script helper no bot can
+        // target, so the party can never resolve the reference however reachable
+        // and willing the holder is. Always sinks `legitimate` — see
+        // DungeonClearMath::IsUnresolvableCombatHolder.
+        bool trigger = false;
         // A boss can be ALIVE, reachable and allowed to attack while being
         // scripted out of the fight entirely. MgT's Kael'thas clamps damage to
         // health-1, goes SetImmuneToAll + REACT_PASSIVE, despawns his summons and

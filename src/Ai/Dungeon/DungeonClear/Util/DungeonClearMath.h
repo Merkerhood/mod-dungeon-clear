@@ -588,6 +588,40 @@ namespace DungeonClearMath
         return haveHolder && (holderDist <= engageRange || closing);
     }
 
+    // A holder the party can never TOUCH can never end the fight, so it is not a
+    // fight — it is a flag with no way out. IsHolderProsecutingFight above asks
+    // whether the holder is COMING; this asks the prior question of whether
+    // resolving it is possible at all, and a NO here outranks any answer to that
+    // one: a trigger standing on top of the party reads as toe-to-toe (dist 0.0)
+    // and therefore "prosecuting" forever, which is exactly how it hides.
+    //
+    // TRIGGER creatures are the airtight case and the only one taken here.
+    // CREATURE_FLAG_EXTRA_TRIGGER units are invisible script helpers: never a
+    // pack, never loot, never selectable. No bot can target one, so nothing the
+    // party does can make the reference go away — the fight has no end state.
+    // Utgarde Pinnacle's Skadi gauntlet parks 75 of them (28351) down the hall; a
+    // hunter PET tags one, it chases the party 80yd out of the hall (measured:
+    // "79.7yd from its spawn"), and every member stays PvE-flagged for the rest
+    // of the run. tr-20260902-121659-12 and -13 both died at the 600s no-progress
+    // watchdog with the whole party standing on the tank at full health, teardown
+    // reading `Flame Breath Trigger (Skadi) 0.0yd 100% reach LEGIT fighting
+    // Scorpid` — a perfect legitimate-holder verdict about a unit that cannot be
+    // fought. With the flag never dropping, the Engage-phase camp teardown (gated
+    // on !IsInCombat) never ran, the stale camp kept anchoring the spread gate,
+    // and Advance yielded 2314 and 2617 times respectively.
+    //
+    // NOT-SELECTABLE ALONE IS DELIBERATELY *NOT* THE TEST, and this is the half
+    // worth not re-deriving. UNIT_FLAG_NOT_SELECTABLE is worn TEMPORARILY by real
+    // encounters — boss_ymironAI::Reset() adds it and only SetData(DATA_SKADI,
+    // DONE) takes it off — so keying on it would let the phantom hatch
+    // force-clear combat in the middle of a legitimate boss fight, which is the
+    // one outcome the breaker's raid stand-down exists to prevent. TRIGGER is a
+    // permanent property of the creature template; selectable is encounter state.
+    inline bool IsUnresolvableCombatHolder(bool isCreature, bool isTrigger)
+    {
+        return isCreature && isTrigger;
+    }
+
     // "Can this follower attack from where it stands?" for the camp-assist handoff,
     // expressed in the SAME metric the stock reach action enforces.
     //
