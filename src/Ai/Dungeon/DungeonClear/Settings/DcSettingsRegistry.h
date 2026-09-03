@@ -830,7 +830,7 @@ inline constexpr DcSettingDef kDcSettings[] =
     // Nothing is ever named plain QueueFill.
     { "DungeonQueueFill.Enable",          DcType::Bool,   0,  0,      1, false },
     // Bounds the fills SETTING UP, not the parties out — see the conf.dist.
-    { "DungeonQueueFill.MaxConcurrent",   DcType::UInt,   2,  0,    100, false },
+    { "DungeonQueueFill.MaxConcurrent",   DcType::UInt,   3,  0,    100, false },
     { "DungeonQueueFill.SetupTimeoutSec", DcType::UInt,  60, 10,    600, false },
     { "DungeonQueueFill.MatchTimeoutSec", DcType::UInt, 120, 10,   1800, false },
     { "DungeonQueueFill.MinPlayerLevel",  DcType::UInt,  15,  1,     80, false },

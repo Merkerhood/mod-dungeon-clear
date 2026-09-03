@@ -1777,10 +1777,15 @@ DungeonClear.DungeonQueueFill.Enable = 0
 #
 #        0 = unlimited (not recommended).
 #
-#        Default: 2
+#        Raising it does not buy throughput: every setting-up fill competes
+#        for the same one roll per tick, so N in flight makes each one take
+#        roughly N times as long to provision. Push it far enough and fills
+#        start hitting SetupTimeoutSec instead of forming.
+#
+#        Default: 3
 #
 
-DungeonClear.DungeonQueueFill.MaxConcurrent = 2
+DungeonClear.DungeonQueueFill.MaxConcurrent = 3
 
 #
 #    DungeonClear.DungeonQueueFill.SetupTimeoutSec
