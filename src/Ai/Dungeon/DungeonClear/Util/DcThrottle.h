@@ -61,6 +61,14 @@ enum class DcThrottle : uint8
     HosTribunalLog,      // the Halls of Stone Tribunal garrison line
     HosWaveLog,          // the Halls of Stone wave telemetry line
     RezRefusalLog,       // RezRefusalDiag — why a party rez was refused
+    UpHarpoonLog,        // the Utgarde Pinnacle harpoon driver's telemetry line
+    UpHarpoonMissingLog, // "in the pocket, and launcher 192175 is not there"
+
+    // --- action floors (time only) -----------------------------------------
+    UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own
+                         // autoclose is 1000ms and GO_FLAG_IN_USE blocks a click
+                         // until GameObject::Update clears it, so a faster cadence
+                         // can only produce swallowed clicks and log noise)
 
     Count
 };

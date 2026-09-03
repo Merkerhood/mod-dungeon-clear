@@ -27,6 +27,7 @@ namespace
             RegisterAzjolNerubRoute();
             RegisterBlackwingLairRoute();
             RegisterHallsOfLightningRoute();
+            RegisterUtgardePinnacleRoute();
             return true;
         }();
         (void)seeded;

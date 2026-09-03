@@ -66,6 +66,7 @@ namespace
             RegisterVioletHoldRoster(t);
             RegisterMoltenCoreRoster(t);
             RegisterHallsOfStoneRoster(t);
+            RegisterUtgardePinnacleRoster(t);
             return t;
         }();
         return kPatches;

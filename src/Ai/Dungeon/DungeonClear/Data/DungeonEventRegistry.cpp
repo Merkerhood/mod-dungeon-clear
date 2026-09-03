@@ -439,6 +439,7 @@ namespace
             RegisterBlackwingLairEvents(t);
             RegisterHallsOfStoneEvents(t);
             RegisterHallsOfLightningEvents(t);
+            RegisterUtgardePinnacleEvents(t);
             return t;
         }();
         return kEvents;

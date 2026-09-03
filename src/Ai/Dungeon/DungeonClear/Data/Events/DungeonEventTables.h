@@ -843,6 +843,479 @@ namespace DcHallsOfLightning
 
 void RegisterHallsOfLightningEvents(std::vector<DungeonEvent>& out);
 
+// --- Utgarde Pinnacle (map 575) -------------------------------------------
+//
+// The numbers UtgardePinnacleEvents.cpp authors, UtgardePinnacleDriver.cpp
+// drives on and t/TestUtgardePinnacle.cpp pins. Shared here for the reason
+// DcHallsOfLightning and DcVioletHold are: several are SAFETY numbers whose
+// whole value is that a test can re-derive them from live data, and a literal
+// buried in a .cpp cannot be pinned.
+//
+// EVERY COORDINATE BELOW IS ROUTED OR COLUMN-PROBED against the live map-575
+// mmtiles (t/TestUtgardePinnacleRouteProbe). Map 575 is NOT in the
+// flat-grid-height family ([[ac-map601-flat-gridheight-zero]]) — every fixed
+// point snaps with d2d 0.00 and dz between +0.0 and +0.5, and the only larger
+// deltas are the two portcullis ORIGINS (+3.92, +1.83), which is ordinary: a
+// door origin sits below its own threshold.
+//
+// THE ONE THING TO UNDERSTAND ABOUT THIS DUNGEON. It does not have a door
+// problem; it has a ONE-ROW ROSTER problem, and the door stall is the
+// second-order symptom. instance_encounters credits Svala at entry 26668, which
+// has NO SPAWN ROW ANYWHERE IN THE DB — boss_svala.cpp does
+// me->UpdateEntry(NPC_SVALA_SORROWGRAVE) ~34s into the intro cinematic, so the
+// entry only exists at runtime. BossSpawnIndex::Build joins creditEntry ->
+// creature spawn row, matches nothing, and drops the first boss SILENTLY. The
+// derived roster is 3 bosses for a 4-boss dungeon.
+//
+// That single missing row is what walked tr-20260902-083808-1 into two shut
+// portcullises: with Svala gone the clear's first target is Palehoof, and the
+// navmesh — baked DOOR-BLIND — offers a 696yd shortcut to him that threads BOTH
+// gates. The designed first leg to Svala is 362 + 101yd and threads NEITHER.
+// See [[dc-credit-entry-is-an-updateentry-target]] and the roster patch in
+// UtgardePinnacleEvents.cpp.
+//
+// DIFFICULTY TWINS ARE STAT TEMPLATES, NOT ENTRIES, exactly as on map 602:
+// Creature::InitEntry resolves DifficultyEntry[diff-1] into m_creatureInfo and
+// then SetEntry(Entry), so GetEntry() returns the NORMAL id on heroic. Every
+// entry-keyed constant here is the normal id and is correct on both
+// difficulties. Do not add the 307xx/308xx heroic clones anywhere.
+//
+// AND SVALA IS DBC BIT 0 ON BOTH DIFFICULTIES (rows 577/578), unlike Gundrak
+// and the Nexus — so ONE Any-gated roster patch serves normal and heroic, and
+// the DBC order (Svala 0, Palehoof 1000, Skadi 2000, Ymiron 3000) IS the travel
+// order for the three bosses that already derive.
+namespace DcUtgardePinnacle
+{
+    constexpr uint32 MAP_ID = 575;
+
+    // --- the four encounters, in travel order ------------------------------
+    //
+    // NPC_SVALA is the CREDIT entry (26668) and the one to anchor, target and
+    // patch on: KillRewarder reads _victim->GetEntry() at DEATH time, by which
+    // point the transform has long since happened, so the DBC bit-0 credit fires
+    // normally. NPC_SVALA_INTRO (29281) is the entry that actually SPAWNS, and
+    // the only thing it is good for is reading her home position out of the
+    // `creature` table — never target it, and never wait on it.
+    constexpr uint32 NPC_SVALA        = 26668;
+    constexpr uint32 NPC_SVALA_INTRO  = 29281;
+    constexpr uint32 NPC_PALEHOOF     = 26687;
+    constexpr uint32 NPC_SKADI        = 26693;
+    constexpr uint32 NPC_GRAUF        = 26893;
+    constexpr uint32 NPC_YMIRON       = 26861;
+
+    // DungeonEncounter.dbc bits. Svala's is the one that matters — it is the
+    // parameter MakeBossWithBit needs, and it is 0 on BOTH difficulties.
+    constexpr uint32 BIT_SVALA    = 0;
+    constexpr uint32 BIT_PALEHOOF = 1;
+    constexpr uint32 BIT_SKADI    = 2;
+    constexpr uint32 BIT_YMIRON   = 3;
+
+    // instance_utgarde_pinnacle's OWN `enum Data` slots — the keys GetData is
+    // switched on. Here they happen to coincide with the DBC bit order, which is
+    // a coincidence and not a rule (Halls of Lightning's do not); read from
+    // utgarde_pinnacle.h, never reuse an encounterIndex.
+    //
+    // GetData(DATA_*) IS THE ONLY SAFE INSTANCE PROBE ON THIS MAP.
+    // GetGuidData(DATA_SVALA_SORROWGRAVE) reads a field OnCreatureCreate fills
+    // from a switch on entry 26668 — which never spawns — so it returns
+    // ObjectGuid::Empty FOREVER. Never build a predicate on it. Skadi has no
+    // GetGuidData case at all and is reachable only through the ObjectData store
+    // (GetCreature(DATA_SKADI)); Grauf has both.
+    constexpr uint32 DATA_SVALA    = 0;
+    constexpr uint32 DATA_PALEHOOF = 1;
+    constexpr uint32 DATA_SKADI    = 2;
+    constexpr uint32 DATA_YMIRON   = 3;
+    constexpr uint32 DATA_GRAUF    = 4;
+
+    // --- the clear order ---------------------------------------------------
+    //
+    // ONE contiguous 1..7 scale so the three objectives have integer slots
+    // between the four bosses:
+    //
+    //     1  objective  OBJ(1)   Wake Svala (areatrigger 5140)  -> event 1
+    //     2  boss       26668    Svala Sorrowgrave                       [patched in]
+    //     3  objective  OBJ(2)   Stasis Generator               -> event 2
+    //     4  boss       26687    Gortok Palehoof
+    //     5  objective  OBJ(3)   Enter Skadi's gauntlet         -> event 3
+    //     6  boss       26693    Skadi the Ruthless              (event 4 is Conditional)
+    //     7  boss       26861    King Ymiron
+    //
+    // AND THIS ORDER IS ENFORCED, NOT PREFERRED. boss_ymironAI::Reset() ADDS
+    // UNIT_FLAG_NOT_SELECTABLE and only the instance's
+    // SetData(DATA_SKADI, DONE) removes it, so Ymiron cannot be attacked out of
+    // turn — a wrong-order roster fails loudly at him rather than silently. It
+    // also means a `skipByDesign` on Skadi would yield a 2/4 clear, not 3/4:
+    // the harpoon driver (event 4) is load-bearing for HALF this dungeon.
+    constexpr int32 ORDER_WAKE_SVALA      = 1;
+    constexpr int32 ORDER_SVALA           = 2;
+    constexpr int32 ORDER_STASIS          = 3;
+    constexpr int32 ORDER_PALEHOOF        = 4;
+    constexpr int32 ORDER_ENTER_GAUNTLET  = 5;
+    constexpr int32 ORDER_SKADI           = 6;
+    constexpr int32 ORDER_YMIRON          = 7;
+
+    // --- boss anchors ------------------------------------------------------
+    //
+    // SVALA IS ANCHORED ON THE PLATFORM FLOOR, and this is the one anchor on the
+    // map worth arguing about. THREE positions are in play during her encounter:
+    // the `creature` spawn / platform floor (probe-snapped, below); the FIGHT
+    // position, ~6yd up, because the intro gives her SetDisableGravity(true) +
+    // UNIT_FIELD_HOVERHEIGHT 6 + SetHover(true); and the Ritual of the Sword
+    // position, NearTeleportTo(296.632, -346.075, 110.0) — TWENTY YARDS UP —
+    // held rooted for 25s.
+    //
+    // NavmeshSnap's vertical extent is a FIXED 10 regardless of the snap radius
+    // ([[dc-boss-anchor-snap-vertical-extent]]), so an anchor authored at z 110
+    // would not snap at ALL and the roster row would be dropped at load. Author
+    // the floor and let DcTargeting::GetLiveBoss follow her real position.
+    constexpr float SVALA_X = 296.60f;
+    constexpr float SVALA_Y = -346.10f;
+    constexpr float SVALA_Z = 90.83f;
+
+    // --- objective anchors -------------------------------------------------
+    //
+    // AREATRIGGER 5140 — the ONLY entry point to Svala's encounter.
+    // smart_scripts source_type 2 entry 5140: SMART_EVENT_AREATRIGGER_ONTRIGGER
+    // -> SET_DATA 1,1 on creature GUID 126115, which is the gate at
+    // boss_svala.cpp's Started check. The box is axis-aligned (orientation 0):
+    // x [293.99, 331.29], y [-298.07, -284.28], z [87.09, 122.32], so from the
+    // dead-centre anchor the HALF-extents are 18.65 / 6.90 / 17.62.
+    //
+    // 6.90 IS THE ONLY ONE OF THOSE THREE NUMBERS THAT MATTERS, and reading the
+    // 13.79yd full width as "~15yd of margin" is what cost tp-20260902-121652-1
+    // three runs. Nothing server-side notices a unit entering an areatrigger:
+    // both ways this trigger can be fired for a bot — hook 25's forge and the
+    // harness relay — hand a CMSG_AREATRIGGER to WorldSession::HandleAreaTrigger-
+    // Opcode, which re-tests Player::IsInAreaTriggerRadius(atEntry, 0.f). For a
+    // box trigger that is IsWithinBox against the half-extents with ZERO delta.
+    // So a bot that is merely NEAR the anchor cannot start this encounter; it has
+    // to be physically inside the box.
+    //
+    // WHICH MAKES THE ARRIVE RADIUS A CONTAINMENT RADIUS, not a tolerance. Both
+    // the objective's arrival trigger (DungeonClearTriggers.cpp) and the event's
+    // leading MoveTo step (DungeonEventExecutor::RunStep) latch on
+    // GetExactDist(anchor) <= arriveRadius and then STOP the tank. An arrive
+    // radius larger than the smallest half-extent therefore describes a shell
+    // that pokes out through the short faces: at 8.0 the shell reached 1.1yd past
+    // the north face at y -284.28, and Leg A's last hop comes in from the north.
+    // 17 of 20 tanks coasted one movement sub-tick further and stopped at
+    // y -284.3, a few centimetres INSIDE; 3 stopped at y -283.5..-283.6, outside,
+    // and their runs died there with `areatrigger relay: 0 packet(s)`, the Custom
+    // step timing out forever and 0/7 bosses.
+    //
+    // So: arriveRadius < min(half-extent). 5.0 leaves 1.9yd of margin on the
+    // short axis, is inside the box on EVERY axis for any approach direction, and
+    // matches STASIS_ARRIVE. TestUtgardePinnacle pins the invariant for both of
+    // this map's areatrigger objectives against the DBC boxes below.
+    //
+    // The test harness relays this trigger for a bot party
+    // (DcTestTestAreaTriggers::Arm picks it up: it carries an areatrigger_scripts
+    // row and NO areatrigger_teleport row), which is why event 1 works today.
+    // Hook 25 forges the packet anyway so the dungeon also works for an ordinary
+    // non-test bot party, and as belt-and-braces if the relay's gate ever fails.
+    constexpr uint32 AREATRIGGER_SVALA = 5140;
+    constexpr float AT_SVALA_X = 312.65f;
+    constexpr float AT_SVALA_Y = -291.17f;
+    constexpr float AT_SVALA_Z = 104.90f;
+    constexpr float AT_SVALA_ARRIVE = 5.0f;
+
+    // AreaTrigger.dbc box half-extents for 5140, verbatim from the row
+    // (box_length 37.290001 / box_width 13.790000 / box_height 35.230000, yaw 0),
+    // halved. Here so the arrive radius is checked against the real volume rather
+    // than against a number remembered from a comment.
+    constexpr float AT_SVALA_HALF_L = 18.645f;  // x
+    constexpr float AT_SVALA_HALF_W =  6.895f;  // y — the binding one
+    constexpr float AT_SVALA_HALF_H = 17.615f;  // z
+
+    // GO 188593 STASIS GENERATOR — the only way to start Gortok Palehoof, and
+    // it stands EIGHTY-THREE YARDS WEST OF HIM at the far end of his arena. The
+    // party walks PAST the frozen boss and all four frozen animals to reach it,
+    // clicks, and fights back east. Leg C ends here and Leg D returns; that
+    // ordering is deliberate and must not be "optimised" into arriving at the
+    // boss first.
+    //
+    // A PLAIN UseGO WORKS. GameObject::Use() calls sScriptMgr->OnGossipHello
+    // BEFORE the type switch and returns early when it returns true, so
+    // go_palehoof_sphere's handler — which sets GO_FLAG_NOT_SELECTABLE,
+    // SetGoState(GO_STATE_ACTIVE) and DoAction(ACTION_START_EVENT) — IS the whole
+    // mechanism; the type-18 summoning-ritual machinery never runs. The GO spawns
+    // state 1 (READY) and selectable, which is what the executor's idempotence
+    // check and its NOT_SELECTABLE guard both need.
+    constexpr uint32 GO_STASIS_GENERATOR = 188593;
+    constexpr float STASIS_X = 238.52f;
+    constexpr float STASIS_Y = -460.83f;
+    constexpr float STASIS_Z = 106.00f;
+    constexpr float STASIS_ARRIVE = 5.0f;
+    // Click reach for the UseGO step. The GO's own z is 105.48 and the probed
+    // floor beside it 106.00, so the search only has to cover the anchor's own
+    // arrival slop plus the wolf patrol shoving the tank a few yards off it.
+    constexpr float STASIS_SEARCH = 12.0f;
+
+    // AREATRIGGER 4991 — Skadi's gauntlet, and a ONE-WAY DOOR. Tripping it mounts
+    // Skadi on Grauf, spawns a 13-mob first wave and arms a World Trigger
+    // carrying 59275 Summon Gauntlet Mobs Periodic — a deque of 8 summon spells,
+    // 2 per tick, WITH NO END CONDITION — plus a 38667 Combat Trigger that
+    // DoZoneInCombat()s the whole hall. Nothing turns that off but Grauf's death.
+    //
+    // Unlike Svala's, this trigger has an AGGRO FALLBACK
+    // (boss_skadiAI::JustEngagedWith also funnels into ACTION_START_ENCOUNTER
+    // behind the same _encounterStarted guard) — but the box is large,
+    // x [315.09, 346.71] and y [-519.35, -497.51], so simply walking onto the
+    // platform starts it. That is the risk to design around, not the fallback:
+    // event 3 is what makes entering it a DELIBERATE act taken with the party
+    // regrouped, and event 4 owns everything after.
+    // 8.0 STAYS HERE, and the contrast with AT_SVALA_ARRIVE is the point: this
+    // box's half-extents are 15.81 / 10.92 / 15.00, so an 8.0 shell is inside it
+    // on every axis with 2.9yd to spare on the short one. Same invariant, a box
+    // wide enough to satisfy it. Do not "make them match" in either direction
+    // without re-reading the DBC row.
+    constexpr uint32 AREATRIGGER_SKADI = 4991;
+    constexpr float AT_SKADI_X = 330.90f;
+    constexpr float AT_SKADI_Y = -508.43f;
+    constexpr float AT_SKADI_Z = 104.66f;
+    constexpr float AT_SKADI_ARRIVE = 8.0f;
+
+    // As above, from AreaTrigger.dbc row 4991 (31.620001 / 21.840000 / 30.0).
+    constexpr float AT_SKADI_HALF_L = 15.810f;  // x
+    constexpr float AT_SKADI_HALF_W = 10.920f;  // y
+    constexpr float AT_SKADI_HALF_H = 15.000f;  // z
+
+    // --- the harpoon: the one genuinely new mechanism on this map ----------
+    //
+    // PHASE 1 CANNOT BE FOUGHT. Grauf's template carries unit_flags 320 =
+    // IMMUNE_TO_PC | 0x40 and boss_skadi_graufAI::Reset() never clears it, so
+    // Unit::_IsValidAttackTarget refuses every player and bot for the whole
+    // phase; Skadi herself is NOT_SELECTABLE from ACTION_START_ENCOUNTER until he
+    // dies. There is NO damage the party can do in phase 1 at all.
+    //
+    // THE ONLY DAMAGE SOURCE IS A GAMEOBJECT CLICK, and the chain is short:
+    //
+    //   1. a player Use()s a Harpoon Launcher (192175/6/7, type 10 GOOBER,
+    //      Data10 = 48641, autoclose 1000ms). The GOOBER branch sets
+    //      spellCaster = user, spellId = 48641;
+    //   2. 48641 "Launch Harpoon Trigger" is SPELL_EFFECT_FORCE_CAST with
+    //      implicit target 38 (nearby entry), conditions-restricted to creature
+    //      19871 "World Trigger (Not Immune NPC)". Three of those sit AT the
+    //      launchers, already oriented at the breach;
+    //   3. the TRIGGER — a creature, not a player, which is exactly how this
+    //      bypasses Grauf's IMMUNE_TO_PC — casts 48642 "Launch Harpoon", a 60yd
+    //      TARGET_UNIT_CONE_ENTRY restricted to Grauf (26893) or the breach's own
+    //      World Trigger (22515), whose script sets the damage to
+    //      CountPctFromMaxHealth(35).
+    //
+    // 3 x 35% = 105%. THREE LAUNCHER USES KILL THE DRAKE, and nothing else can.
+    //
+    // AND THE KEY ITEM IS NOT REQUIRED. Lock 1777 is LOCK_KEY_ITEM on item 37372
+    // "Harpoon", but AzerothCore does not enforce LOCK_KEY_ITEM server-side for
+    // GOOBER use: HandleGameObjectUseOpcode checks only distance and mover state,
+    // and GameObject::Use's GOOBER branch never consults the lock. Only the real
+    // client greys the launcher out. The clear does not farm harpoons.
+    constexpr uint32 GO_HARPOON_LAUNCHER = 192175;
+
+    // THE HARPOON POCKET — where the driver parks the party for the whole of
+    // phase 1, and it is the last point of the routed AT 4991 -> launcher
+    // corridor rather than a spot chosen by eye.
+    //
+    // Three constraints meet here and only here:
+    //
+    //   * INTERACT RANGE of launcher 192175 at (491.49, -508.19, 105.88). The
+    //     bot has to be able to press it, three times, across several laps.
+    //   * THE RESET RULE (below): a living member within 40yd of the Flame Breath
+    //     Trigger carpet. The easternmost 28351 stands at (483.22, -507.15), 8.4yd
+    //     from here.
+    //   * y > -511, the north side of the breath divider.
+    //
+    // That last one is worth stating precisely, because it is half a defence and
+    // not a whole one. spell_freezing_cloud_area_left strips targets with
+    // y < -511 and _right strips y > -511, and the side Grauf breathes down is
+    // RAND(POINT_LEFT, POINT_RIGHT) per lap — so there is no permanently safe
+    // side of this hall, only a side that is safe from the RIGHT breath. The
+    // pocket takes it because the launcher is there anyway; surviving the LEFT
+    // breath is the stock combat engine's business.
+    constexpr float POCKET_X = 491.50f;
+    constexpr float POCKET_Y = -508.20f;
+    constexpr float POCKET_Z = 107.07f;
+
+    // How close the driver keeps the leader to the pocket. Comfortably inside
+    // DC_EVENT_GO_USE_RANGE of the launcher and wide enough that a bot shoved a
+    // couple of yards by an add is not re-splined every tick.
+    constexpr float POCKET_LEASH = 3.0f;
+
+    // GO search radius for the launcher click, from inside the pocket.
+    constexpr float HARPOON_SEARCH = 20.0f;
+
+    // WHERE GRAUF HAS TO BE FOR A SHOT TO LAND. He announces his arrival with
+    // Talk(EMOTE_ON_RANGE) and then hovers at the breach for TEN SECONDS
+    // (EVENT_GRAUF_LEAVE_BREACH) before flying his next lap, and that window
+    // repeats every lap. Position is the more robust signal than the emote, and
+    // there are TWO hold points because the first hover is the end of PATH_INITIAL
+    // (2689300) and every later one the end of PATH_LEFT / PATH_RIGHT
+    // (2689302 / 2689301):
+    //
+    //     BREACH_A (523.20, -548.99, 114.87)   PATH_INITIAL's last waypoint
+    //     BREACH_B (520.48, -541.56, 119.84)   PATH_LEFT / PATH_RIGHT's last
+    //
+    // Both are ~46-52yd from launcher 192175, inside the cone's 60yd radius, and
+    // both bear within 15 degrees of the trigger's own facing (5.655 rad) — so
+    // ONE launcher serves every lap and there is never a reason to walk between
+    // the three. The 1000ms autoclose is what makes re-use possible.
+    constexpr float BREACH_A_X = 523.20f;
+    constexpr float BREACH_A_Y = -548.99f;
+    constexpr float BREACH_A_Z = 114.87f;
+    constexpr float BREACH_B_X = 520.48f;
+    constexpr float BREACH_B_Y = -541.56f;
+    constexpr float BREACH_B_Z = 119.84f;
+
+    // How near a breach hold point Grauf must be before the driver fires. The two
+    // points are 8.6yd apart, so this covers both from either with room for the
+    // spline's overshoot, and is far tighter than the 60yd cone — a shot taken
+    // mid-lap would simply miss (and hit the breach's own World Trigger, which is
+    // harmless), so this is an economy, not a safety.
+    constexpr float BREACH_RADIUS = 18.0f;
+
+    // Re-fire floor. The launcher's own autoclose is 1000ms and GO_FLAG_IN_USE
+    // blocks a click until GameObject::Update clears it, so a faster cadence than
+    // this can only produce swallowed clicks and log noise.
+    constexpr uint32 HARPOON_REFIRE_MS = 1500;
+
+    // Bound on the whole of phase 1, as the Custom step's timeout. Three hits at
+    // one per ~35s lap is under two minutes; four minutes is a ceiling on a
+    // genuinely broken attempt and never the binding constraint on a working one.
+    constexpr uint32 HARPOON_TIMEOUT_MS = 240000;
+
+    // Throttle on the driver's per-tick telemetry line.
+    constexpr uint32 HARPOON_TELEMETRY_MS = 3000;
+
+    // --- Svala's ritual: the 25 seconds the party must NOT chase ------------
+    //
+    // At exactly t+25s after she engages, ONCE AND ONLY ONCE
+    // (EVENT_SORROWGRAVE_RITUAL is scheduled in JustEngagedWith and never
+    // rescheduled), the ritual fires: a random party member is teleported to
+    // Svala's own home spot, three Ritual Channelers (27281) spawn around it and
+    // stun-lock that member with Paralyze 48278 — an INFINITE-duration stun that
+    // ends only when the channeler dies — and the boss NearTeleportTo()s TWENTY
+    // YARDS STRAIGHT UP, SetControlled(ROOT), gravity off, for 25 seconds.
+    //
+    // She is NOT flagged non-attackable up there. She stays targetable and simply
+    // cannot be reached, so melee bots will stand underneath doing nothing while
+    // the clear re-plans a route to a boss 20yd in the air. The correct behaviour
+    // is: kill the three channelers, do not chase, do not re-plan — which is
+    // event 5.
+    //
+    // Being a ONE-SHOT rather than a repeating mechanic is what makes this cheap.
+    constexpr uint32 NPC_RITUAL_CHANNELER = 27281;
+
+    // How far above her own floor she has to be before the hold arms. The hover
+    // between the intro and the ritual is ~6yd (UNIT_FIELD_HOVERHEIGHT), and the
+    // ritual is 20yd; 12 sits cleanly between them so the ordinary fight is never
+    // held and the ritual always is.
+    constexpr float RITUAL_LIFT_Z = 12.0f;
+
+    // Grid-scan radius for the channelers. They spawn 4-8yd from her altar and
+    // the party fights within a few yards of it.
+    constexpr float RITUAL_SCAN = 40.0f;
+
+    // --- doors --------------------------------------------------------------
+    //
+    // Both portcullises spawn SHUT (state 1), carry lockId 0 and autoCloseTime 0,
+    // and are opened by the instance script exactly once, permanently — there is
+    // no auto-close, no encounter-scoped shut and therefore no IsSelfClearing
+    // case. smart_scripts source_type 1 has ZERO rows for map 575; the instance
+    // C++ is the sole authority and contains no AddDoor, no DoorData[], no
+    // SetBossState and no DoUseDoorOrButton.
+    //
+    // AND NEITHER IS EVER ON A DESIGNED LEG. 192174 is Ymiron's EXIT — opened by
+    // SetData(DATA_YMIRON, DONE), i.e. after the last boss dies — so nothing in a
+    // correct run ever waits on it; probe-measured, the designed legs clear it by
+    // 43-184yd. 192173 opens on Skadi's death and is touched only by Leg G, by
+    // which point it is open. Both are DcEventDoorRegistry::IsScriptOnly and
+    // deliberately NOT IsNavigationIgnored: they are real gates, the at-boss
+    // stand-down needs to see them, and hiding them would mask a future roster
+    // regression rather than prevent one.
+    constexpr uint32 GO_SKADI_DOOR  = 192173;
+    constexpr uint32 GO_YMIRON_DOOR = 192174;
+
+    // The Svala mirror — a GAMEOBJECT_TYPE_DOOR that spawns OPEN (state 0) and is
+    // toggled both ways by boss_svala as pure visual FX, 11yd south of her altar.
+    //
+    // IsNavigationIgnored, AND THE ROW WAS AUTHORED FROM A MEASUREMENT rather
+    // than from the resemblance. It goes READY — shut, by the collision-truth
+    // test — for the whole 72-second intro while the party stands beside it, and
+    // it LOOKS like the Utgarde KEEP forge-flame-wall shape; but
+    // DungeonClearBlockingDoorValue flags a door only when a route leg TRANSITS
+    // its footprint, or is GameObject-LOS-blocked within 12yd of it on the same
+    // floor. So the question was purely "how close does Leg B actually pass".
+    //
+    // The answer, from the authored anchors: 7.35yd, and the leg ENDS 11yd away
+    // on her platform. That is inside the 12yd fallback band on the same floor,
+    // which is enough to auto-pause the run on the boss's own doorstep. Hence the
+    // row. t/TestUtgardePinnacle pins the 7.35yd so a re-authored leg re-opens
+    // the question instead of silently leaning on it.
+    constexpr uint32 GO_SVALA_MIRROR = 191745;
+
+    // --- event and hook ids -------------------------------------------------
+    //
+    // Event ids are per-map. HOOK ids are ONE FLAT SPACE across every dungeon
+    // (ObjectiveHookRegistry::AddHook LOG_ERRORs a collision rather than silently
+    // dropping one): 1-14 are the older dungeons', 15-19 the Violet Hold's,
+    // 20-21 Blackwing Lair's, 22-23 Halls of Stone's and 24 Halls of Lightning's,
+    // so this map takes 25-28.
+    // --- step timeouts ------------------------------------------------------
+    //
+    // Every one of these bounds a WAIT, and none of them is a target. Where a
+    // number is derived from the script it is stated; where it is a ceiling on a
+    // broken attempt it is generous, because on a REQUIRED step a Failed step
+    // Stalls the run and parks the party, and parking is only ever the right
+    // answer once a human is genuinely needed.
+
+    // Forging an areatrigger packet is instantaneous when it works. Fifteen
+    // seconds is "the leader is standing in the box and the core still will not
+    // take it", which is a human's problem, not a longer wait's.
+    constexpr uint32 AREATRIGGER_TIMEOUT_MS = 15000;
+
+    // Svala's intro is a measured 72 seconds from the trigger to her becoming
+    // attackable, and the transform this step waits for lands at ~34s. Ninety
+    // seconds covers the whole cinematic with margin for a server under load.
+    constexpr uint32 SVALA_INTRO_TIMEOUT_MS = 90000;
+
+    // The generator click, and then the receipt. The click is a single Use();
+    // 20s is arrival slop plus a wolf patrol shoving the tank off the anchor.
+    // The state check is synchronous inside that same Use(), so 8s is already
+    // several ticks of grace.
+    constexpr uint32 STASIS_USE_TIMEOUT_MS   = 20000;
+    constexpr uint32 STASIS_STATE_TIMEOUT_MS = 8000;
+
+    // The gauntlet entry hook gathers before it fires, so its budget is the
+    // gather's plus the trigger's. Sixty seconds is four followers walking in
+    // from a fight that ended up to 60yd back, and no longer.
+    constexpr uint32 GAUNTLET_ENTRY_TIMEOUT_MS = 60000;
+
+    // How tight a ball the party enters the one-way door as, and how much of it
+    // has to be there. 0.75 is three of four followers — one bot that cannot path
+    // in must never hold the other three on the threshold, and stranded recovery
+    // (relevance 42) sits above this ladder and owns that member.
+    constexpr float  GAUNTLET_GATHER_RADIUS = 20.0f;
+    constexpr float  GAUNTLET_GATHER_QUORUM = 0.75f;
+
+    // The ritual is a hard 25 seconds of script. Forty is the ceiling, and it can
+    // only be reached if the boss is somehow still airborne after it — at which
+    // point the event is Optional and skipping is the correct, quiet answer.
+    constexpr uint32 RITUAL_TIMEOUT_MS = 40000;
+
+    constexpr uint32 EVENT_WAKE_SVALA       = 1;
+    constexpr uint32 EVENT_START_PALEHOOF   = 2;
+    constexpr uint32 EVENT_ENTER_GAUNTLET   = 3;
+    constexpr uint32 EVENT_BRING_DOWN_GRAUF = 4;
+    constexpr uint32 EVENT_SVALA_RITUAL     = 5;
+
+    constexpr uint32 HOOK_SVALA_AREATRIGGER = 25;
+    constexpr uint32 HOOK_SKADI_AREATRIGGER = 26;
+    constexpr uint32 HOOK_GRAUF_HARPOON     = 27;
+    constexpr uint32 HOOK_SVALA_RITUAL_HOLD = 28;
+}
+
+void RegisterUtgardePinnacleEvents(std::vector<DungeonEvent>& out);
+
 // --- Gundrak (map 604) ----------------------------------------------------
 // The numbers GundrakEvents.cpp authors and t/TestGundrak.cpp pins. Shared here
 // for the same reason DcDrakTharonKeep and DcVioletHold are: several of them are
@@ -1981,6 +2454,12 @@ void RegisterVioletHoldRoster(std::vector<BossRosterPatch>& t);
 void RegisterHallsOfStoneRoster(std::vector<BossRosterPatch>& t);
 void RegisterGundrakRoster(std::vector<BossRosterPatch>& t);
 void RegisterMoltenCoreRoster(std::vector<BossRosterPatch>& t);
+// Utgarde Pinnacle (575) — the ONE row that makes this dungeon runnable at all
+// (Svala, whose credit entry 26668 is a runtime UpdateEntry target with no spawn
+// row, so BossSpawnIndex drops her silently) plus the three travel objectives the
+// two areatriggers and the Stasis Generator hang off. See the namespace block
+// above and UtgardePinnacleEvents.cpp for why each exists.
+void RegisterUtgardePinnacleRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;
@@ -2012,5 +2491,18 @@ void RegisterBlackwingLairRoute();
 // cursor along, and the middle of that row is sliced out and handed to the driver
 // (DcHallsOfLightning::TRANSIT_STAGE_ANCHOR_INDEX .. TRANSIT_END_ANCHOR_INDEX).
 void RegisterHallsOfLightningRoute();
+// Utgarde Pinnacle (575) — SIX rows, one per designed leg, and the Azjol-Nerub
+// reason rather than the Blackwing Lair / Halls of Lightning one: nothing here
+// runs a transit cursor, but the navmesh is baked DOOR-BLIND and the A* corridors
+// it offers between these anchors thread two permanently shut portcullises. The
+// 206yd entrance -> Ymiron shortcut is the sharpest case — the SHORTEST path in
+// the dungeon and impassable for the whole run. The anchor route is what stops
+// A* re-deriving it on every rebuild.
+//
+// Each row is keyed on the entry of the leg's DESTINATION (boss or objective) and
+// STARTS AT THE PREVIOUS ONE, because SeedCursor projects the party onto the row
+// from where it stands and a row that starts somewhere else snaps the cursor to
+// the far end ([[dc-anchor-route-must-cover-where-the-party-stands]]).
+void RegisterUtgardePinnacleRoute();
 
 #endif

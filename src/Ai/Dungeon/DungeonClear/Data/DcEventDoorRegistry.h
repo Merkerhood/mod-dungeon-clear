@@ -192,6 +192,48 @@ namespace DcEventDoorRegistry
             case 191325:  // Halls of Lightning — Volkhan Door (opens on Volkhan's death)
             case 191326:  // Halls of Lightning — Ionar Door (opens on Ionar's death)
                 return true;
+
+            // UTGARDE PINNACLE (575) — the two portcullises, and the cleanest
+            // example on record of a door that is not a door problem.
+            //
+            //   192173 Doodad_VR_Portcullis01 (477.5, -477.2, 103.1) — opens on
+            //     SetData(DATA_SKADI_THE_RUTHLESS, DONE). It joins the room north
+            //     of Skadi's hall to the hall itself.
+            //   192174 Doodad_VR_Portculliswithchain01 (445.1, -325.5, 101.0) —
+            //     opens on SetData(DATA_KING_YMIRON, DONE). It is the LAST BOSS'S
+            //     EXIT, so it is shut for the entire run and nothing in a correct
+            //     clear ever waits on it.
+            //
+            // Both spawn state 1 (shut) with lockId 0 and autoCloseTime 0, and the
+            // instance C++ is their sole authority — smart_scripts source_type 1
+            // has zero rows for map 575, and the script contains no AddDoor, no
+            // DoorData[], no SetBossState and no DoUseDoorOrButton. HandleGameObject
+            // is called exactly five times in the whole dungeon, twice of them in
+            // OnGameObjectCreate to re-open on reload. So neither door is ever
+            // CLOSED by a script: they spawn shut and are opened once, permanently,
+            // and there is no IsSelfClearing case to consider.
+            //
+            // A bot must never click either. Both are lock-free
+            // GAMEOBJECT_TYPE_DOORs, so BotCanOpenDoorLikePlayer would happily
+            // open one — and force-opening 192173 hands the party Ymiron's room
+            // with Skadi alive (he stays UNIT_FLAG_NOT_SELECTABLE regardless, so
+            // the reward is a walk to a boss that cannot be attacked), while
+            // force-opening 192174 opens nothing the run needs at all.
+            //
+            // DELIBERATELY NOT IsNavigationIgnored, and that is the interesting
+            // half. Unlike the Molten Core props and the Halls of Stone Sky Room
+            // Floor, these two ARE doors: the party really is stopped by them and
+            // the at-boss stand-down needs to see them. With the roster patched
+            // (see UtgardePinnacleEvents.cpp) the designed legs clear 192174 by
+            // 43yd at worst and 192173 by 32.9yd at worst, except the post-Skadi
+            // leg to Ymiron which passes 192173 at 3.1yd with it already open. A
+            // run that DOES pause on one of these has regressed somewhere else —
+            // 192174 means the route reverted to the entrance-hall shortcut,
+            // 192173 means the gauntlet approach — and hiding them from navigation
+            // would mask that instead of preventing it.
+            case 192173:  // Utgarde Pinnacle — Skadi's Door (opens on Skadi's death)
+            case 192174:  // Utgarde Pinnacle — Ymiron's Door (opens on Ymiron's death)
+                return true;
             default:
                 return false;
         }
@@ -441,6 +483,33 @@ namespace DcEventDoorRegistry
             case 186691:  // Doodad_VR_ForgeFire_Third  (opens on forge master 3)
             case 186692:  // Doodad_VR_ForgeFire_First  (opens on forge master 1)
             case 186693:  // Doodad_VR_ForgeFire_Second (opens on forge master 2)
+                return true;
+            // UTGARDE PINNACLE (575) — Svala's mirror, 191745
+            // Doodad_Utgarde_Mirror_FX01 at (296.4, -357.0, 91.5).
+            //
+            // A GAMEOBJECT_TYPE_DOOR that is not a door in any sense: lock 0,
+            // autoCloseTime 0, spawned state 0 (OPEN), and toggled BOTH WAYS by
+            // boss_svala as pure visual FX — SetGoState(GO_STATE_READY) when the
+            // areatrigger starts the intro, back to ACTIVE when she dies. It leads
+            // nowhere; the arena has one entrance and it is the ramp to the north.
+            //
+            // MEASURED, NOT ASSUMED, and the measurement is why this row exists.
+            // The authored Leg B (AT 5140 -> Svala) passes within 7.35yd of it and
+            // ENDS 11yd from it on her platform — the party fights the whole
+            // encounter beside a slab that is READY, i.e. shut by the
+            // collision-truth test, for the entire 72-second intro. That is inside
+            // DungeonClearBlockingDoorValue's 12yd same-floor fallback band, so a
+            // GO-LOS block along the leg's last segment would flag it and auto-
+            // pause the run on the boss's own doorstep. t/TestUtgardePinnacle pins
+            // the 7.35yd so a re-authored leg re-opens the question rather than
+            // silently relying on this row.
+            //
+            // This is the Ahn'kahet prison-apparatus shape below rather than the
+            // Utgarde Keep forge-wall shape above: the prop is not beside the route,
+            // it is ON the objective. IsScriptOnly would be the wrong tool for the
+            // same reason it is wrong for the forge walls — it only refuses the
+            // CLICK, and the auto-pause is what kills the run.
+            case 191745:  // Utgarde Pinnacle — Svala's mirror (FX, never a passage)
                 return true;
             // Ahn'kahet: The Old Kingdom (map 619) — Prince Taldaram's prison
             // apparatus. Three GAMEOBJECT_TYPE_DOOR entries, all lock 0,

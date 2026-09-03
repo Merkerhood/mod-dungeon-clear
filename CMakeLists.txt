@@ -837,3 +837,22 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    and ToC's champions — the other creditType-1 dungeons MakeBossWithBit was
 #    written for — the Tribunal has NO creature at all to anchor or target, so it
 #    is authored as an objective whose event owns completion.)
+
+# New files added: Data/Events/UtgardePinnacleEvents.cpp,
+#   Overrides/UtgardePinnacleDriver.cpp, t/TestUtgardePinnacle.cpp
+#   (Utgarde Pinnacle, map 575 — an entirely unauthored dungeon, and the first
+#    one in the module whose ROSTER, not its geometry, is the defect. Svala's
+#    instance_encounters credit entry (26668) has no `creature` spawn row
+#    anywhere in the DB, because boss_svala.cpp UpdateEntry()s into it ~34s into
+#    the intro cinematic — so BossSpawnIndex::Build's creditEntry -> spawn join
+#    matches nothing and drops the FIRST boss silently, leaving a 3-row roster
+#    for a 4-boss dungeon. tr-20260902-083808-1 then targeted Palehoof, took the
+#    696yd door-blind shortcut A* offers, and ended `paused_timeout` against two
+#    portcullises that only open on the deaths of bosses three and four.
+#    One MakeBossWithBit row, three objectives (areatrigger 5140 / the Stasis
+#    Generator / areatrigger 4991), six authored legs, two IsScriptOnly doors,
+#    and hooks 25-28 — of which 27 is the only genuinely new mechanism the module
+#    has needed for a while: Skadi's phase 1 cannot be damaged at all (Grauf is
+#    IMMUNE_TO_PC and she is NOT_SELECTABLE), and the encounter is won by clicking
+#    a Harpoon Launcher three times, each shot landing 35% of the drake's maximum
+#    health from a World Trigger creature rather than from a player.)

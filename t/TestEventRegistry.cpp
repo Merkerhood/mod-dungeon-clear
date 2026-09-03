@@ -239,6 +239,30 @@ namespace
             // Done" state the tripwire guards against needs a boss that is both
             // within 40yd and frozen — i.e. the tank is already there.
             {604, 2},
+            // Utgarde Pinnacle "Bring down Grauf": UpGraufFlying is gated on the
+            // instance's own state word — GetData(DATA_SKADI) == IN_PROGRESS —
+            // which is a STRICTLY STRONGER near-gate than a distance check,
+            // because the only two things that set it are areatrigger 4991 (a
+            // 32x22yd box the party has to be standing in) and
+            // boss_skadiAI::JustEngagedWith. The encounter cannot be in progress
+            // with the party elsewhere. It is then gated on Grauf being alive,
+            // which is phase 1's own completion in the other direction. Its lone
+            // step (hook 27, DriveGraufHarpoon) OWNS the travel — it walks the
+            // leader the 161yd east to the harpoon pocket itself — so an arrival
+            // step would add nothing, and Done is its "nothing to steer this tick"
+            // yield rather than a completion. Repeatable besides: a momentary Done
+            // latches nothing.
+            {575, 4},
+            // Utgarde Pinnacle "Svala's ritual: kill the channelers": the same
+            // instance-state gate (GetData(DATA_SVALA) == IN_PROGRESS, set by
+            // areatrigger 5140 and by her JustEngagedWith) plus a live position
+            // read — the boss must be more than 12yd above her own authored floor,
+            // which is only true for the 25 seconds the Ritual of the Sword has
+            // her rooted at z 110. Its lone step (hook 28) issues NO movement and
+            // no completion of any kind; it retargets the leader onto a channeler
+            // and returns Done — the yield — on every tick it does not. Repeatable
+            // and Optional, so there is no latch to false-set and nothing to stall.
+            {575, 5},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)
@@ -712,6 +736,24 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // CONDITION — it resets boss state 2 to NOT_STARTED and sends him back to
         // a DB spawn 200yd away, costing a second full escort.
         {599, 4},
+        // Utgarde Pinnacle "Bring down Grauf". The moment areatrigger 4991 trips,
+        // a 38667 Combat Trigger at the add-spawn corner calls DoZoneInCombat() on
+        // the whole hall and a World Trigger starts casting 59275 Summon Gauntlet
+        // Mobs Periodic — a deque of eight summon spells, two per tick, WITH NO END
+        // CONDITION but the drake's death. The party is therefore in unbroken
+        // combat for the whole of phase 1, so the non-combat rung would never run
+        // once — and phase 1 cannot be won by fighting at all: Grauf carries
+        // IMMUNE_TO_PC and Skadi is NOT_SELECTABLE until he dies, so the ONLY
+        // damage in the encounter is a GameObject click this driver has to be alive
+        // to make. It yields on every tick it is not walking or firing, which is
+        // most of them.
+        {575, 4},
+        // Utgarde Pinnacle "Svala's ritual: kill the channelers". The whole 25s is
+        // a fight — three Ritual Channelers holding an INFINITE-duration Paralyze
+        // (48278, ends only when its caster dies) on a teleported party member —
+        // and the retarget this event exists to make is a COMBAT-tick act. An
+        // out-of-combat-only rung would never fire once inside a boss encounter.
+        {575, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1101,6 +1143,21 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         {599, 2},
         {599, 3},
         {599, 4},
+        // Utgarde Pinnacle "Bring down Grauf": hook 27 walks the leader 161yd east
+        // down the gauntlet hall to the harpoon pocket on its own long-haul spline
+        // (DcTransit::TravelTo — a bare MovePoint truncates silently past ~150yd),
+        // and the per-tick hold would cancel it the tick after it is issued. The
+        // flag is also what makes a Done RETURN YIELD, and on this map that is the
+        // load-bearing half: the driver is idle for most of every flight lap, and
+        // those are precisely the ticks four bots and a tank need in order to fight
+        // an add pump that never stops.
+        {575, 4},
+        // Utgarde Pinnacle "Svala's ritual: kill the channelers": the hook issues
+        // NO movement at all and takes the flag purely for the yield semantics. It
+        // sits above the stock combat movers to retarget the tank off a boss rooted
+        // twenty yards in the air, and a rung there that claimed every tick would
+        // starve the rotation it exists to redirect.
+        {575, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1932,6 +1989,18 @@ TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
         // the pit floor. A camp dragged onto the ramp therefore takes the boss
         // into the Slags over a path he cannot walk and evades him.
         {602, 1},
+        // Utgarde Pinnacle "Bring down Grauf". The 161yd leg east to the harpoon
+        // pocket is a TRANSIT across a summon pump with no end condition, so the
+        // pull's Idle branch — which answers unplanned aggro by walking a fresh
+        // camp BACK along the route until it finds ground clear of hostiles — can
+        // never find such ground and runs out to maxDrag. And on this map
+        // "backward" is not merely slow, it LOSES THE ENCOUNTER: spell_area keeps
+        // 47546 on every player in area 1196 (the whole instance), which fires
+        // 47547 every 5s restricted to the Flame Breath Triggers within 40yd, and
+        // every 6s the reset trigger at (397.0, -511.5) counts triggers still
+        // carrying it and evades Skadi on zero. A camp dragged west past that
+        // carpet resets the entire gauntlet.
+        {575, 4},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

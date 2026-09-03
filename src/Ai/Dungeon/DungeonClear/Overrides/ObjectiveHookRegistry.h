@@ -98,4 +98,13 @@ void RegisterHallsOfStoneHooks(ObjectiveHookRegistry::HookTable& out);
 // HallsOfLightningDriver.cpp. Id 24.
 void RegisterHallsOfLightningHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Utgarde Pinnacle (map 575) — the two areatrigger starts, the Grauf harpoon
+// driver and the Svala ritual retarget. See UtgardePinnacleDriver.cpp. Ids 25-28.
+//
+// Three of the four are the SHORT kind that would ordinarily live in this file's
+// own table. They are in a TU of their own because they share map 575's constants
+// and its reasoning with the driver, and splitting one dungeon's four hooks across
+// two files to satisfy a size rule would cost more than it saves.
+void RegisterUtgardePinnacleHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif
