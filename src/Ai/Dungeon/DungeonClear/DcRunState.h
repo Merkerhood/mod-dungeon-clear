@@ -296,6 +296,36 @@ struct DcRunState
     ObjectGuid vhKeeperLock;
     ObjectGuid bmRiftLock;
 
+    // --- Pit of Saron: the Ymirjar gauntlet (map 658) ------------------------
+    //
+    // The two clocks DcPosGauntlet::Decide carries across ticks, plus the state
+    // it last reported so the driver logs one line per transition instead of one
+    // per tick.
+    //
+    // BOTH CLOCKS BELONG TO A PHASE, NOT TO A STATE. `posGauntletPhase` is the
+    // instance's own DATA_INSTANCE_PROGRESS value (2, 3 or 4), and it is what the
+    // kernel compares against to decide whether to re-stamp: Arm and Gate1 are
+    // both phase 2, Wave1 and Gate2 are both phase 3, and a clock that restarted
+    // on the sub-state transition would restart exactly where it is needed — the
+    // wave-summon grace window opens on the gate being ACCEPTED, which is the same
+    // tick the sub-state flips from Gate to Wave.
+    //
+    // Here rather than in a file-scope map for the Util/DcThrottle.h reason: a map
+    // keyed on the bot and owned by a map-update thread is neither pruned nor
+    // stably owned, and a lapsed clock here would re-open a spent grace window.
+    uint8  posGauntletPhase = 0;         // DATA_INSTANCE_PROGRESS the clocks belong to
+    uint32 posGauntletPhaseMs = 0;       // getMSTime() the party entered it
+    uint32 posGateHoldMs = 0;            // ...and when the leader first stood in its gate
+    uint32 posWaveHoldMs = 0;            // ...and when a live wave mob first stood in
+                                         // reach saying nothing (the standoff clock)
+    bool   posGateStallReported = false; // has the "forged and still refused" WARN fired?
+    bool   posWaveArmedLatched = false;  // has the wave-1 arming hold released this
+                                         // phase? ONE-WAY within a phase and reset by
+                                         // the kernel on the progress bump, because
+                                         // the armed COUNT alone falls back below the
+                                         // quorum as the party kills the wave
+    uint8  posGauntletState = 0;         // DcPosGauntlet::State last logged
+
     // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
 
     DcThrottleSlot throttles[kDcThrottleCount]{};
@@ -353,6 +383,22 @@ struct DcRunState
     // teardown: the leg is Repeatable and a leader shoved back into the gauntlet
     // re-arms it, so coming back holding a stale cursor — or a gather gate that
     // latched open two rooms ago — is the one way this state can lie.
+    // Drop the Pit of Saron gauntlet block. Called from the run teardown for the
+    // ClearTransit reason: the event is Repeatable and a party that re-enters the
+    // instance walks the same corridor, so coming back holding a phase clock from
+    // the previous run is the one way this state can lie.
+    void ClearPosGauntlet()
+    {
+        posGauntletPhase = 0;
+        posGauntletPhaseMs = 0;
+        posGateHoldMs = 0;
+        posWaveHoldMs = 0;
+        posGateStallReported = false;
+        posWaveArmedLatched = false;
+        posGauntletState = 0;
+        ClearThrottle(DcThrottle::PosGauntletLog);
+    }
+
     void ClearTransit()
     {
         transitDrivingMs = 0;

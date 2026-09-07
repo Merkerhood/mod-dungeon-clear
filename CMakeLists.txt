@@ -888,3 +888,34 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    IMMUNE_TO_PC and she is NOT_SELECTABLE), and the encounter is won by clicking
 #    a Harpoon Launcher three times, each shot landing 35% of the drake's maximum
 #    health from a World Trigger creature rather than from a player.)
+
+# New files added: Data/Events/PitOfSaronEvents.cpp,
+#   Overrides/PitOfSaronDriver.cpp, Util/DcPosGauntletDecision.h,
+#   t/TestPitOfSaron.cpp, t/TestPitOfSaronRouteProbe.cpp
+#   (Pit of Saron, map 658 — the Utgarde Pinnacle roster defect one step worse,
+#    because here it does not stall the run, it makes the run SUCCEED. Scourgelord
+#    Tyrannus (36658) has kill-credit DungeonEncounter rows on both difficulties
+#    and NO `creature` spawn anywhere: he is created at runtime as Rimefang's
+#    vehicle accessory (vehicle_template_accessory 36661 -> 36658), so
+#    BossSpawnIndex::Build's spawn join drops him and the derived roster is two
+#    bosses for a three-boss dungeon — against which encounterMask 0x3 reads
+#    "all cleared". tr-20260907-100813-1 is that run: reported success, 2/2, 8m01s,
+#    with a third of the dungeon unwalked.
+#    One MakeBossWithBit row is the fix; everything else here is what is on the
+#    other side of it. Krick and Tyrannus are separated by a FOUR-AREATRIGGER,
+#    TWO-WAVE, STRICTLY-ORDERED GAUNTLET whose every gate is refused SILENTLY out
+#    of turn — gate 1 additionally requires the orchestrator (36794) to have flown
+#    85-100 seconds of Krick outro into position, which DC's own advance beats to
+#    the trigger by a wide margin. So: one conditional in-combat driver (hook 29,
+#    with its FSM as the pure kernel Util/DcPosGauntletDecision.h), one anchored
+#    ledge gate (hook 30) whose objective anchor sits deliberately 22yd OUTSIDE
+#    areatrigger 5633's sphere so arriving cannot fire it, two authored legs with
+#    NO_STOP across the gauntlet and the icicle tunnel, and one IsScriptOnly door.
+#    Both hooks forge their own CMSG_AREATRIGGER, which is level-triggered where
+#    the test harness's relay is edge-triggered — the property that makes an early
+#    crossing cost nothing.
+#    NOT fixed here, and it is the difference between reaching Tyrannus and
+#    beating him: mod-playerbots' `wotlk-pos` TyrannusAction spreads ranged 10yd
+#    and does nothing about Overlord's Brand (69172), whose branded healer heals
+#    the boss for 5.5x. That is combat rotation and belongs on a mod-playerbots
+#    branch; DC has no seam that suppresses a bot's own heals.)

@@ -2372,6 +2372,579 @@ namespace DcBlackwingLair
 
 void RegisterBlackwingLairEvents(std::vector<DungeonEvent>& out);
 
+// --- Pit of Saron (map 658) ------------------------------------------------
+// The numbers PitOfSaronEvents.cpp and Overrides/PitOfSaronDriver.cpp both
+// author against, and t/TestPitOfSaron.cpp pins. Shared here for the reason every
+// other dungeon's block is: a coordinate that lives in two files diverges.
+//
+// READ THE ROSTER PATCH FIRST (PitOfSaronEvents.cpp). The derived roster on this
+// map is TWO bosses for a three-boss dungeon, and the observable consequence is
+// not "the last boss is skipped" — it is that a run REPORTS SUCCESS at 2/2 with
+// the third encounter never attempted. Scourgelord Tyrannus (36658) has a real
+// kill-credit DungeonEncounter row on both difficulties and NO `creature` spawn:
+// he is a vehicle accessory on Rimefang (36661, vehicle_template_accessory
+// 36661 -> 36658), so BossSpawnIndex::Build's spawn join drops him. The Gundrak
+// shape, and MakeBossWithBit is the escape hatch.
+//
+// EVERYTHING ELSE ON THIS MAP IS DOWNSTREAM OF THAT ROW, because what stands
+// between Krick and Tyrannus is a FOUR-AREATRIGGER, TWO-WAVE, STRICTLY-ORDERED
+// GAUNTLET in which every gate is refused silently if crossed out of turn.
+namespace DcPitOfSaron
+{
+    constexpr uint32 MAP_ID = 658;
+
+    // --- the three encounters, in travel order ------------------------------
+    //
+    // NPC_ICK (36476) is the CREDIT entry for the second encounter, not Krick
+    // (36477) — Krick rides Ick and dies with him, and instance_encounters rows
+    // 835/836 name 36476. Anchor, target and reorder on Ick.
+    constexpr uint32 NPC_GARFROST = 36494;
+    constexpr uint32 NPC_ICK      = 36476;
+    constexpr uint32 NPC_KRICK    = 36477;
+    constexpr uint32 NPC_TYRANNUS = 36658;
+
+    // Rimefang. He DOES have a spawn row (1017.3, 168.97, 642.93) and he is what
+    // Tyrannus rides, 14.7yd in the air, until Gorkun's intro ends. He is
+    // unit_flags 66 (NON_ATTACKABLE | IMMUNE_TO_NPC) and never a target; he is
+    // here because DATA_RIMEFANG_GUID is the only handle on the vehicle whose
+    // DespawnOnEvade decides whether a failed attempt is recoverable.
+    constexpr uint32 NPC_RIMEFANG = 36661;
+
+    // The ORCHESTRATOR — npc_pos_tyrannus_events, the RP Tyrannus that flies the
+    // pre-boss scenes and owns the gauntlet's kill counter. It is the creature the
+    // three SmartTrigger areatriggers SetData, and its POSITION is gate 1's real
+    // precondition (see RP_WAIT_* below). Reachable from any bot through
+    // GetGuidData(DATA_TYRANNUS_EVENT_GUID).
+    constexpr uint32 NPC_TYRANNUS_EVENT = 36794;
+
+    // Gorkun / Martin, second incarnation — the Horde and Alliance faces of the
+    // same NPC, summoned by areatrigger 5633 and the thing whose EXISTENCE is the
+    // receipt that the trigger took (the instance stores it under
+    // DATA_MARTIN_OR_GORKUN_GUID, and at_tyrannus_event_starter refuses to fire
+    // again while it is set).
+    constexpr uint32 NPC_MARTIN_2 = 37580;
+    constexpr uint32 NPC_GORKUN_2 = 37581;
+
+    // WAVE 1 — ten mobs, killsLeft 10 on both difficulties. NONE of these three
+    // entries has a static spawn anywhere on map 658, so "any live one within the
+    // scan" is an unambiguous read of "wave 1 is still up" and needs no volume.
+    constexpr uint32 NPC_YMIRJAR_DEATHBRINGER = 36892;
+    constexpr uint32 NPC_YMIRJAR_WRATHBRINGER = 36840;
+    constexpr uint32 NPC_YMIRJAR_FLAMEBEARER  = 36893;
+
+    // WAVE 2 — six mobs on normal, TWELVE on heroic (a second group of 4+2 that
+    // ends 68yd further north and 17yd lower).
+    //
+    // 36841 IS NOT UNAMBIGUOUS AND THAT IS THE WHOLE PROBLEM. It has EIGHT static
+    // spawns on this map, every one of them in the icicle tunnel at x 997-1074,
+    // and Gorkun's own add pump summons more of it behind the boss for the entire
+    // Tyrannus fight. A bare aliveness probe on this entry would read "wave 2 is
+    // still up" from the moment the party can see the tunnel. Hence WAVE2_* below.
+    constexpr uint32 NPC_FALLEN_WARRIOR       = 36841;
+    constexpr uint32 NPC_WRATHBONE_COLDWRAITH = 36842;
+
+    // DungeonEncounter.dbc bits, verbatim from rows 833-838. Identical on normal
+    // and heroic (833/834 -> 0, 835/836 -> 1, 837/838 -> 2), so ONE Any-gated
+    // roster patch serves both difficulties — unlike Gundrak and the Nexus, whose
+    // heroic-only additions needed their own gated patch.
+    constexpr uint32 BIT_GARFROST = 0;
+    constexpr uint32 BIT_KRICK    = 1;
+    constexpr uint32 BIT_TYRANNUS = 2;
+
+    // instance_pit_of_saron's OWN `enum DataTypes` slots — the keys GetData and
+    // GetGuidData are switched on, counted from pit_of_saron.h. MAX_ENCOUNTER
+    // occupies slot 3, which is why the progress counter is FOUR and not three;
+    // never hand-count this enum again, and never reuse an encounterIndex for it.
+    constexpr uint32 DATA_GARFROST              = 0;
+    constexpr uint32 DATA_ICK                   = 1;
+    constexpr uint32 DATA_TYRANNUS              = 2;
+    constexpr uint32 DATA_INSTANCE_PROGRESS     = 4;
+    constexpr uint32 DATA_TYRANNUS_EVENT_GUID   = 6;
+    constexpr uint32 DATA_MARTIN_OR_GORKUN_GUID = 13;
+    constexpr uint32 DATA_RIMEFANG_GUID         = 14;
+    constexpr uint32 DATA_TYRANNUS_GUID         = 15;
+
+    // --- THE INSTANCE PROGRESS LADDER — this map's whole state machine -------
+    //
+    // GetData(DATA_INSTANCE_PROGRESS) is MONOTONIC (SetData raises it and never
+    // lowers it), readable from any bot, and advanced ONLY by killing Ick and by
+    // standing inside one of three areatrigger spheres. That makes it both the
+    // gauntlet driver's FSM key AND the near-gate justification for the
+    // conditional event's allow-list row in t/TestEventRegistry.cpp — a stronger
+    // guarantee than any distance check, because the counter cannot reach 3 or 4
+    // with the party anywhere but inside a specific 34-38yd sphere.
+    //
+    //   0 NONE
+    //   1 FINISHED_INTRO        the Sylvanas/Jaina entrance RP ended; gates Ick
+    //   2 FINISHED_KRICK_SCENE  set the INSTANT Ick dies (boss_krickAI event 20)
+    //   3 AFTER_WARN_1          areatrigger 5578 accepted -> wave 1 (10 mobs)
+    //   4 AFTER_WARN_2          areatrigger 5579 accepted -> wave 2 (6 / 12 heroic)
+    //   5 AFTER_TUNNEL_WARN     areatrigger 5580 accepted -> the icicles arm
+    //   6 TYRANNUS_INTRO        areatrigger 5633 accepted -> Gorkun summoned
+    constexpr uint32 PROGRESS_NONE                 = 0;
+    constexpr uint32 PROGRESS_FINISHED_INTRO       = 1;
+    constexpr uint32 PROGRESS_FINISHED_KRICK_SCENE = 2;
+    constexpr uint32 PROGRESS_AFTER_WARN_1         = 3;
+    constexpr uint32 PROGRESS_AFTER_WARN_2         = 4;
+    constexpr uint32 PROGRESS_AFTER_TUNNEL_WARN    = 5;
+    constexpr uint32 PROGRESS_TYRANNUS_INTRO       = 6;
+
+    // --- the clear order ----------------------------------------------------
+    //
+    // ONE contiguous 1..4 scale so the single objective has an integer slot
+    // between Krick and the boss the roster patch adds:
+    //
+    //     1  boss       36494    Forgemaster Garfrost           (reorder, bit 0)
+    //     2  boss       36476    Krick and Ick                  (reorder, bit 1)
+    //     3  objective  OBJ(1)   Tyrannus's ledge     -> event 2
+    //     4  boss       36658    Scourgelord Tyrannus  [PATCHED IN, bit 2]
+    //
+    // The GAUNTLET between 2 and 3 is deliberately NOT an objective. The party is
+    // in continuous combat across it, and an anchored event has no combat-side
+    // rung — DcRel::AtObjective (30) is non-combat only, and DcRel::EventDueCombat
+    // (61) exists only for a Conditional event carrying DrivesInCombat. So the
+    // gauntlet is event 1, a conditional driver, exactly as Halls of Lightning's
+    // Slag Furnace crossing is.
+    constexpr int32 ORDER_GARFROST = 1;
+    constexpr int32 ORDER_KRICK    = 2;
+    constexpr int32 ORDER_LEDGE    = 3;
+    constexpr int32 ORDER_TYRANNUS = 4;
+
+    // --- boss anchors -------------------------------------------------------
+    //
+    // Garfrost and Ick are their live `creature` rows and are here only so the
+    // route table and the probe can name them; the derivation already places both.
+    constexpr float GARFROST_X = 712.14f;
+    constexpr float GARFROST_Y = -215.70f;
+    constexpr float GARFROST_Z = 527.07f;
+    constexpr float ICK_X      = 852.85f;
+    constexpr float ICK_Y      = 123.53f;
+    constexpr float ICK_Z      = 510.11f;
+
+    // TYRANNUS IS ANCHORED ON HIS EXIT POSITION, NOT WHERE HE SPAWNS, and this is
+    // the one anchor on the map worth arguing about.
+    //
+    // He has no spawn row at all: he is created as Rimefang's vehicle accessory
+    // at (1017.3, 168.97, 642.93) — FOURTEEN YARDS IN THE AIR — and stays there,
+    // NON_ATTACKABLE, for the whole intro. boss_tyrannusAI::DoAction(1) then
+    // MoveJump()s him to exitPos (1023.46, 159.12, 628.2), SetHomePosition()s him
+    // there, and that is where the fight is actually fought.
+    //
+    // NavmeshSnap's vertical extent is a FIXED 10 regardless of snap radius
+    // ([[dc-boss-anchor-snap-vertical-extent]]), so an anchor authored at his
+    // riding position would not snap at all and the roster row would be DROPPED AT
+    // LOAD with a single LOG_ERROR — the same silent two-boss roster this patch
+    // exists to repair, one layer down.
+    constexpr float TYRANNUS_X = 1023.46f;
+    constexpr float TYRANNUS_Y = 159.12f;
+    constexpr float TYRANNUS_Z = 628.20f;
+
+    // --- the four gates (AreaTrigger.dbc, map 658) --------------------------
+    //
+    // All four carry a RADIUS, so Player::IsInAreaTriggerRadius takes its
+    // `radius > 0` branch: a 3D SPHERE around the centre, not a box. That is the
+    // opposite of Utgarde Pinnacle's two, and it is why the arrive radii below are
+    // ordinary tolerances rather than containment radii.
+    //
+    // 5578 / 5579 / 5580 are `SmartTrigger` rows whose smart_scripts source_type 2
+    // entries SET_DATA (1, 1|2|3) on the orchestrator; 5633 is the C++
+    // at_tyrannus_event_starter. All four have an areatrigger_scripts row and NO
+    // areatrigger_teleport row, so DcTestAreaTriggers relays every one of them in
+    // a `.dc test` run — and the driver forges them anyway, which is what makes
+    // this map work for an ORDINARY bot party.
+    constexpr uint32 AREATRIGGER_WARN_1   = 5578;
+    constexpr uint32 AREATRIGGER_WARN_2   = 5579;
+    constexpr uint32 AREATRIGGER_TUNNEL   = 5580;
+    constexpr uint32 AREATRIGGER_TYRANNUS = 5633;
+
+    constexpr float AT_WARN_1_X = 859.28f;
+    constexpr float AT_WARN_1_Y = 44.40f;
+    constexpr float AT_WARN_1_Z = 515.03f;
+    constexpr float AT_WARN_1_R = 34.54f;
+
+    constexpr float AT_WARN_2_X = 960.06f;
+    constexpr float AT_WARN_2_Y = 75.25f;
+    constexpr float AT_WARN_2_Z = 566.17f;
+    constexpr float AT_WARN_2_R = 38.14f;
+
+    constexpr float AT_TUNNEL_X = 969.91f;
+    constexpr float AT_TUNNEL_Y = -117.44f;
+    constexpr float AT_TUNNEL_Z = 597.94f;
+    constexpr float AT_TUNNEL_R = 20.51f;
+
+    constexpr float AT_TYRANNUS_X = 1006.86f;
+    constexpr float AT_TYRANNUS_Y = 178.96f;
+    constexpr float AT_TYRANNUS_Z = 628.16f;
+    constexpr float AT_TYRANNUS_R = 51.50f;
+
+    // --- where the driver actually STANDS to fire each gate -----------------
+    //
+    // NOT the DBC centres, and the distinction is load-bearing. A trigger centre
+    // is a point in a sphere, not a point on the floor: 5578's is 34.5yd across
+    // and its centre sits over the ramp the party climbs, 5580's is on the tunnel
+    // mouth's slope. The driver walks the leader to a PROBED, on-mesh point
+    // comfortably inside each sphere and forges from there, so the walk-in can
+    // never end on a surface the navmesh does not have
+    // ([[dc-navharness-prints-the-route]]).
+    //
+    // Every one is a probed point on the corridor LongRangePathfinder returns for
+    // the leg that reaches it, and gate 1's is worth its own note: the corridor A*
+    // prefers between Krick and the ledge DOES NOT GO THERE. It climbs the ramp at
+    // y ~ 76 and its closest approach to areatrigger 5578's centre is 33.2yd — 1.3
+    // yards inside a 34.54yd sphere, which is less margin than the arrival leash.
+    // So the authored route detours ~60yd south to stand at the trigger properly
+    // (3.6yd from its centre) rather than grazing it.
+    //
+    // Measured margins, stand point to its own sphere's centre:
+    //
+    //     gate 1   3.6yd of 34.54    gate 2  16.2yd of 38.14
+    //     gate 3   6.1yd of 20.51    5633   38.7yd of 51.50
+    //
+    // t/TestPitOfSaronRouteProbe asserts each is on-mesh AND — with room for the
+    // arrival leash — inside its own sphere, so a mesh regen that moves a corridor
+    // trips red instead of quietly leaving the driver forging from outside.
+    constexpr float GATE_1_X = 861.03f;
+    constexpr float GATE_1_Y = 47.09f;
+    constexpr float GATE_1_Z = 516.74f;
+    constexpr float GATE_2_X = 949.28f;
+    constexpr float GATE_2_Y = 63.16f;
+    constexpr float GATE_2_Z = 566.80f;
+    constexpr float GATE_3_X = 966.29f;
+    constexpr float GATE_3_Y = -112.68f;
+    constexpr float GATE_3_Z = 596.94f;
+
+    // How close to a gate stand point counts as "there". Ordinary arrival slop:
+    // the spheres are 20-38yd across, so nothing here is a containment radius.
+    constexpr float GATE_LEASH = 4.0f;
+
+    // --- the ARM state: where the party waits out the Krick outro ------------
+    //
+    // THE KRICK OUTRO IS 85-100 SECONDS LONG AND GATE 1 IS INSIDE IT. Ick's death
+    // sets FINISHED_KRICK_SCENE immediately, then boss_krickAI::DoAction(1) runs an
+    // eleven-step RP chain summing to ~68s, at which point the orchestrator is sent
+    // to (809.39, 74.69, 541.54) and only THEN to RP_WAIT_* 121yd further.
+    //
+    // DC advances the moment the encounter bit flips. The Krick arena is ~88yd
+    // from gate 1's centre and the tank walks that in well under 85 seconds, so
+    // without an explicit hold the party stands in the sphere for a minute and a
+    // half with nothing to show for it.
+    //
+    // THE HOLD COSTS THE TANK ITS REST TICKS AND NOT THE PARTY'S, which is why it
+    // is affordable. The event rung is LEADER-ONLY: while it returns Running the
+    // leader's NeedsRest (26.5) is starved by EventDue (31), but every follower is
+    // running its own ladder and drinks normally. A tank that does not eat for
+    // ninety seconds after a boss kill is a much smaller cost than a healer that
+    // does not.
+    //
+    // STAGE_* USED TO BE THE SCRIPT'S OWN KrickCenterPos (836.65, 115.08, 509.81)
+    // — the middle of the arena, 74.4yd from gate 1's centre. IT IS NOW SOUTH OF
+    // THE GAUNTLET INSTEAD, and the move is about geometry, not about the hold.
+    //
+    // Holding in the arena meant resuming from the arena, and the resume line ran
+    // south-east over the shoulder at (848, 79) on its way to the ramp's foot.
+    // The escort spline between anchors is LINEAR (see CREST ANCHORS in
+    // PitOfSaronEvents), so that chord cut the shoulder and dragged the party
+    // through the rock. Holding down on the flat southern plain instead means the
+    // party is already lined up with the ramp when the outro ends: measured
+    // against the map's own mmtiles, every line out of here is clean —
+    //     hold -> gate 1            36.6yd, 0.00yd of penetration
+    //     hold -> the ramp foot     48.1yd, 0.00
+    //     hold -> up the ramp       59.7yd, 0.00
+    // and the whole Krick -> gate 1 walk now has a worst penetration of 0.09yd,
+    // against 3.14yd over the shoulder.
+    //
+    // THE TRADE IS THAT THIS POINT IS INSIDE AREATRIGGER 5578, and that is a
+    // deliberate, checked relaxation of what the paragraph above was protecting.
+    // It is 33.81yd from the trigger's centre, whose radius is 34.54 — inside by
+    // 0.73yd, i.e. on the rim rather than in the middle. That is safe here for a
+    // reason that did not hold when this was written: the driver FORGES the
+    // trigger (HandleAreaTriggerOpcode from a bot standing on the gate point) and
+    // bots have no client to fire it by walking in, so being inside the sphere
+    // early consumes nothing. A refused forge is silent and simply retried. The
+    // property that still matters is distance from the ground the AMBUSH lands on,
+    // and that is unchanged: 49.7yd from the first ramp anchor.
+    //
+    // If a run ever shows wave 1 reaching the hold, move the point ~27yd further
+    // south-west along the same bearing to restore the old 40yd-clear-of-sphere
+    // margin; the bearing is what keeps the party lined up, not the distance.
+    constexpr float STAGE_X = 835.59f;
+    constexpr float STAGE_Y = 20.74f;
+    constexpr float STAGE_Z = 510.32f;
+    constexpr float STAGE_LEASH = 6.0f;
+
+    // PTSTyrannusWaitPos1 — gate 1's REAL precondition, and the reason the ARM
+    // state tests a position rather than a timer.
+    //
+    // npc_pos_tyrannus_eventsAI::SetData(1, 1) refuses unless
+    // `me->GetExactDist(&PTSTyrannusWaitPos1) <= 3.0`, so the orchestrator has to
+    // have physically flown here. The 85-100s figure above is summed from EventMap
+    // schedules plus a flight-speed estimate and is NOT what the driver waits on:
+    // it waits on the creature actually being here, which cannot be wrong.
+    //
+    // RP_ARRIVE_DIST is the core's own 3.0 verbatim. Do not widen it "for slop" —
+    // a wider test would arm the gate before the SetData would accept it, and the
+    // refusal is silent.
+    constexpr float RP_WAIT_X = 923.45f;
+    constexpr float RP_WAIT_Y = 82.65f;
+    constexpr float RP_WAIT_Z = 582.44f;
+    constexpr float RP_ARRIVE_DIST = 3.0f;
+
+    // --- the waves ----------------------------------------------------------
+    //
+    // Wave 1 is scanned by ENTRY ALONE (none of its three entries spawns
+    // statically on this map). Wave 2 needs a VOLUME, because 36841 has eight
+    // static spawns in the tunnel and Gorkun pumps more of it during the boss
+    // fight.
+    //
+    // The volume is a cylinder: 2D radius WAVE2_RADIUS about (WAVE2_X, WAVE2_Y)
+    // with |z - WAVE2_Z| <= WAVE2_ZBAND. Measured against every position the
+    // script actually uses:
+    //
+    //     normal  spawn (927, -72, 592.2)      d 47.3   dz  7.2
+    //     normal  home  (926.1, -46.6, 591.2)  d 22.4   dz  6.2
+    //     heroic  mid   (928.4, -29.3, 589.0)  d  4.7   dz  4.0
+    //     heroic  home  (937.8,  21.2, 574.6)  d 46.6   dz 10.4
+    //
+    // ...and against every 36841 it must EXCLUDE:
+    //
+    //     nearest static (997.3, -139.3, 615.9)   d 131.6   dz 30.9
+    //     Gorkun's pump  (1061.0, 102.8, 630.2)   d 181.6   dz 45.2
+    //
+    // 80yd is therefore a 51yd margin on the near side and a 33yd margin on the
+    // far side, and one volume covers BOTH difficulties. If a probe ever says
+    // otherwise, split wave 2 into two volumes rather than widening this one until
+    // the tunnel's statics leak in.
+    constexpr float WAVE2_X      = 932.0f;
+    constexpr float WAVE2_Y      = -25.0f;
+    constexpr float WAVE2_Z      = 585.0f;
+    constexpr float WAVE2_RADIUS = 80.0f;
+    constexpr float WAVE2_ZBAND  = 30.0f;
+
+    // Grid-scan radius for the wave probes, from the leader. Wave 1's furthest
+    // summon point is 105yd from gate 1's stand point and its two Deathbringers
+    // spline 67yd west of that, so the scan has to be generous; the entry filter
+    // is what keeps it honest.
+    constexpr float WAVE_SCAN = 130.0f;
+
+    // How near a live wave mob has to be before the driver stops steering and
+    // hands the tick to the combat engine. Beyond it the driver walks the leader
+    // at the nearest one — a wave mob that never aggros is a wave that never
+    // clears, and killsLeft only moves on a DEATH.
+    constexpr float WAVE_ENGAGE_RANGE = 25.0f;
+
+    // How long a wave state must have been live before "nothing alive" is allowed
+    // to mean "the wave is dead".
+    //
+    // THE SUMMONS ARE NOT SYNCHRONOUS WITH THE PROGRESS BUMP. SetData(1,1) raises
+    // the counter and schedules event 30 at 0ms; the two Deathbringers land on the
+    // next UpdateAI, the eight others at +3.0s and +3.5s behind a spline-arrival
+    // poll. So there is a real window in which progress reads 3 and the scan reads
+    // empty, and a driver without this grace walks straight into gate 2 — which
+    // refuses (killsLeft != 0) and leaves the party standing in the ambush.
+    // Six seconds covers the whole summon chain with margin.
+    constexpr uint32 WAVE_SPAWN_GRACE_MS = 6000;
+
+    // How long a LIVE wave mob within WAVE_ENGAGE_RANGE is allowed to say nothing
+    // before the driver stops waiting for aggro and pulls it itself.
+    //
+    // THE WAVE DOES NOT RELIABLY AGGRO, AND WAITING CANNOT FIX IT. Wave 1's eight
+    // escorts (36840 / 36893) carry `smart_scripts` AI_INIT -> REACT_PASSIVE plus a
+    // ONE-SHOT 3500ms update -> REACT_AGGRESSIVE, and the two Deathbringers (36892)
+    // get the same window from pit_of_saron.cpp cases 30/35/36 (REACT_PASSIVE +
+    // UNIT_FLAG_NON_ATTACKABLE, cleared 3.5s behind their escorts). SetReactState
+    // runs no aggro scan, and AzerothCore's proximity aggro fires ONLY from a
+    // relocation notifier, so the mob's one look at the party is spent while it is
+    // still passive; after the flip somebody has to MOVE. A party the driver has
+    // parked never does. Measured on tp-20260907-113722-1: 2 of 5 runs stood 8yd
+    // from ten live Ymirjar, full health, for 6m23s.
+    //
+    // Five seconds is the 3500ms emerge window plus margin for a summon the scan
+    // picks up a tick or two late — long enough that an ordinary aggro is never
+    // pre-empted, short enough that the recovery costs a fraction of the leg.
+    constexpr uint32 WAVE_STANDOFF_MS = 5000;
+
+    // --- WAVE 1 HAS TO BE ARMED BEFORE THE PARTY CLIMBS THE RAMP ------------
+    //
+    // THE BUG THIS PINS: the party waits out the whole Krick outro at the ARM
+    // hold, forges gate 1 — and then walks up the ramp into a wave that does not
+    // exist yet. It looks like the driver leaving the hold too early. It is not:
+    // the hold ended correctly, and the very next state walked away from it.
+    //
+    // pit_of_saron.cpp's summon chain is a CASCADE, not an event, and the progress
+    // bump is only its first link:
+    //
+    //     SetData(1,1)   progress -> 3, killsLeft = 10, event 30 at 0ms
+    //     event 30       next UpdateAI: the TWO DEATHBRINGERS (36892) are summoned
+    //                    at (950.6, 50.9, 567.9) and (949.1, 61.2, 566.6) — the far
+    //                    top of the ramp, ~100yd from gate 1's stand point — both
+    //                    REACT_PASSIVE + UNIT_FLAG_NON_ATTACKABLE, each on a
+    //                    MoveSplinePath down to a home 56yd (west pack) and 93yd
+    //                    (lower pack) away
+    //     events 31/32   poll every 500ms until that spline ENDS, then +3s
+    //     event 33       THE UPPER 4-PACK: 2x 36840 + 2x 36893 around
+    //                    (909-921, 63-89, 548-559)
+    //     event 34       THE LOWER 4-PACK: the same four around
+    //                    (877-889, 41-66, 521-534) — 20yd up-slope of gate 1
+    //     events 35/36   +3500ms after each pack: that pack's Deathbringer goes
+    //                    REACT_AGGRESSIVE and loses NON_ATTACKABLE, while the pack
+    //                    itself flips on its own `smart_scripts` one-shot
+    //                    (AI Init -> passive, 3500ms update -> aggressive)
+    //
+    // So the ambush is real ~15-20s after the progress bump, and for that whole
+    // window the only thing a wave scan can see is two passive Deathbringers at the
+    // TOP OF THE RAMP. A driver that steers at the nearest live wave mob steers at
+    // exactly those: it marches the party up a ramp, past the ground both 4-packs
+    // are about to spawn on, at a mob it cannot attack.
+    //
+    // The fix is to hold until the wave is ARMED — alive, attackable and
+    // REACT_AGGRESSIVE — and let the ambush come to the party at the bottom of the
+    // ramp, which is what the encounter is shaped for.
+    //
+    // WAVE1_ARMED_QUORUM IS 8 BECAUSE THAT IS "BOTH 4-PACKS", and the count says so
+    // unambiguously without the driver having to know which mob belongs to which
+    // pack. The arming order fixes the arithmetic: the upper pack arms together
+    // with its Deathbringer (4 + 1 = 5), the lower pack with its own (another 5).
+    // Five is one pack; eight cannot be reached with either pack missing, and is
+    // still met if a single Deathbringer fails to summon.
+    constexpr uint32 WAVE1_ARMED_QUORUM = 8;
+
+    // ...and the cascade above is ~15-20s long, so this is the budget after which
+    // the driver stops waiting for it and closes anyway. It is a DEADLOCK BREAKER,
+    // not a schedule: a Deathbringer that never reaches its home leaves events
+    // 31/32 polling for ever and NEITHER pack is ever summoned, and a party held on
+    // a quorum that can no longer be met would stand at gate 1 until the run's own
+    // timeout. Measured from the phase clock — which is stamped on the progress
+    // bump, the first link of the chain — so it covers the whole cascade and not
+    // just the part after the first summon lands.
+    constexpr uint32 WAVE1_ARM_MS = 45000;
+
+    // --- the gate re-arm watchdog -------------------------------------------
+    //
+    // The driver's own forge is LEVEL-triggered — it calls
+    // HandleAreaTriggerOpcode every tick — so, unlike the test harness's relay, it
+    // cannot burn an edge and cannot need re-arming for the ordinary refusals
+    // (the orchestrator not yet in place, killsLeft not yet zero). Those simply
+    // keep being refused until they are not.
+    //
+    // What this budget catches is the OTHER shape: standing inside the sphere,
+    // forging every tick, and the counter never moving — an orchestrator that is
+    // dead or wedged, or a wave mob that despawned instead of dying and left
+    // killsLeft stuck forever. There is no way to distinguish those from here, so
+    // the driver says so ONCE, loudly, and keeps forging; the event's own timeout
+    // is what eventually stalls the run and puts a human on it. A silent
+    // forever-loop is the failure this exists to make visible.
+    constexpr uint32 GATE_STALL_MS = 45000;
+
+    // --- Tyrannus's ledge (event 2 / OBJ(1)) --------------------------------
+    //
+    // TWO POINTS, and the split is the whole design of this event.
+    //
+    // LEDGE_* is the objective anchor and the GATHER point: on the walkable strip
+    // the freed slaves are placed on (TSData spans x 1044-1059, y 118-131), 73yd
+    // from areatrigger 5633's centre — i.e. 22yd OUTSIDE its 51.5yd sphere. The
+    // party can therefore form up here without tripping anything.
+    //
+    // ARENA_* is where the trigger is actually FIRED from, and it has to exist
+    // because 5633 is a sphere and a forge from outside it is a no-op: the core
+    // re-tests Player::IsInAreaTriggerRadius on the packet, so the leader must be
+    // physically within 51.5yd of the centre. It is a probed on-mesh point on the
+    // approach line from the ledge to the arena, inside the sphere and well inside
+    // the boss's own leash box.
+    constexpr float LEDGE_X = 1050.00f;
+    constexpr float LEDGE_Y = 120.00f;
+    constexpr float LEDGE_Z = 628.46f;
+    constexpr float LEDGE_ARRIVE = 6.0f;
+
+    constexpr float ARENA_X = 1030.00f;
+    constexpr float ARENA_Y = 148.00f;
+    constexpr float ARENA_Z = 628.20f;
+    constexpr float ARENA_LEASH = 4.0f;
+
+    // THE HARD LEASH, and the run-ender it describes.
+    //
+    // boss_tyrannusAI::UpdateAI checks, EVERY TICK, that its VICTIM is within
+    // 100yd of TSDistCheckPos and within +/-20yd of its z. Outside either, the boss
+    // full-heals and EnterEvadeMode()s — which despawns Gorkun, clears
+    // DATA_MARTIN_OR_GORKUN_GUID, calls DespawnOnEvade() on RIMEFANG and despawns
+    // Tyrannus himself. Recovery then needs Rimefang to respawn AND a fresh trip
+    // of areatrigger 5633.
+    //
+    // The gather quorum in hook 30 is the primary defence: the encounter starts by
+    // AttackStart()ing the NEAREST PLAYER within 100yd, so a straggler that is
+    // that player and then walks back down the tunnel evades the whole fight.
+    constexpr float LEASH_X      = 1009.29f;
+    constexpr float LEASH_Y      = 163.15f;
+    constexpr float LEASH_Z      = 628.157f;
+    constexpr float LEASH_RADIUS = 100.0f;
+    constexpr float LEASH_ZBAND  = 20.0f;
+
+    // --- gather --------------------------------------------------------------
+    //
+    // THREE OF FOUR FOLLOWERS, not four of four, and the difference is deliberate:
+    // one bot that cannot path in must never hold the other three, and stranded
+    // recovery (DcRel::StrandedRecovery, 42) sits above this whole ladder and owns
+    // that member. Dead members do not count against it either — the party view
+    // counts only the LIVING — so the gate opens as soon as the party is up, and
+    // the rez ladder, not this hook, is what gets it there.
+    constexpr float GATHER_RADIUS = 20.0f;
+    constexpr float GATHER_QUORUM = 0.75f;
+
+    // --- doors ---------------------------------------------------------------
+    //
+    // GO 201885 ICE WALL, at (932.27, -80.67, 591.68) — a real
+    // GAMEOBJECT_TYPE_DOOR with lockId 0 and autoCloseTime 0, spawned state 1
+    // (SHUT), opened ONCE by instance_pit_of_saron the moment Garfrost and Ick are
+    // both DONE. It stands on the wave-2 ground the party fights on, ~9yd from the
+    // near wave-2 spawn line, so a designed leg passes well inside
+    // DungeonClearBlockingDoorValue's 12yd same-floor band.
+    //
+    // By the time any of this runs it is already open — the gauntlet's own
+    // predicate requires both bosses DONE — so the row is belt-and-braces, and it
+    // is IsScriptOnly rather than IsNavigationIgnored on purpose: a run that DOES
+    // pause here has regressed somewhere the module should be told about, and
+    // hiding the door from navigation would mask that rather than prevent it.
+    constexpr uint32 GO_ICE_WALL = 201885;
+
+    // The Halls of Reflection portcullis, opened by the Tyrannus outro. Named only
+    // so nobody authors it as a gate: the run ends before it matters.
+    constexpr uint32 GO_HOR_PORTCULLIS = 201848;
+
+    // --- event and hook ids ---------------------------------------------------
+    //
+    // Event ids are per-map. HOOK ids are ONE FLAT SPACE across every dungeon
+    // (ObjectiveHookRegistry::AddHook LOG_ERRORs a collision rather than silently
+    // dropping one): 1-14 are the older dungeons', 15-19 the Violet Hold's, 20-21
+    // Blackwing Lair's, 22-23 Halls of Stone's, 24 Halls of Lightning's and 25-28
+    // Utgarde Pinnacle's, so this map takes 29-30.
+    constexpr uint32 EVENT_GAUNTLET       = 1;
+    constexpr uint32 EVENT_TYRANNUS_LEDGE = 2;
+
+    constexpr uint32 HOOK_POS_GAUNTLET       = 29;
+    constexpr uint32 HOOK_POS_TYRANNUS_LEDGE = 30;
+
+    // --- step timeouts --------------------------------------------------------
+    //
+    // Both bound a WAIT, and neither is a target.
+    //
+    // The gauntlet's budget has to cover the Krick outro (85-100s, DERIVED from
+    // EventMap schedules plus a flight-speed estimate and therefore the least
+    // trustworthy number on this page), two fights, three walks and three forges.
+    // Six minutes is a ceiling on a genuinely broken attempt; the ARM state does
+    // not depend on the estimate at all (it watches the orchestrator's real
+    // position), so a slow outro costs seconds of the budget, not the run.
+    constexpr uint32 GAUNTLET_TIMEOUT_MS = 360000;
+
+    // The ledge is a gather, a 30yd walk-in and a forge. Ninety seconds is the
+    // gather's own worst case — four followers walking in from a fight that ended
+    // up the tunnel — plus the trigger.
+    constexpr uint32 LEDGE_TIMEOUT_MS = 90000;
+
+    // Throttle on the two drivers' per-tick telemetry lines.
+    constexpr uint32 TELEMETRY_MS = 3000;
+}
+
+void RegisterPitOfSaronEvents(std::vector<DungeonEvent>& out);
+
 // Every TempSummon the siege can field — the trash, the elites, the three portal
 // keepers, Ichoron's globules, Xevozz's spheres and Cyanigosa. Probed by
 // ALIVENESS by the wave event's activation predicate, which is sound only
@@ -2461,6 +3034,14 @@ void RegisterMoltenCoreRoster(std::vector<BossRosterPatch>& t);
 // above and UtgardePinnacleEvents.cpp for why each exists.
 void RegisterUtgardePinnacleRoster(std::vector<BossRosterPatch>& t);
 
+// Pit of Saron (658) — the ONE row that makes this dungeon finishable
+// (Scourgelord Tyrannus, whose kill-credit encounter has no `creature` spawn
+// because he is Rimefang's vehicle accessory, so BossSpawnIndex drops him and a
+// run reports SUCCESS at 2/2) plus the ledge objective the Tyrannus areatrigger
+// hangs off, and the two reorders that make room for it. See the namespace block
+// above and PitOfSaronEvents.cpp.
+void RegisterPitOfSaronRoster(std::vector<BossRosterPatch>& t);
+
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;
 // aggregated by DungeonWingRegistry. Only split maps appear here. Maraudon has
@@ -2504,5 +3085,22 @@ void RegisterHallsOfLightningRoute();
 // from where it stands and a row that starts somewhere else snaps the cursor to
 // the far end ([[dc-anchor-route-must-cover-where-the-party-stands]]).
 void RegisterUtgardePinnacleRoute();
+
+// Pit of Saron (658) — TWO rows, Krick -> the ledge and the ledge -> Tyrannus.
+//
+// The long row exists for BOTH of the reasons the other maps' rows exist, one
+// after the other along the same leg. Over the gauntlet it is the Blackwing Lair
+// / Halls of Lightning reason — a fixed polyline for the ordinary clear to walk
+// while the driver owns the gates — and it carries AnchorFlag::NO_STOP across the
+// three gate crossings and the icicle tunnel, because a camp dragged back down
+// this corridor would put the party back inside a sphere it has already spent.
+// Past the tunnel it is the plain "walk the leg" reason.
+//
+// Each row is keyed on the entry of its DESTINATION and STARTS WHERE THE PARTY
+// WILL BE STANDING when that leg begins, because DungeonPathFollower::SeedCursor
+// projects the bot onto the row from its own position and a row that starts
+// somewhere else snaps the cursor to the far end
+// ([[dc-anchor-route-must-cover-where-the-party-stands]]).
+void RegisterPitOfSaronRoute();
 
 #endif

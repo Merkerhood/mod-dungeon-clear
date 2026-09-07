@@ -819,6 +819,7 @@ namespace
             RegisterHallsOfStoneHooks(t);
             RegisterHallsOfLightningHooks(t);
             RegisterUtgardePinnacleHooks(t);
+            RegisterPitOfSaronHooks(t);
             return t;
         }();
         return kHooks;

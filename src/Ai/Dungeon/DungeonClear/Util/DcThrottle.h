@@ -63,6 +63,7 @@ enum class DcThrottle : uint8
     RezRefusalLog,       // RezRefusalDiag — why a party rez was refused
     UpHarpoonLog,        // the Utgarde Pinnacle harpoon driver's telemetry line
     UpHarpoonMissingLog, // "in the pocket, and launcher 192175 is not there"
+    PosGauntletLog,      // the Pit of Saron gauntlet driver's per-tick line
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

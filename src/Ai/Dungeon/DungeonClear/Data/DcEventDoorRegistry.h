@@ -234,6 +234,36 @@ namespace DcEventDoorRegistry
             case 192173:  // Utgarde Pinnacle — Skadi's Door (opens on Skadi's death)
             case 192174:  // Utgarde Pinnacle — Ymiron's Door (opens on Ymiron's death)
                 return true;
+
+            // PIT OF SARON (658) — the Ice Wall, and a row authored from a
+            // MEASUREMENT rather than from a resemblance.
+            //
+            // 201885 Ice Wall (932.27, -80.67, 591.68) is a real
+            // GAMEOBJECT_TYPE_DOOR with lockId 0 and autoCloseTime 0, spawned
+            // state 1 (SHUT) and opened ONCE, permanently, by
+            // instance_pit_of_saron the moment Garfrost and Ick are both DONE —
+            // from SetData on either boss, and again from OnGameObjectCreate so a
+            // reload re-opens it. There is no auto-close and therefore no
+            // IsSelfClearing case.
+            //
+            // It is on the DESIGNED LEG, not beside it: the wave-2 ambush is
+            // fought on the ground it stands in, ~9yd from the near spawn line, so
+            // the authored route passes well inside DungeonClearBlockingDoorValue's
+            // 12yd same-floor fallback band.
+            //
+            // A BOT MUST NEVER CLICK IT. Lock-free type-0 doors are exactly what
+            // BotCanOpenDoorLikePlayer will happily open, and this one is the
+            // instance script's sole property.
+            //
+            // DELIBERATELY NOT IsNavigationIgnored, for the Utgarde Pinnacle
+            // reason. By the time anything in this module reaches it the wall is
+            // already open — the gauntlet's own activation predicate requires both
+            // bosses DONE — so the row is belt-and-braces, and a run that DOES
+            // pause here has regressed somewhere the module should be told about.
+            // Hiding the door from navigation would mask that instead of
+            // preventing it.
+            case 201885:  // Pit of Saron — Ice Wall (opens on Garfrost + Ick)
+                return true;
             default:
                 return false;
         }

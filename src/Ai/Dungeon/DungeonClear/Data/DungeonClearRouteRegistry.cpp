@@ -28,6 +28,7 @@ namespace
             RegisterBlackwingLairRoute();
             RegisterHallsOfLightningRoute();
             RegisterUtgardePinnacleRoute();
+            RegisterPitOfSaronRoute();
             return true;
         }();
         (void)seeded;

@@ -461,7 +461,93 @@ namespace
     // Charge and 55218 Stampede are self-auras, charges and summons. There is no
     // GAMEOBJECT_TYPE_TRAP on map 604 and no creature carries a permanent pulsing
     // aura, so map 604 needs neither a DcTrapHazard nor a DcHazardEmitter row.
-    constexpr std::array<DcGroundHazard, 9> kGroundHazards = {{
+    // Pit of Saron (map 658) — 69024 / 70274 TOXIC WASTE, the two green poison
+    // pools of Krick's arena and the only DAMAGING PERSISTENT_AREA_AURA anything
+    // on this map casts. Checked against 88 spell ids: every id in the four Pit of
+    // Saron script files, every smart_scripts cast by the map's 34 spawned
+    // creature entries, every spell_script_names id that could reach the map, and
+    // one level of EffectTriggerSpell out of all of them. Exactly three carry an
+    // Effect 27 leg, and the third is not damage — see the icicle note below.
+    //
+    // Both are the SAME spell wearing two damage numbers. From Spell.dbc:
+    // Effect[0] = 27 SPELL_EFFECT_PERSISTENT_AREA_AURA applying aura 89
+    // SPELL_AURA_PERIODIC_DAMAGE_PERCENT, EffectRadiusIndex 26 = 4.0yd,
+    // EffectAmplitude 2000ms, DurationIndex 1 = 10000ms, EffectImplicitTargetA 53
+    // TARGET_DEST_TARGET_ENEMY — so the pool lands under the VICTIM, not under the
+    // caster, and ticks a percentage of max health five times over ten seconds.
+    // Percent-based is why standing in one is not a healing problem the way an
+    // ordinary pool is: 69024 is 15%/2s and 70274 is 10%/2s regardless of gear, so
+    // a full ten-second bath is fatal at any item level.
+    //
+    // WHO CASTS WHICH:
+    //
+    //   69024 — KRICK, the boss. boss_ick's own AI drives it (Krick rides Ick and
+    //   has no combat AI of its own): EVENT_SPELL_TOXIC_WASTE is scheduled 3-5s
+    //   into the pull, picks SelectTarget(Random, 0, 40.0f, true) and has Krick
+    //   cast on that player, then repeats every 7-10s — or retries in 2.5s if
+    //   Krick happens to be mid-cast. So one or two pools are alive at any moment
+    //   for the whole Ick & Krick fight, each on top of a random party member
+    //   inside 40yd, and the tank is as likely to be picked as anyone.
+    //
+    //   70274 — the PLAGUEBORN HORROR (36879), trash. SmartAI id 2: event 0
+    //   SMART_EVENT_UPDATE_IC every 8s, action 11 cast at target_type 5
+    //   SMART_TARGET_HOSTILE_RANDOM. Five spawns, all on the arena floor and its
+    //   approach: (826.3, 117.0, 509.5) (790.2, 132.3, 509.7) (805.9, 73.9, 510.0)
+    //   (860.6, 116.5, 510.0) (777.2, 88.1, 512.5). Its other two spells need no
+    //   row: 69581 Pustulant Flesh is a single-target nuke plus DoT with no
+    //   PERSISTENT_AREA_AURA leg, and 69582 Blight Bomb is a one-shot 20yd death
+    //   explosion at 15% HP — instant, nothing left on the ground to stand in.
+    //
+    // SIZING follows the Mojo Puddle row exactly, one step up: vacateRadius is the
+    // RAW 4.0yd aura, so the retreat aims 4 + retreatSlack 6 = 10yd, and `radius`
+    // — the placement keep-out — is 7, holding the same 3yd budget between keep-out
+    // and aim point that every other row here leaves for NavmeshSnap pulling a
+    // candidate back toward the pool. Deliberately small relative to the damage,
+    // for the Shattered Halls reason: the pool lands ON the party by design
+    // (TARGET_DEST_TARGET_ENEMY), the party has to keep fighting in that arena,
+    // and stepping off the patch is the whole available answer.
+    //
+    // TWO ROWS, not four: spelldifficulty_dbc has NO entry for 69024 or 70274
+    // (nor for any other Pit of Saron spell), so the heroic templates cast the
+    // same ids and the DynamicObject reports 69024 / 70274 on both difficulties.
+    // The heroic Plagueborn Horror template (37635) carries no smart_scripts and
+    // no AIName of its own and does not need them: Creature::UpdateEntry swaps
+    // only m_creatureInfo for the difficulty template and keeps `SetEntry(Entry);
+    // // normal entry always`, so a heroic Horror is still entry 36879 running
+    // 36879's SmartAI and casting 70274.
+    //
+    // zBand 6: the entire hazard is one floor. All five Horrors and Ick spawn
+    // between z 509.5 and z 512.5, so the widest cylinder reaches z 518.5 — below
+    // the z520-531 north-bridge band DcNavPenaltyRegistry fences, and nowhere near
+    // the z522-565 ramp above the arena.
+    //
+    // DELIBERATELY ABSENT — Ick's POISON NOVA (68989), which reads like the
+    // obvious third row and is not one. Its Effect[0] is 2 SPELL_EFFECT_SCHOOL_
+    // DAMAGE and Effect[1] is 6 apply aura 3 at EffectRadiusIndex 18 = 15.0yd:
+    // an instant 15yd nova plus a DoT, with no PERSISTENT_AREA_AURA leg, so no
+    // DynamicObject is ever created and there is nothing for this table to key on.
+    // It is announced (EMOTE_ICK_POISON_NOVA / SAY_POISON_NOVA) and run out of
+    // during its cast, or healed through — the same call Gundrak's Quake and
+    // Ground Tremor get. Also absent: 69012 / 69263 Explosive Barrage, which is a
+    // periodic-trigger aura summoning Exploding Orb CREATURES (36610 via 69015)
+    // whose 69019 detonation is an instant 6yd nuke — a moving one-shot summon,
+    // not a patch of ground, and not a permanent pulsing aura either, so it fits
+    // none of the three tables here.
+    //
+    // AND ABSENT FOR A DIFFERENT REASON — 69424 ICICLE, the tunnel telegraph, which
+    // IS the map's third SPELL_EFFECT_PERSISTENT_AREA_AURA and still does not
+    // belong here. Its Effect[1] applies aura 4 SPELL_AURA_DUMMY at
+    // EffectRadiusIndex 0 = 0.0yd with no amplitude: a marker DynamicObject with
+    // no radius and no periodic tick, i.e. the ground decal that warns where a
+    // Collapsing Icicle is about to land, not the landing. A zero-radius row would
+    // be inert anyway, but registering it would read as "the icicles are handled".
+    // They are NOT — that call is deliberately deferred, and PitOfSaronEvents.cpp
+    // owns the reasoning and the measure-first condition attached to it.
+    //
+    // There is no GAMEOBJECT_TYPE_TRAP on map 658 and no creature on it carries a
+    // permanent aura in creature_template_addon, so map 658 needs neither a
+    // DcTrapHazard nor a DcHazardEmitter row.
+    constexpr std::array<DcGroundHazard, 11> kGroundHazards = {{
         //                   radius  zBand  vacate  hold  slack
         // Cloud of Disease — the pool a dying Diseased Ghoul (10495) leaves.
         { 289, 17742, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
@@ -480,6 +566,10 @@ namespace
         { 608, 58693, 12.0f, 6.0f, 10.0f, 2.0f, 6.0f },
         // Mojo Puddle — the west-corridor Living Mojo trash. 3yd aura, 10s.
         { 604, 55627, 6.0f, 6.0f, 3.0f, 2.0f, 6.0f },
+        // Toxic Waste — Krick, on a random party member within 40yd. 4yd, 15%/2s.
+        { 658, 69024, 7.0f, 6.0f, 4.0f, 2.0f, 6.0f },
+        // Toxic Waste — Plagueborn Horror trash, every 8s. Same pool, 10%/2s.
+        { 658, 70274, 7.0f, 6.0f, 4.0f, 2.0f, 6.0f },
     }};
 
     // ---- the trap table --------------------------------------------------

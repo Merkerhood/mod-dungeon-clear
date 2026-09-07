@@ -67,6 +67,7 @@ namespace
             RegisterMoltenCoreRoster(t);
             RegisterHallsOfStoneRoster(t);
             RegisterUtgardePinnacleRoster(t);
+            RegisterPitOfSaronRoster(t);
             return t;
         }();
         return kPatches;

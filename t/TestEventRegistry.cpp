@@ -263,6 +263,23 @@ namespace
             // and returns Done — the yield — on every tick it does not. Repeatable
             // and Optional, so there is no latch to false-set and nothing to stall.
             {575, 5},
+            // Pit of Saron "Run the Ymirjar gauntlet": PosGauntletDue is gated on
+            // the instance's own progress counter —
+            // GetData(DATA_INSTANCE_PROGRESS) in [FINISHED_KRICK_SCENE,
+            // AFTER_WARN_2] — which is a STRICTLY STRONGER near-gate than a
+            // distance check. That counter is MONOTONIC and is raised by exactly
+            // two things: the death of Ick, and a player standing inside one of
+            // two areatrigger SPHERES 34.5 and 38.1yd across. It cannot read 3 or
+            // 4 with the party anywhere else on the map, and the window closes the
+            // instant the tunnel warn lands. It is additionally gated on both
+            // earlier bosses being DONE (the orchestrator's own first refusal) and
+            // on Tyrannus not being down. Its lone step (hook 29,
+            // PosDriveGauntlet) OWNS the travel — it walks the leader from the
+            // Krick arena to each of the three gates in turn — so an arrival step
+            // would add nothing, and Done is its "nothing to steer this tick"
+            // yield rather than a completion. Repeatable besides: a momentary Done
+            // latches nothing.
+            {658, 1},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)
@@ -754,6 +771,19 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // and the retarget this event exists to make is a COMBAT-tick act. An
         // out-of-combat-only rung would never fire once inside a boss encounter.
         {575, 5},
+        // Pit of Saron "Run the Ymirjar gauntlet". From the tick areatrigger 5578
+        // is accepted the party is fighting: ten Ymirjar arrive on splines at two
+        // fixed homes and go REACT_AGGRESSIVE in place, and the moment they are
+        // dead the driver has to walk the leader eighty yards to the NEXT gate —
+        // which is only accepted while the counter still reads AFTER_WARN_1. Then
+        // six (twelve heroic) Wrathbone, then the same again. The gaps between
+        // those fights are measured in seconds, so the non-combat rung would get
+        // its ticks before the first gate and essentially never again — and the
+        // thing this driver exists to do happens entirely inside them. Note it
+        // yields the tick on every wave tick it is not steering, which is most of
+        // them, so the flag's usual cost (taking the combat tick off the stock
+        // movers) is paid only while it is walking.
+        {658, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1158,6 +1188,24 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // twenty yards in the air, and a rung there that claimed every tick would
         // starve the rotation it exists to redirect.
         {575, 5},
+        // Pit of Saron "Run the Ymirjar gauntlet": hook 29 issues every metre of
+        // the leg itself through the long-haul funnel (DcTransit::TravelTo) — the
+        // hold-back at the Krick staging point, the walk into each of the three
+        // gate spheres, and the close on a wave mob parked at a home position the
+        // party would otherwise never reach. With the per-tick hold in place each
+        // of those splines is cancelled the tick after it is issued and the party
+        // creeps a tick at a time while every log line reports a healthy spline.
+        // The flag is also what makes a Done RETURN YIELD, which is load-bearing
+        // here: the driver is idle for most of both waves, and those are precisely
+        // the ticks a tank and four bots need in order to kill sixteen mobs.
+        {658, 1},
+        // Pit of Saron "Tyrannus's ledge": hook 30 owns a gather hold on the ledge
+        // anchor and then the ~30yd walk INTO areatrigger 5633's sphere — which is
+        // the whole point of the event, because the anchor is deliberately 22yd
+        // OUTSIDE that sphere so arriving cannot fire it. The per-tick hold would
+        // cancel the walk-in the tick after it is issued and the encounter would
+        // never start.
+        {658, 2},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -2001,6 +2049,20 @@ TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
         // carrying it and evades Skadi on zero. A camp dragged west past that
         // carpet resets the entire gauntlet.
         {575, 4},
+        // Pit of Saron "Run the Ymirjar gauntlet". The pull's Idle branch answers
+        // unplanned aggro by stamping a fresh camp BEHIND the tank and dragging it
+        // there until it finds ground clear of hostiles — and on this leg
+        // "backward" costs the run twice over. It drags the party out of the
+        // 80yd volume the driver measures wave 2 in, so "is the wave dead" starts
+        // reading empty with mobs still up and the driver walks to a gate that
+        // refuses for killsLeft != 0; and it drags them back through a gate sphere
+        // whose SmartTrigger has already been spent, which is harmless for the
+        // driver's own level-triggered forge but not for the test harness's
+        // edge-triggered relay. There is also nothing to gain: the gauntlet
+        // corridor has no static trash between Krick and the tunnel at all, so
+        // every hostile on it is a scripted summon the driver already holds ground
+        // for.
+        {658, 1},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

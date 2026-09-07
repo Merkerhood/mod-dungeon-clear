@@ -440,6 +440,7 @@ namespace
             RegisterHallsOfStoneEvents(t);
             RegisterHallsOfLightningEvents(t);
             RegisterUtgardePinnacleEvents(t);
+            RegisterPitOfSaronEvents(t);
             return t;
         }();
         return kEvents;

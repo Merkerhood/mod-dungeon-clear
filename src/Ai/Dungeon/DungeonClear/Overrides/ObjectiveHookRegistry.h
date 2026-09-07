@@ -107,4 +107,14 @@ void RegisterHallsOfLightningHooks(ObjectiveHookRegistry::HookTable& out);
 // two files to satisfy a size rule would cost more than it saves.
 void RegisterUtgardePinnacleHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Pit of Saron (map 658) — the Ymirjar gauntlet driver and the Tyrannus ledge
+// gate. See PitOfSaronDriver.cpp. Ids 29-30.
+//
+// The gauntlet hook is the controller: three edge-ordered areatrigger gates and
+// two summoned waves, with the arithmetic in the pure kernel
+// Util/DcPosGauntletDecision.h. The ledge hook is the short kind that would
+// ordinarily live in this file's own table; it is in the driver's TU because it
+// shares map 658's constants and its areatrigger forge with the controller.
+void RegisterPitOfSaronHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif
