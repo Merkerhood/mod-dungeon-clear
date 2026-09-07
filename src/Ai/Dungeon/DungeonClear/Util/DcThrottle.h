@@ -64,6 +64,7 @@ enum class DcThrottle : uint8
     UpHarpoonLog,        // the Utgarde Pinnacle harpoon driver's telemetry line
     UpHarpoonMissingLog, // "in the pocket, and launcher 192175 is not there"
     PosGauntletLog,      // the Pit of Saron gauntlet driver's per-tick line
+    PosLedgeLog,         // the Pit of Saron ledge hook's per-state line
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

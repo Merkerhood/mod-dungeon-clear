@@ -1470,9 +1470,11 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
     // stepIndex >= 1 means the event has advanced past its first step, so this is
     // false until the tank has actually arrived and the event has begun running.
     //
-    // ...with one exception, because otherwise the FIRST step is unprotected and a
-    // leading MoveTo is the one step kind that walks the tank out of its own
-    // objective's arriveRadius by design. When its destination lies outside that
+    // ...with two exceptions, because otherwise the FIRST step is unprotected and
+    // there are two step shapes that walk the tank out of its own objective's
+    // arriveRadius BY DESIGN. The first is a leading MoveTo (the second is a
+    // leading Custom step on a stepsOwnMovement event — see further down). When its
+    // destination lies outside that
     // radius the event can never finish it: the executor HopTo's the tank out, the
     // at-objective trigger goes false on distance, the event stops being driven,
     // Advance hauls the tank back to the anchor, repeat. A MoveTo cannot
@@ -1498,9 +1500,43 @@ bool DungeonEventExecutor::IsPersistentAnchoredEventActive(AiObjectContext* cont
     // followers gather in, so it is capped by the anchor's measured walkable pad
     // (8.50 at this altar) and floored by the MoveTo's reach (8.26) — a 0.24yd
     // window whose only solutions park the party within centimetres of the drop.
-    bool const started =
-        prog.stepIndex >= 1 ||
-        (!ev->steps.empty() && ev->steps.front().kind == EventStepKind::MoveTo);
+    // ...AND THE SAME EXEMPTION FOR A LEADING Custom STEP ON A stepsOwnMovement
+    // EVENT, for the same reason one step further out. A MoveTo walks the tank out
+    // of its own arriveRadius by declaring a destination; a driver hook does it by
+    // *being* the movement — DungeonEvent::stepsOwnMovement is precisely the
+    // author's statement that this event's steps, not the per-tick
+    // StopBot(Hold), own where the tank stands (see DcObjectiveArriveAction, which
+    // reads the same flag to skip that hold). Such a hook is under exactly the
+    // deadlock described above whenever its walk leaves the radius.
+    //
+    // Live: tp-20260907-140341-2, Pit of Saron's Tyrannus's ledge, 6 of 10 runs
+    // stalled and a 7th (tr-…-12) only won on a retry. That event is ONE bare
+    // Custom step, so `stepIndex >= 1` is unreachable for its whole life — the
+    // index reaches 1 only on the tick the hook returns Done, which is the tick the
+    // event completes. The hook gathers on an anchor deliberately placed 73yd from
+    // areatrigger 5633's centre (22yd OUTSIDE its sphere, so that ARRIVING cannot
+    // trip it) and then walks the leader the 34.4yd in — against an arriveRadius of
+    // 6.0. Six yards along that walk the at-objective trigger goes false, the hook
+    // stops being ticked, Advance hauls the tank back to the anchor, repeat; the
+    // successful run's status timeline is three of those cycles
+    // ("Holding near Tyrannus's ledge" -> "En route to Tyrannus's ledge" x3) before
+    // it happened to get through. IsPullOwningEventDriving reads this same latch,
+    // so the pull system was not standing down on that leg either — which
+    // PitOfSaronEvents' own note ("the anchored path infers the stand-down from
+    // Persistent() alone") assumes it was.
+    //
+    // A Custom step cannot false-complete the way a KillCreature gate can when its
+    // creature is merely out of scan range: its completion is entirely the hook's
+    // own return value, evaluated from the hook's own reads. So counting it as
+    // "started" cannot pin the run on a half-started event, which is the failure
+    // the stepIndex >= 1 rule exists to prevent. The stepsOwnMovement conjunct
+    // keeps this narrow — a Custom step on an event that does NOT claim its own
+    // movement is still held to the arrival radius.
+    bool const startedFront =
+        !ev->steps.empty() &&
+        (ev->steps.front().kind == EventStepKind::MoveTo ||
+         (ev->steps.front().kind == EventStepKind::Custom && ev->stepsOwnMovement));
+    bool const started = prog.stepIndex >= 1 || startedFront;
     return prog.eventId == ev->id && started && prog.stepIndex < ev->steps.size();
 }
 

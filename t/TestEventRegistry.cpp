@@ -483,6 +483,64 @@ TEST(DungeonEventIntegrityTest, MultiStepRewindHazardEventsArePersistent)
     }
 }
 
+// --- F1b: an anchored event must be able to latch itself ACTIVE ------------
+
+TEST(DungeonEventIntegrityTest, AnchoredStepsOwnMovementEventsCanLatchActive)
+{
+    // DungeonEventExecutor::IsPersistentAnchoredEventActive is what keeps a running
+    // anchored event alive once its own steps walk the tank out of the objective's
+    // arriveRadius: without that latch DungeonClearAtObjectiveTrigger falls back to
+    // a plain distance test, the event stops being driven the moment the tank
+    // leaves the radius, Advance hauls it back, and the two rungs fight until the
+    // step times out. IsPullOwningEventDriving reads the same latch, so the pull
+    // system does not stand down either.
+    //
+    // SCOPED TO stepsOwnMovement, which is the flag that makes the latch load-
+    // bearing. It is the author's statement that this event's steps — not the
+    // per-tick StopBot(Hold) — own where the tank stands, i.e. that they WILL walk
+    // it off the anchor. Every other anchored event is content to be held at the
+    // arriveRadius, and the `stepIndex >= 1` rule is what protects those from a
+    // leading KillCreature/ClearRadius gate false-latching before the tank has
+    // arrived. So this is not a lint about step counts; it is the one shape where
+    // "my steps move the tank" and "the trigger drops me when I move" contradict.
+    //
+    // The latch is `stepIndex >= 1 || <the front step is one that owns the walk>`,
+    // and the first disjunct cannot be leaned on: it is unreachable for a one-step
+    // event (the index reaches 1 only on the tick the event completes), and for a
+    // multi-step one it still leaves step 0 unprotected. So require the FRONT step
+    // to latch.
+    //
+    // Every anchored stepsOwnMovement event in the registry already satisfies this
+    // through a leading MoveTo — Black Morass' Medivh defence, Halls of Stone's
+    // escort / Tribunal / door, both Violet Hold families. The one that did not was
+    // Pit of Saron's Tyrannus's ledge (map 658 event 2): one bare Custom step, so
+    // IsPersistentAnchoredEventActive was false for its whole life, its 34.4yd
+    // walk-in left a 6.0yd arriveRadius, and 6 of 10 runs of tp-20260907-140341-2
+    // stalled on the anchor while Advance and the hook fought over the tank.
+    for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
+    {
+        if (ev.activation != EventActivation::Anchored || !ev.stepsOwnMovement ||
+            ev.steps.empty())
+            continue;
+
+        EventStep const& front = ev.steps.front();
+        bool const latchable =
+            front.kind == EventStepKind::MoveTo ||
+            (front.kind == EventStepKind::Custom && ev.stepsOwnMovement);
+
+        EXPECT_TRUE(latchable)
+            << "anchored event map " << ev.mapId << " id " << ev.id << " (" << ev.name
+            << ") sets .StepsOwnMovement() but its front step (kind "
+            << static_cast<uint32>(front.kind)
+            << ") cannot latch the event ACTIVE from step 0 — so"
+               " IsPersistentAnchoredEventActive is false while those steps walk the"
+               " tank off the anchor, DungeonClearAtObjectiveTrigger drops back to a"
+               " plain arriveRadius test, and Advance fights the event for the tank"
+               " until the step times out. Lead with a MoveTo, or make the front step"
+               " a Custom driver hook.";
+    }
+}
+
 // --- F3: wing/roster sync -------------------------------------------------
 
 TEST(DungeonEventIntegrityTest, IsolatedWingObjectivesAppearInExactlyOneWing)

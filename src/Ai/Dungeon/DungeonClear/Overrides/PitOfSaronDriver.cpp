@@ -587,6 +587,26 @@ namespace
         return v.yieldTick ? ObjectiveArriveResult::Done : ObjectiveArriveResult::Running;
     }
 
+    // The ledge hook's per-state line, throttled on the same budget as the
+    // gauntlet's. Prints the two tests that decide which of the hook's three
+    // states it is in — the gather quorum and the distance left to the walk-in
+    // target — so "held short of the sphere" can never again be indistinguishable
+    // from "walked at it and the spline did not land".
+    void PosLedgeLog(Player* bot, AiObjectContext* context, char const* state,
+                     PosPartyView const& party, float toArena)
+    {
+        DcRunState& st = DcRun::Of(context);
+        if (st.Throttled(DcThrottle::PosLedgeLog, TELEMETRY_MS))
+            return;
+
+        LOG_DEBUG("playerbots.dungeonclear",
+                  "[DC:{}] PoS ledge — {}: party {}/{} within {:.0f}yd of the ledge "
+                  "(quorum {:.0f}%, furthest {:.1f}yd), {:.1f}yd to the walk-in point "
+                  "(leash {:.0f})",
+                  bot->GetName(), state, party.near_, party.living, GATHER_RADIUS,
+                  GATHER_QUORUM * 100.0f, party.furthest, toArena, ARENA_LEASH);
+    }
+
     // --- hook 30: TYRANNUS'S LEDGE -----------------------------------------
     //
     // Gather outside the sphere, then walk in and trip it. Three states, no
@@ -664,6 +684,18 @@ namespace
             // Hold the leader ON the ledge while they come in. TravelTo is a no-op
             // once it is inside the leash, so this is a re-walk trigger for a
             // leader shoved off the anchor and nothing else.
+            //
+            // ...which is exactly why this branch MUST say so. Both Running returns
+            // in this hook used to be silent, and a leader already on the anchor
+            // makes this one issue no movement at all — so a quorum-starved hold and
+            // a walk-in whose spline never landed are the SAME observation from
+            // outside: a tank parked on the anchor, not moving, until the step
+            // timeout stalls the run. That ambiguity is what tp-20260907-140341-2
+            // could not be triaged past (six runs, tank pinned to LEDGE_* within
+            // 0.1yd, 250s from arrival to failure, and nothing in the log to
+            // separate the two). Name the state and the numbers that decide it.
+            PosLedgeLog(bot, context, "gathering", party,
+                        bot->GetExactDist(ARENA_X, ARENA_Y, ARENA_Z));
             DcTransit::TravelTo(bot, botAI, LEDGE_X, LEDGE_Y, LEDGE_Z, LEDGE_ARRIVE);
             return ObjectiveArriveResult::Running;
         }
@@ -675,8 +707,10 @@ namespace
         // a 3D sphere test against the DBC centre — so the leader has to be
         // physically within 51.5yd of (1006.86, 178.96, 628.16), and the ledge is
         // 73yd away. ARENA_* is the probed on-mesh point it walks to.
-        if (bot->GetExactDist(ARENA_X, ARENA_Y, ARENA_Z) > ARENA_LEASH)
+        float const toArena = bot->GetExactDist(ARENA_X, ARENA_Y, ARENA_Z);
+        if (toArena > ARENA_LEASH)
         {
+            PosLedgeLog(bot, context, "walking in", party, toArena);
             DcTransit::TravelTo(bot, botAI, ARENA_X, ARENA_Y, ARENA_Z, ARENA_LEASH);
             return ObjectiveArriveResult::Running;
         }
