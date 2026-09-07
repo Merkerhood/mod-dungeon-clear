@@ -41,6 +41,7 @@
 #include "DcStrategyGate.h"
 #include "DungeonQueueFill/DcDungeonQueueFillManager.h"
 #include "Util/DcBotProvisioning.h"
+#include "Util/DcDungeonAccess.h"
 #include "Util/DcProvisionBudget.h"
 #include "Ai/Dungeon/DungeonClear/Action/DcActionShared.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
@@ -1163,6 +1164,23 @@ void DcTestRunJob::TickTeleporting()
         // core silently abort the transfer and time this stage out.
         if (!CheckInstanceBudget())
             return;
+
+        // Attunement, not permission. Nothing in the pool has played the chain
+        // that gates a dungeon on a quest, so the two Frozen Halls sequels
+        // (Pit of Saron on "Echoes of Tortured Souls", Halls of Reflection on
+        // "Deliverance from the Pit") and every TBC heroic keyed to an
+        // achievement refused their tank's teleport outright — silently, with
+        // the run dying 68s later as "tank did not arrive at the dungeon
+        // entrance" and the party still standing where it was provisioned. The
+        // same silent refusal pins a recycled death knight to Acherus.
+        //
+        // Grant every member what the destination actually asks for rather
+        // than teleporting with TELE_TO_GM_MODE: the level bound, the
+        // instance-per-hour budget, a disabled map and a copy mid-reset all
+        // stay in force, and only the attunement is handed over.
+        for (Slot const& slot : _slots)
+            if (Player* bot = ObjectAccessor::FindPlayer(slot.guid))
+                DcDungeonAccess::GrantEntry(bot, _mapId, bot->GetDifficulty(IsRaidMap()));
 
         // LEADER FIRST, ALONE. The destination copy is resolved per member at
         // worldport-ack time from the GROUP LEADER's bind; with nobody bound

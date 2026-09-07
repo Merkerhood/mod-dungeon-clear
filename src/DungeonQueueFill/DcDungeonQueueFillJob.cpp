@@ -40,6 +40,7 @@
 #include "TestRun/DcTestRunManager.h"
 #include "Util/DcBotProvisioning.h"
 #include "Util/DcProvisionBudget.h"
+#include "Util/DcDungeonAccess.h"
 
 using namespace lfg;
 
@@ -307,6 +308,67 @@ std::uint32_t DcDungeonQueueFillJob::ReadDungeonExpansion() const
     return lowest;
 }
 
+// Every map the queue could drop this party into, resolved once.
+//
+// The LFG lock map is not only about levels and gear: LFGMgr::InitializeLockedDungeons
+// walks the destination's `dungeon_access_requirements` rows too, and stamps
+// LFG_LOCKSTATUS_QUEST_NOT_COMPLETED on any dungeon whose attunement quest the
+// character has not been rewarded. A pool bot has run nothing, so it is missing
+// every one of them. On WotLK content that is Pit of Saron (map 658, quest
+// 24499/24511 "Echoes of Tortured Souls") and Halls of Reflection (668,
+// 24710/24712 "Deliverance from the Pit") — the Forge of Souls (632) has no
+// quest row, which is exactly why fills for it always worked and fills for its
+// two successors never did.
+//
+// Read through GetLFGDungeon, never off the DBC row: LoadLFGDungeons rewrites
+// `map` from the entrance areatrigger for the entries whose DBC map is the
+// outdoor one, and the areatrigger's target is the map the access rows key on.
+std::vector<std::pair<std::uint32_t, std::uint8_t>>
+DcDungeonQueueFillJob::ReadAccessTargets() const
+{
+    std::vector<std::pair<std::uint32_t, std::uint8_t>> targets;
+
+    auto add = [&targets](LFGDungeonData const* data)
+    {
+        if (!data || !data->map)
+            return;
+        std::pair<std::uint32_t, std::uint8_t> const target{data->map,
+                                                            std::uint8_t(data->difficulty)};
+        if (std::find(targets.begin(), targets.end(), target) == targets.end())
+            targets.push_back(target);
+    };
+
+    for (std::uint32_t const dungeon : _dungeons)
+    {
+        // The low 24 bits are the dungeon id; the top byte is the LFG type the
+        // client packs alongside it.
+        LFGDungeonData const* const data = sLFGMgr->GetLFGDungeon(dungeon & 0x00FFFFFF);
+        if (!data)
+            continue;
+
+        if (data->type != LFG_TYPE_RANDOM)
+        {
+            add(data);
+            continue;
+        }
+
+        // LFGMgr::GetDungeonsByRandom is private, so rebuild its answer the way
+        // LoadLFGDungeons built the cache: every non-random dungeon sharing the
+        // random entry's group id.
+        for (std::uint32_t i = 0; i < sLFGDungeonStore.GetNumRows(); ++i)
+        {
+            LFGDungeonEntry const* const row = sLFGDungeonStore.LookupEntry(i);
+            if (!row)
+                continue;
+            LFGDungeonData const* const member = sLFGMgr->GetLFGDungeon(row->ID);
+            if (member && member->type != LFG_TYPE_RANDOM && member->group == data->group)
+                add(member);
+        }
+    }
+
+    return targets;
+}
+
 // Read back the AUTHORITATIVE, post-validation queue data — never the hook's
 // raw arguments.
 //
@@ -325,6 +387,7 @@ void DcDungeonQueueFillJob::TickPlanning()
     }
 
     _expansion = ReadDungeonExpansion();
+    _accessTargets = ReadAccessTargets();
 
     std::vector<DcDungeonQueueFillPlanner::Human> const humans = ReadHumans();
 
@@ -723,6 +786,12 @@ void DcDungeonQueueFillJob::TickEvicting()
             bot->SpawnCorpseBones();
         }
 
+        // A recycled death knight is still standing on Acherus and cannot far
+        // teleport ANYWHERE until it knows Death Gate — TeleportTo just returns
+        // false, so the bot would retry this hop for the whole placement
+        // window and the fill would time out with no visible reason.
+        DcDungeonAccess::UnlockTravel(bot);
+
         if (!bot->TeleportTo(spot.map, spot.x, spot.y, spot.z, spot.o))
         {
             LOG_WARN("playerbots.dungeonclear",
@@ -853,6 +922,19 @@ void DcDungeonQueueFillJob::TickSanitizing()
             LOG_INFO("playerbots.dungeonclear",
                      "QUEUEFILL {} credited {} with the death-knight starting chain (LFG lock)",
                      _id, bot->GetName());
+        }
+
+        // The same lock one layer out, and for the same reason: the pool
+        // character has never run the dungeon it is being queued for, so it
+        // satisfies none of that map's access rows either. Satisfy them the
+        // way DcTestRunJob does before it teleports a party in — the refusal
+        // is just as silent here, and it cost two Pit of Saron fills their
+        // whole setup budget before anyone could see why.
+        if (!slot.attuned)
+        {
+            for (auto const& [mapId, difficulty] : _accessTargets)
+                DcDungeonAccess::GrantEntry(bot, mapId, Difficulty(difficulty));
+            slot.attuned = true;
         }
 
         // Any LFG state at all is a queue we did not ask for (a leftover from

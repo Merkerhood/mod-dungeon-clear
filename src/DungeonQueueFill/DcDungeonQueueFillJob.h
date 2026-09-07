@@ -10,6 +10,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ObjectGuid.h"
@@ -75,6 +76,7 @@ public:
         bool sanitized = false;
         bool queueSent = false;
         bool queued = false;      // confirmed at LFG_STATE_QUEUED
+        bool attuned = false;     // credited with `_accessTargets` (see TickSanitizing)
         bool redrawn = false;     // already swapped for another draw once
         std::uint8_t requeues = 0;  // times put back after the core ejected it
     };
@@ -211,6 +213,17 @@ private:
     // the oldest one.
     std::uint32_t ReadDungeonExpansion() const;
 
+    // Every (map, difficulty) the queued set can put the party into, as the
+    // pairs DcDungeonAccess::GrantEntry takes. Resolved once at Planning: the
+    // set cannot change under us, because the job releases the moment the
+    // player leaves the queue.
+    //
+    // A random queue stores the single rDungeonId, whose own map is 0 and
+    // which carries no access rows of its own, so it is expanded to the pool
+    // it draws from — otherwise the roll can only ever land on the dungeons
+    // the bots happen to already qualify for.
+    std::vector<std::pair<std::uint32_t, std::uint8_t>> ReadAccessTargets() const;
+
     std::string _id;
     ObjectGuid _playerGuid;
     ObjectGuid _groupGuid;   // Empty for a solo queue
@@ -229,6 +242,10 @@ private:
     // id the bots must queue for; for a specific queue it is the
     // compatible-filtered list. Either way it is copied verbatim.
     std::set<std::uint32_t> _dungeons;
+
+    // (map, difficulty) pairs for `_dungeons`, read once at Planning. See
+    // ReadAccessTargets, and TickSanitizing for what is done with them.
+    std::vector<std::pair<std::uint32_t, std::uint8_t>> _accessTargets;
 
     // Hook arguments, for the observation log line only.
     std::uint8_t _requestedRoles = 0;

@@ -17,6 +17,15 @@ AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
 AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 
+# New files added: Util/DcDungeonAccess.{h,cpp}
+#   (making a throwaway pool bot ELIGIBLE for the destination. Player::TeleportTo
+#    refuses a far teleport silently in two places — the
+#    dungeon_access_requirements attunement rows (Pit of Saron and Halls of
+#    Reflection chain off each other, every TBC heroic wants its key
+#    achievement) and the death-knight Acherus lock — and both refusals surface
+#    only as a setup stage timing out. This satisfies each gate (quest marked
+#    rewarded, achievement/item granted, Death Gate learned) instead of
+#    bypassing PlayerCannotEnter wholesale.)
 # New files added: Util/DcBotProvisioning.{h,cpp}
 #   (the order-sensitive PlayerbotFactory sequence — strip, Randomize at the
 #    wanted level, force the spec and re-gear/re-glyph/re-enchant for it, pet,
