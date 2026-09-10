@@ -326,6 +326,36 @@ struct DcRunState
                                          // quorum as the party kills the wave
     uint8  posGauntletState = 0;         // DcPosGauntlet::State last logged
 
+    // --- Halls of Reflection: the altar and the escape (map 668) -------------
+    //
+    // TWO DRIVERS, TWO BLOCKS, and neither carries a decision clock the way the
+    // Pit of Saron block does — both kernels derive their state fresh from the
+    // instance every tick. What is stored here is what the WORLD cannot answer:
+    // which state was last LOGGED (so the driver prints one line per transition
+    // rather than one per tick), and the two one-shot report latches.
+    //
+    // horRestartLogged is scoped to one wipe episode. A leash wipe on this map is
+    // both expensive (waves 1-4 replay with every dead mob respawned) and
+    // INVISIBLE from every other probe — after it the counter reads 0, all 34 mobs
+    // are hidden again and nothing is fightable, which is indistinguishable from a
+    // healthy gap between waves. The one WARN line is the whole signal, so it must
+    // fire once per episode and not once per tick.
+    uint8  horWaveState = 0;             // DcHorWaves::State last logged
+    uint32 horWaveStateMs = 0;           // getMSTime() it was entered
+    bool   horRestartLogged = false;     // has this wipe episode been named?
+
+    // The escape's stall watchdog is keyed on the STOP rather than on the state,
+    // because the party legitimately cycles Hold -> Fight -> Hold several times at
+    // one wall and a per-state latch would re-report on every cycle. horEscapeStop
+    // is the stand point the latch belongs to; horEscapeStopHoldMs is when the
+    // Lich King first came inside LK_STALL_DIST of the leader with that wall still
+    // shut and its adds still up.
+    uint8  horEscapeState = 0;           // DcHorEscape::State last logged
+    uint32 horEscapeStateMs = 0;
+    uint8  horEscapeStop = 0;            // the stop the stall latch belongs to
+    uint32 horEscapeStopHoldMs = 0;
+    bool   horEscapeStallReported = false;
+
     // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
 
     DcThrottleSlot throttles[kDcThrottleCount]{};
@@ -397,6 +427,29 @@ struct DcRunState
         posWaveArmedLatched = false;
         posGauntletState = 0;
         ClearThrottle(DcThrottle::PosGauntletLog);
+    }
+
+    // Drop the Halls of Reflection block. Called from the run teardown for the
+    // ClearPosGauntlet reason and one this map has on its own: both events are
+    // Repeatable, and the wave event in particular re-arms after every leash wipe
+    // — so a run that comes back holding a spent restart latch would replay the
+    // whole first half without ever naming the wipe that caused it.
+    void ClearHor()
+    {
+        horWaveState = 0;
+        horWaveStateMs = 0;
+        horRestartLogged = false;
+        horEscapeState = 0;
+        horEscapeStateMs = 0;
+        horEscapeStop = 0;
+        horEscapeStopHoldMs = 0;
+        horEscapeStallReported = false;
+        ClearThrottle(DcThrottle::HorWaveLog);
+        ClearThrottle(DcThrottle::HorEscapeLog);
+        ClearThrottle(DcThrottle::HorIntroLog);
+        ClearThrottle(DcThrottle::HorThroneLog);
+        ClearThrottle(DcThrottle::HorEscapeGoLog);
+        ClearThrottle(DcThrottle::HorStallWarn);
     }
 
     void ClearTransit()

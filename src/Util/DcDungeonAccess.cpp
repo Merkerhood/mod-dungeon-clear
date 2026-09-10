@@ -26,6 +26,38 @@ namespace
             summary += ", ";
         summary += item;
     }
+
+    // HALLS OF REFLECTION (668) ONLY: the quest that unlocks the SHORTCUT.
+    //
+    // This is the one grant here that is not an entry gate. The dungeon's whole
+    // first act is a gossip on Jaina/Sylvanas offering two options, and both are
+    // gated on the SELECTING player's quest log:
+    //
+    //   option 0  "Can you remove the sword?"   24710 (A) / 24712 (H)  -> 224.5s
+    //   option 1  "...I think I hear Arthas"    24500 (A) / 24802 (H)  ->  75.5s
+    //
+    // The first of those IS the dungeon_access_requirements row, so the loop below
+    // already rewards it and every bot the harness teleports in can start the full
+    // intro. The second is not required for anything; it only shortens the
+    // cutscene, and without it a party stands in an entrance corridor for three
+    // and a half minutes per run.
+    //
+    // WHY IT IS GRANTED ANYWAY, and what it costs. A ten-run battery on this map
+    // pays TWENTY-FIVE MINUTES for cutscenes that are identical in every
+    // mechanical respect: the skip path reaches the same DATA_INTRO, the same
+    // StartNextWave and the same wave 1, and the only things it removes are yells
+    // and RP walks. The plan's own test note asks for at least a third of the
+    // battery to run the FULL path anyway, which is what an ordinary human party
+    // gets — that is a run-selection question, not a reason to make every run slow.
+    //
+    // Faction is read from the ORIGINAL team, exactly as the access-requirement
+    // loop below does, so a bot never receives the opposite faction's quest.
+    // The map id is the CORE's own MAP_HALLS_OF_REFLECTION (AreaDefines.h, 668),
+    // which this TU already includes — Player::TeleportTo special-cases the same
+    // constant for this dungeon's entry lock, so sharing it keeps the two halves
+    // of "can this bot get in" naming the same map.
+    constexpr std::uint32_t QUEST_WRATH_OF_THE_LICH_KING_A = 24500;
+    constexpr std::uint32_t QUEST_WRATH_OF_THE_LICH_KING_H = 24802;
 }
 
 namespace DcDungeonAccess
@@ -53,6 +85,21 @@ namespace DcDungeonAccess
         std::string summary;
         if (UnlockTravel(bot))
             Append(summary, Acore::StringFormat("spell {} (Death Gate)", SPELL_DEATH_GATE));
+
+        // The Halls of Reflection intro shortcut — not an entry gate, so it is
+        // granted BEFORE the requirement lookup and survives the `!ar` early
+        // return below. See the note by the constants.
+        if (mapId == MAP_HALLS_OF_REFLECTION)
+        {
+            std::uint32_t const skip = bot->GetTeamId(true) == TEAM_HORDE
+                                           ? QUEST_WRATH_OF_THE_LICH_KING_H
+                                           : QUEST_WRATH_OF_THE_LICH_KING_A;
+            if (!bot->GetQuestRewardStatus(skip))
+            {
+                bot->SetRewardedQuest(skip);
+                Append(summary, Acore::StringFormat("quest {} (skips the 224.5s intro)", skip));
+            }
+        }
 
         DungeonProgressionRequirements const* ar =
             sObjectMgr->GetAccessRequirement(mapId, difficulty);

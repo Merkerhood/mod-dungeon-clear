@@ -919,3 +919,41 @@ AC_ADD_CONFIG_FILE("${CMAKE_CURRENT_LIST_DIR}/conf/mod_dungeon_clear.conf.dist")
 #    and does nothing about Overlord's Brand (69172), whose branded healer heals
 #    the boss for 5.5x. That is combat rotation and belongs on a mod-playerbots
 #    branch; DC has no seam that suppresses a bot's own heals.)
+
+# New files added: Data/Events/HallsOfReflectionEvents.cpp,
+#   Overrides/HallsOfReflectionDriver.cpp, Util/DcHorWaveDecision.h,
+#   Util/DcHorEscapeDecision.h, Action/DcHorStayAheadAction.cpp,
+#   t/TestHallsOfReflection.cpp, t/TestHallsOfReflectionRouteProbe.cpp
+#   (Halls of Reflection, map 668 — the first dungeon in this module where DC's
+#    pull/advance pipeline is the WRONG TOOL rather than a tool that needs help.
+#    There is no trash to clear and no boss to pull: Falric, Marwyn and all 34
+#    wave mobs pre-spawn invisible, NOT_SELECTABLE and SetImmuneToAll, and the
+#    instance activates them a wave at a time, on the FARTHEST player. Left to
+#    itself the clear walks the tank onto Marwyn's invisible, immune spawn and
+#    stands there — tr-20260907-100815-2, 5m38s, encounterMask 0x0, aborted by
+#    hand. Thirteen earlier attempts never got through the door at all (the
+#    24710/24712 attunement gate, fixed by 10fc340).
+#    So: TWO conditional in-combat drivers, which is one more than any other map
+#    has, and between them they own roughly three quarters of the run. Hook 32
+#    holds the altar from wave 1 to Marwyn's death — mostly by REFUSING, because
+#    the map's 70.5yd leash wipes the whole event and respawns every dead mob,
+#    and a bot that releases is locked out until the survivors wipe. Hook 35
+#    drives the escape, whose only real difficulty is geometry: four ice walls on
+#    an absolute clock, a Lich King who never pauses, a 10yd 7068-per-second ring
+#    and a 10 000-damage zap plus knockback for anyone who falls behind him along
+#    a path that runs -x -y. Both FSMs are pure kernels (Util/DcHorWaveDecision.h,
+#    Util/DcHorEscapeDecision.h).
+#    The roster row is the Nexus Frozen Commander shape, not the Pit of Saron
+#    one: "Escaped from Arthas" has DungeonEncounter.dbc rows 843/844 and NO
+#    instance_encounters row, so there is no credit entry AND no kill bit
+#    anywhere — completion is the instance's own boss-state slot, and
+#    encounterMask 0x3 is the EXPECTED final mask on a cleared run.
+#    Two module-wide changes come out of this map. The hold-fire rung's blanket
+#    tank exemption is now per-row, keyed on DcTargetExclusionRow::alsoTank,
+#    because the escape's Lich King (36954, unit_flags 0, no immunities) must
+#    have NO holder at all: he heals to 75% below 70, and one bot holding him as
+#    a victim makes DcCombatFlag::IsEngaged true for the party and freezes every
+#    MayDrive rung while he walks at them. And DungeonClearHorStayAheadAction
+#    (DcRel::HorStayAhead, 56) is a new per-bot survival rung that moves FORWARD
+#    rather than radially away — the generic hazard vacate's away-from-emitter
+#    bearing is the one direction that makes the zap rule worse.)

@@ -220,8 +220,41 @@ namespace
     //     There is no persistent volume for the placement or vacate machinery to
     //     act on.
 
-    constexpr std::array<DcHazardEmitter, 8> kEmitters = {{
+    // ---- Halls of Reflection (668): Remorseless Winter -------------------
+    //
+    // The escape's Lich King (36954) carries 69780 for the whole run, ticking
+    // 69781 every second for 7068 +/- 863 frost to everything within 10 yards.
+    // That is the largest per-second number in this table by an order of
+    // magnitude, and the row that models it is deliberately the WEAKEST kind
+    // here: a placement keep-out with NO vacateRadius.
+    //
+    // WHY NOT A VACATE ROW, when the damage plainly warrants one. Because
+    // DungeonClearHazardVacateAction retreats RADIALLY — a point directly away
+    // from the emitter, past its pulse — and on this encounter "away from him" is
+    // the single worst direction a bot can move. The path runs -x and -y, he
+    // follows the party down it, and every 2 seconds each player whose
+    // (p.x - lk.x) + (p.y - lk.y) exceeds 20 takes 10 000 damage AND A KNOCKBACK
+    // THAT THROWS THEM FURTHER BEHIND. A radial vacate fired on a bot that is
+    // already behind him aims it deeper into that rule, and the rule then
+    // reinforces itself. The correct move is FORWARD, along the path, to the
+    // party's stand point — which is a different action
+    // (DungeonClearHorStayAheadAction, relevance 56) and a different registry's
+    // job than this one.
+    //
+    // So this row does exactly the half a radial answer CAN do correctly: it
+    // keeps camp anchors, engage standoffs and skirt legs out of a 12yd cylinder
+    // around him — right for a bot that is AHEAD, which is where the whole party
+    // is meant to be — and leaves the behind case to the action that knows which
+    // way forward is. If DcHazardRegistry ever grows a "vacate toward a point"
+    // mode, this row is the first thing to fold into it.
+    //
+    // NOT WINDOWED, because the table has no mechanism for it and does not need
+    // one here: before the escape he is frozen at his spawn 36yd from where the
+    // party musters, and after it the run is over. A permanent 12yd keep-out
+    // around this creature is correct at every moment of the dungeon.
+    constexpr std::array<DcHazardEmitter, 9> kEmitters = {{
         //                    radius  zBand  vacate  hold  slack
+        { 668, 36954, /*Lich King, Remorseless Winter    */ 12.0f, 10.0f,  0.0f, 2.0f, 6.0f },
         { 552, 20869, /*Arcatraz Sentinel  (fought)      */ 22.0f, 12.0f,  0.0f, 2.0f, 6.0f },
         { 552, 21761, /*Destroyed Sentinel (leave once)  */ 15.0f, 12.0f, 15.0f, 2.0f, 6.0f },
         { 552, 21303, /*Defender Corpse                  */ 12.0f,  8.0f,  0.0f, 2.0f, 6.0f },
@@ -547,7 +580,7 @@ namespace
     // There is no GAMEOBJECT_TYPE_TRAP on map 658 and no creature on it carries a
     // permanent aura in creature_template_addon, so map 658 needs neither a
     // DcTrapHazard nor a DcHazardEmitter row.
-    constexpr std::array<DcGroundHazard, 11> kGroundHazards = {{
+    constexpr std::array<DcGroundHazard, 12> kGroundHazards = {{
         //                   radius  zBand  vacate  hold  slack
         // Cloud of Disease — the pool a dying Diseased Ghoul (10495) leaves.
         { 289, 17742, 8.0f, 6.0f, 5.0f, 2.0f, 6.0f },
@@ -570,6 +603,15 @@ namespace
         { 658, 69024, 7.0f, 6.0f, 4.0f, 2.0f, 6.0f },
         // Toxic Waste — Plagueborn Horror trash, every 8s. Same pool, 10%/2s.
         { 658, 70274, 7.0f, 6.0f, 4.0f, 2.0f, 6.0f },
+        // Well of Corruption — Marwyn, every 13s, on a random party member within
+        // 40yd. A 3yd persistent area aura lasting 8 seconds that applies 72383
+        // (+30% shadow damage taken) to anyone standing in it, in a fight whose
+        // every other ability is shadow. Sized like the Mojo Puddle row above,
+        // which is the same 3yd/short-duration shape: vacate 3 is the aura
+        // itself, radius 6 the placement keep-out. Kept tight on purpose — the
+        // pool lands under a party that is camped on the altar by a 70.5yd leash
+        // and cannot simply relocate, so the answer is a step, not a move.
+        { 668, 72362, 6.0f, 6.0f, 3.0f, 2.0f, 6.0f },
     }};
 
     // ---- the trap table --------------------------------------------------

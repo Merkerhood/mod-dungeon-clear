@@ -29,6 +29,7 @@ namespace
             RegisterHallsOfLightningRoute();
             RegisterUtgardePinnacleRoute();
             RegisterPitOfSaronRoute();
+            RegisterHallsOfReflectionRoute();
             return true;
         }();
         (void)seeded;

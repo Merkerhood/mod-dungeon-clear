@@ -117,4 +117,18 @@ void RegisterUtgardePinnacleHooks(ObjectiveHookRegistry::HookTable& out);
 // shares map 658's constants and its areatrigger forge with the controller.
 void RegisterPitOfSaronHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Halls of Reflection (map 668) — the intro gossip, the altar wave driver, the
+// throne-room cutscene, the point-of-no-return gossip and the escape driver.
+// See HallsOfReflectionDriver.cpp. Ids 31-35.
+//
+// TWO of the five are controllers, which is one more than any other map in the
+// module has, and that is what this dungeon is: hooks 32 and 35 own the party
+// for roughly three quarters of the run (there is nothing to pull between the
+// first gossip and Marwyn's death, and nothing but a footrace after the second).
+// Their arithmetic is in the pure kernels Util/DcHorWaveDecision.h and
+// Util/DcHorEscapeDecision.h. Hooks 31, 33 and 34 are the short kind that would
+// ordinarily live in this file's own table; they are in the driver's TU because
+// they share map 668's constants and its areatrigger forge with the controllers.
+void RegisterHallsOfReflectionHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif

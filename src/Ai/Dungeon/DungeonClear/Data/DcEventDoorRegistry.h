@@ -264,6 +264,31 @@ namespace DcEventDoorRegistry
             // preventing it.
             case 201885:  // Pit of Saron — Ice Wall (opens on Garfrost + Ick)
                 return true;
+
+            // --- Halls of Reflection (668) --------------------------------
+            //
+            // FOUR DOORS, all of them the instance's alone, and one of them is
+            // the reason this map needs the rows at all.
+            //
+            // GO 201976, the FRONT DOOR, is a real DOOR_TYPE_ROOM the party
+            // stands behind for nine minutes on purpose. instance_halls_of
+            // _reflection shuts it at the end of the intro and again for EVERY
+            // wave, and re-opens it when a wave wipes or when Marwyn dies. So it
+            // is shut for most of the first two thirds of the run with the whole
+            // party on the inside — and the one thing the module must never do
+            // there is treat it as a corridor blocker and auto-pause the run in
+            // front of it, or click it and fight the script for the state.
+            //
+            // DELIBERATELY NOT IsNavigationIgnored, for the Pit of Saron reason:
+            // the party never needs to path THROUGH any of these, so a run that
+            // does pause at one has regressed somewhere the module should be
+            // told about, and hiding them from navigation would mask that rather
+            // than prevent it.
+            case 201976:  // front door (shuts for the intro's end and every wave)
+            case 197341:  // the Arthas door (opens on Marwyn's death)
+            case 197342:  // the door before the throne (spawned open, never scripted)
+            case 201385:  // Ice Wall (SUMMONED at an Ice Wall Target; opens on WallCompleted)
+                return true;
             default:
                 return false;
         }

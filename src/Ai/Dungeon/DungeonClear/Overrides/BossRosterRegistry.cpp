@@ -68,6 +68,7 @@ namespace
             RegisterHallsOfStoneRoster(t);
             RegisterUtgardePinnacleRoster(t);
             RegisterPitOfSaronRoster(t);
+            RegisterHallsOfReflectionRoster(t);
             return t;
         }();
         return kPatches;

@@ -280,6 +280,36 @@ namespace
             // yield rather than a completion. Repeatable besides: a momentary Done
             // latches nothing.
             {658, 1},
+            // Halls of Reflection "Hold the altar": HorWavesDue is gated on
+            // GetPersistentData(PERSISTENT_DATA_INTRO), which is a STRICTLY
+            // STRONGER near-gate than a distance check. That flag is raised by
+            // exactly one thing — the intro script running to its last step — and
+            // the intro script is started by exactly one thing, the gossip on
+            // Jaina/Sylvanas that event 1 takes sixty yards inside the front door.
+            // It cannot read true with the party outside the altar chamber,
+            // because the instance SHUTS the front door three seconds before it is
+            // set and again for every wave. The window closes for ever when Marwyn
+            // dies. Its lone step (hook 32, HorDriveWaves) OWNS the travel — it
+            // walks the leader back to the camp — so an arrival step would add
+            // nothing, and Done is its "nothing to steer this tick" yield rather
+            // than a completion. Repeatable besides: a momentary Done latches
+            // nothing, and after a leash wipe the driver must re-arm.
+            {668, 2},
+            // Halls of Reflection "Escape the Lich King": HorEscapeDue is gated on
+            // GetBossState(DATA_LICH_KING) == IN_PROGRESS, which is the tightest
+            // near-gate in this list. That state is raised by exactly one line of
+            // the core — npc_hor_leader_secondAI's ACTION_START_LK_FIGHT_REAL —
+            // reached only through a gossip on a leader standing at
+            // LeaderEscapePos, which is only offered after the freeze cutscene,
+            // which is only reachable once the Frostsworn General is dead. The
+            // party is standing in the throne room when it flips, by construction.
+            // Its lone step (hook 35, HorDriveEscape) OWNS the travel — it walks
+            // the leader stand point to stand point down 679yd of escape path — so
+            // an arrival step would add nothing, and Done is its yield. Repeatable
+            // because the instance only resets the escape when the LAST player
+            // leaves the map, so a driver that came back must re-arm from whatever
+            // state it finds.
+            {668, 5},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)
@@ -842,6 +872,25 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // them, so the flag's usual cost (taking the combat tick off the stock
         // movers) is paid only while it is walking.
         {658, 1},
+        // Halls of Reflection "Hold the altar". The gaps between waves 1-2-3-4 and
+        // 6-7-8-9 are FIVE SECONDS — instance_halls_of_reflection cuts its 150s
+        // wave timer to 5000 the moment the last trash mob of a wave dies — and
+        // the two boss waves are continuous. An out-of-combat-only rung would get
+        // five seconds in every ninety, and it would stop running entirely once
+        // the party fell behind, which is exactly when the hold matters most: a
+        // party that falls behind gets scattered, and scattering past 70.5yd from
+        // the altar WIPES THE EVENT and respawns every dead mob. Note this driver
+        // yields the tick on every wave tick (the mobs come to the party — there
+        // is nothing to steer), so the flag's usual cost is paid only on the few
+        // ticks it is actually walking the tank back to the camp.
+        {668, 2},
+        // Halls of Reflection "Escape the Lich King". The strongest case in this
+        // list: npc_hor_lich_kingAI calls SetInCombatWithZone() on every player
+        // ONCE A SECOND for the whole four-to-six-minute escape, so a
+        // non-combat-only rung would get exactly zero ticks. The flag is not an
+        // optimisation here, it is the difference between the event existing and
+        // not. It yields for most of every wall fight.
+        {668, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1264,6 +1313,31 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // cancel the walk-in the tick after it is issued and the encounter would
         // never start.
         {658, 2},
+        // Halls of Reflection "Start the intro": hook 31 walks the tank the last
+        // yards to Jaina/Sylvanas itself, through the long-haul funnel, before it
+        // can send a gossip the whole dungeon is behind. The anchored per-tick
+        // hold would cancel that walk-in the tick after it is issued.
+        {668, 1},
+        // Halls of Reflection "Hold the altar": hook 32 issues the walk back to
+        // the camp itself — from wherever a wave ended, which can be sixty yards
+        // across the chamber. The flag is also what makes a Done RETURN YIELD,
+        // and on this map that is the half that decides fights: the driver has
+        // NOTHING to steer for the whole of every wave, because the mobs walk to
+        // the party by design, so every tick it claimed would be a tick the tank
+        // did not swing across ten waves and two bosses.
+        {668, 2},
+        // Halls of Reflection "The throne room": hooks 33 and 34 own two walks the
+        // anchor cannot express — 25yd from the west door INTO areatrigger 5605's
+        // box (the anchor is deliberately outside it, so arriving must not fire
+        // the cutscene), and then the hold on the muster point while the party
+        // tops off before the point of no return.
+        {668, 4},
+        // Halls of Reflection "Escape the Lich King": hook 35 walks the tank stand
+        // point to stand point down 679yd of escape path, on legs of 100-176yd,
+        // against a Lich King who never pauses. It yields for most of every wall
+        // fight — four summon batches totalling 831k-1.17M HP have to be killed by
+        // a party whose leader is running a rung above the stock combat movers.
+        {668, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -2121,6 +2195,25 @@ TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
         // every hostile on it is a scripted summon the driver already holds ground
         // for.
         {658, 1},
+        // Halls of Reflection "Hold the altar", and here the flag is not a
+        // preference but a survival rule. The pull's Idle branch answers unplanned
+        // aggro by walking a fresh camp BACK along the route until it finds ground
+        // clear of hostiles — and on this map "back" is toward the front door,
+        // which is 65yd from CenterPos against a leash of 70.5. ONE drag leg wipes
+        // the wave event and replays four waves with every dead mob respawned.
+        // Dropping the scout-lag with it is the other half of the same win: a wave
+        // activation opens on the FARTHEST player, so a tight clump around the
+        // tank is the whole defence and a tank scouting fifteen yards ahead of its
+        // party is the opposite of one. There is nothing to gain either — the
+        // altar chamber has no trash at all; all 34 mobs in it are the waves.
+        {668, 2},
+        // Halls of Reflection "Escape the Lich King". The same reason one step
+        // harder: a camp dragged backward here is dragged toward a Lich King who
+        // is permanently 10-30yd behind the party, and every yard back is closer
+        // to a 7068-per-second frost ring and a 10 000-damage zap whose knockback
+        // throws the victim further back still. The corridor has no static trash
+        // on it either — every hostile is a summon the encounter spawns at him.
+        {668, 5},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

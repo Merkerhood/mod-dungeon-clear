@@ -2945,6 +2945,639 @@ namespace DcPitOfSaron
 
 void RegisterPitOfSaronEvents(std::vector<DungeonEvent>& out);
 
+// --- Halls of Reflection (map 668) ---------------------------------------
+//
+// THE MOST SCRIPT-DRIVEN 5-MAN IN WOTLK, and the first map in this module where
+// DC's pull/advance pipeline is the WRONG TOOL for most of the dungeon rather
+// than merely a tool that needs help.
+//
+// Three properties shape everything below.
+//
+//   1. NOTHING IS PULLABLE. Falric, Marwyn and all 34 wave mobs are PRE-SPAWNED
+//      invisible, UNIT_FLAG_NOT_SELECTABLE and SetImmuneToAll. The instance
+//      activates them one wave at a time and THEY attack — on the FARTHEST
+//      player. There is no trash to clear and no boss to pull between the first
+//      gossip and Marwyn's death, so a conditional driver owns the party for
+//      that whole stretch (event 2) and the derived Falric/Marwyn anchors are
+//      outranked while it does. tr-20260907-100815-2 is what happens without
+//      it: the tank routed past Jaina to Marwyn's invisible, immune spawn and
+//      stood on him for five minutes.
+//
+//   2. THE MAP HAS A HARD LEASH WITH A SILENT, EXPENSIVE FAILURE MODE. While a
+//      wave is live, ANY non-GM player more than MAX_DIST_FROM_CENTER_IN_COMBAT
+//      (70.5yd, 2D) from CenterPos wipes the event and replays waves 1-4 with
+//      every dead mob respawned. The front door is 65yd from centre and the
+//      entrance is 103. A bot that RELEASES during waves is locked out
+//      (Map::CannotEnter special-cases 668 through IsEncounterInProgress) until
+//      the survivors wipe or kill Marwyn.
+//
+//   3. THE LICH KING (36954) IS A PLAIN HOSTILE CREATURE WITH unit_flags 0. No
+//      immunity flag protects him, he force-flags every player into combat every
+//      second, and stock playerbots' assist triggers WILL attack him. He heals
+//      himself to 75% below 70%, so the damage is pure waste — but the real cost
+//      is movement: one bot holding him as a victim makes DcCombatFlag::IsEngaged
+//      true for the party and freezes every MayDrive rung with a Lich King
+//      walking 1.4yd/s behind. See NPC_LICH_KING and the three registry rows
+//      that keep the party off him (DcTargetExclusionRegistry with alsoTank,
+//      DcNeverTargetRegistry, and the widened hold-fire rung).
+namespace DcHallsOfReflection
+{
+    constexpr uint32 MAP_ID = 668;
+
+    // --- the roster ---------------------------------------------------------
+    //
+    // TWO derived bosses and one patched-in row. Falric and Marwyn have
+    // instance_encounters rows (839/840 and 841/842) AND `creature` spawns, so
+    // BossSpawnIndex derives both correctly — this map does NOT have Pit of
+    // Saron's silent-short-roster defect.
+    //
+    // The escape does not derive, and cannot: "Escaped from Arthas" has
+    // DungeonEncounter.dbc rows 843/844 but NO instance_encounters row at all, so
+    // there is no credit entry to join on and no completion BIT to read. Its only
+    // observable completion is GetBossState(DATA_LICH_KING) == DONE, which
+    // npc_hor_lich_kingAI sets when he reaches the last waypoint with all four
+    // walls down. That is the Nexus Frozen Commander shape: MakeBoss(...,
+    // doneBossStateIndex = DATA_LICH_KING), which parks encounterIndex at 64 so
+    // the completed-mask check never consults a bit that does not exist.
+    //
+    // SO encounterMask 0x3 IS THE EXPECTED FINAL MASK on a fully cleared run.
+    // There is no third bit and a run that reports one has read something else.
+    constexpr uint32 NPC_FALRIC = 38112;
+    constexpr uint32 NPC_MARWYN = 38113;
+
+    constexpr uint32 BIT_FALRIC = 0;
+    constexpr uint32 BIT_MARWYN = 1;
+
+    // The escape Lich King — a REAL creature with a spawn row at
+    // (5552.77, 2262.57, 733.01), faction 2102, unit_flags 0, speed_run 0.86,
+    // HealthModifier 2000, NullCreatureAI. See property 3 above.
+    constexpr uint32 NPC_LICH_KING = 36954;
+
+    // The INTRO Lich King (37226), the one that walks into the throne room during
+    // the gossip cutscene and later stands frozen. Immune and passive throughout,
+    // so AttackersValue already rejects him — he is named here only so the
+    // never-target rows can be complete, and so nobody confuses the two entries.
+    constexpr uint32 NPC_LICH_KING_INTRO = 37226;
+
+    // Uther (37225) — the RP ghost at the altar during the intro. Never hostile;
+    // a never-target row so no DC scan ever proposes him.
+    constexpr uint32 NPC_UTHER = 37225;
+
+    // THE PART-1 LEADER'S INSTANCE GUID KEY IS ALWAYS 37223, ON BOTH FACTIONS,
+    // and this is the single most useful fact in this block. instance_halls_of
+    // _reflection::OnCreatureCreate runs InstanceScript::OnCreatureCreate (which
+    // stores the object under its CURRENT entry, 37223) BEFORE it UpdateEntry()s
+    // the creature to 37221 for an Alliance instance. So GetGuidData(37223)
+    // resolves the leader whichever faction is inside, and a lookup on 37221
+    // resolves nothing at all. Same shape for part 2: the key is 37554.
+    constexpr uint32 NPC_LEADER_PART1     = 37223;  // Sylvanas; Jaina 37221 on Alliance
+    constexpr uint32 NPC_LEADER_PART1_ALT = 37221;
+    constexpr uint32 NPC_LEADER_PART2     = 37554;  // Sylvanas; Jaina 36955 on Alliance
+    constexpr uint32 NPC_LEADER_PART2_ALT = 36955;
+
+    // The Frostsworn General and his Spiritual Reflections. NOT an encounter —
+    // he has no DungeonEncounter row and no kill bit; his death sets the
+    // persistent flag that makes the throne-room areatrigger live. Mandatory
+    // regardless: at_hor_shadow_throne refuses while that flag is clear.
+    constexpr uint32 NPC_FROSTSWORN_GENERAL   = 36723;
+    constexpr uint32 NPC_SPIRITUAL_REFLECTION = 37068;
+
+    // The four Ice Wall Targets. The Ice Wall GO (201385) is SUMMONED at these
+    // and never DB-spawned, so the targets are the only author-time handle on
+    // where a wall will stand. Never-targeted: they are invisible world triggers.
+    constexpr uint32 NPC_ICE_WALL_TARGET = 37014;
+
+    // THE 34 PRE-SPAWNED WAVE MOBS, by entry and DB count:
+    //   38172 Phantom Mage        x6     38173 Spectral Footman   x10
+    //   38175 Ghostly Priest      x6     38176 Tortured Rifleman  x6
+    //   38177 Shadowy Mercenary   x6
+    // Every one of them exists from map load, hidden and immune, and is activated
+    // exactly once across the ten waves. That is why the wave driver counts only
+    // SELECTABLE, non-IMMUNE_TO_PC members of this list: a bare aliveness probe
+    // would read "34 wave mobs are up" before the intro has even started.
+    constexpr uint32 NPC_WAVE_MAGE      = 38172;
+    constexpr uint32 NPC_WAVE_FOOTMAN   = 38173;
+    constexpr uint32 NPC_WAVE_PRIEST    = 38175;
+    constexpr uint32 NPC_WAVE_RIFLEMAN  = 38176;
+    constexpr uint32 NPC_WAVE_MERCENARY = 38177;
+
+    // The Phantom Mage's 40s summon. It does NOT count toward the wave clear and
+    // despawns on its own, so it is deliberately absent from the wave probe list.
+    constexpr uint32 NPC_PHANTOM_HALLUCINATION = 38567;
+
+    // The escape adds, summoned AT THE LICH KING in four batches and sent to the
+    // leader's current stop. JustSummoned puts 1000 threat on — and AttackStart()s
+    // — the player NEAREST THE LICH KING, so the rearmost bot takes every opener.
+    constexpr uint32 NPC_RAGING_GHOUL         = 36940;
+    constexpr uint32 NPC_RISEN_WITCH_DOCTOR   = 36941;
+    constexpr uint32 NPC_LUMBERING_ABOMINATION = 37069;
+
+    // --- gameobjects --------------------------------------------------------
+    //
+    // All four are script-only: the instance opens and shuts them and a bot
+    // clicking one would fight the script for the state. The front door in
+    // particular closes at the END OF THE INTRO and again for every wave, which
+    // is exactly when the party is standing behind it by design.
+    constexpr uint32 GO_FRONT_DOOR         = 201976;  // (5264.61, 1959.44)
+    constexpr uint32 GO_ARTHAS_DOOR        = 197341;  // (5358.96, 2058.75)
+    constexpr uint32 GO_DOOR_BEFORE_THRONE = 197342;  // (5520.77, 2229.04)
+    constexpr uint32 GO_DOOR_AFTER_THRONE  = 197343;  // (5582.81, 2230.62)
+    constexpr uint32 GO_ICE_WALL           = 201385;  // summoned at the wall targets
+
+    // The two doors an authored leg passes, so the route rows can declare them
+    // rather than meet them. Both are opened by the instance well before the
+    // party arrives (the Arthas door on Marwyn's death; the west throne door is
+    // spawned open and never scripted), so the DOOR_AHEAD flags are belt-and-
+    // braces — but a run that DOES pause at one has regressed, and a declared
+    // door is what makes that legible instead of a silent auto-pause.
+    constexpr float GO_ARTHAS_DOOR_X = 5358.96f;
+    constexpr float GO_ARTHAS_DOOR_Y = 2058.75f;
+    constexpr float GO_ARTHAS_DOOR_Z = 707.724f;
+
+    // --- instance data slots, HAND-COPIED from halls_of_reflection.h ---------
+    //
+    // `enum Data` is one enum holding THREE unrelated key spaces — boss-state
+    // indices, GetData/SetData slots and DoAction ids — with MAX_ENCOUNTER
+    // occupying slot 3 in the middle of it. Never hand-count it; these are the
+    // values the compiler assigns, transcribed.
+    //
+    //   DATA_FALRIC 0 · DATA_MARWYN 1 · DATA_LICH_KING 2 · MAX_ENCOUNTER 3
+    //   DATA_INTRO 4 · DATA_FROSTSWORN_GENERAL 5 · DATA_BATTERED_HILT 6 (= for SAI)
+    //   DATA_LK_INTRO 7 · DATA_WAVE_NUMBER 8 · DATA_LK_BATTLE 9 · DATA_SHIP_CAPTAIN 10
+    //   ACTION_SHOW_TRASH 11 ... ACTION_DELETE_ICE_WALL 17
+    //
+    // AND THESE FOUR ARE ALSO GetGuidData KEYS FOR FALRIC AND MARWYN, which is the
+    // one place this map's two lookup conventions differ and is worth stating
+    // where both are visible.
+    //
+    // InstanceScript::LoadObjectData stores `objectInfo[entry] = type` and
+    // OnCreatureCreate files the guid under the TYPE — so GetGuidData()'s key is
+    // the SECOND column of instance_halls_of_reflection's creatureData table. Most
+    // of this map's rows repeat the entry there ({ NPC_SYLVANAS_PART1,
+    // NPC_SYLVANAS_PART1 }, and likewise the part-2 leader, the Lich King and the
+    // Frostsworn General), which is why every other lookup in this module passes
+    // an entry. Falric and Marwyn are the exceptions — { NPC_FALRIC, DATA_FALRIC }
+    // and { NPC_MARWYN, DATA_MARWYN } — so they are filed under 0 and 1, and a
+    // lookup on 38112 returns ObjectGuid::Empty for ever.
+    constexpr uint32 DATA_FALRIC      = 0;
+    constexpr uint32 DATA_MARWYN      = 1;
+    constexpr uint32 DATA_LICH_KING   = 2;
+    constexpr uint32 DATA_WAVE_NUMBER = 8;
+
+    // GetData(DATA_BATTERED_HILT) returns _batteredHiltStatus, which the leader
+    // gossip does NOT touch — SetData(DATA_BATTERED_HILT, 1) only stores the
+    // PERSISTENT flag. So this is NOT a usable "somebody already gossiped" probe;
+    // PERSISTENT_DATA_BATTERED_HILT below is. Named so nobody reaches for it.
+    constexpr uint32 DATA_BATTERED_HILT = 6;
+
+    // The persistent-data vector (SetPersistentDataCount(4)). All four survive a
+    // map reload, which is what makes them safe to read as one-way progress.
+    constexpr uint32 PERSISTENT_DATA_INTRO              = 0;
+    constexpr uint32 PERSISTENT_DATA_FROSTSWORN_GENERAL = 1;
+    constexpr uint32 PERSISTENT_DATA_LK_INTRO           = 2;
+    constexpr uint32 PERSISTENT_DATA_BATTERED_HILT      = 3;
+
+    // --- the intro gossip ---------------------------------------------------
+    //
+    // Menu 11031 (Jaina) / 10950 (Sylvanas), two options, and the requirement is
+    // on the SELECTING BOT rather than on the instance:
+    //
+    //   position 0  "Can you remove the sword?"   quest 24710 (A) / 24712 (H)
+    //               -> ACTION_START_INTRO, the full 224.5s / 209s cutscene
+    //   position 1  "...I think I hear Arthas"    quest 24500 (A) / 24802 (H)
+    //               -> ACTION_SKIP_INTRO, the 75.5s version
+    //
+    // 24710/24712 is ALSO the dungeon_access_requirements row, so
+    // DcDungeonAccess::GrantEntry already rewards it for every bot it teleports —
+    // which is what makes option 0 always available in a harness run. It
+    // additionally rewards 24500/24802 for this map so the SKIP is available too;
+    // see DcDungeonAccess.cpp for why that is a test-harness convenience and not
+    // a behaviour change for an ordinary party.
+    //
+    // Option positions, not OptionIDs: DungeonEventExecutor::ResolveGossipListId
+    // translates. The two happen to coincide here (the DB rows are OptionID 0 and
+    // 1) but the skip option is ABSENT for a bot without the second quest, so
+    // position 1 must only ever be asked for when that quest is rewarded.
+    constexpr int32 GOSSIP_OPTION_INTRO_FULL = 0;
+    constexpr int32 GOSSIP_OPTION_INTRO_SKIP = 1;
+
+    constexpr uint32 QUEST_ACCESS_ALLIANCE = 24710;  // Deliverance from the Pit
+    constexpr uint32 QUEST_ACCESS_HORDE    = 24712;
+    constexpr uint32 QUEST_SKIP_ALLIANCE   = 24500;  // Wrath of the Lich King
+    constexpr uint32 QUEST_SKIP_HORDE      = 24802;
+
+    // --- geometry: the wave phase -------------------------------------------
+    //
+    // CenterPos, verbatim from halls_of_reflection.h. Every leash on this map is
+    // measured from it in 2D.
+    constexpr float CENTER_X = 5309.459473f;
+    constexpr float CENTER_Y = 2006.478516f;
+    constexpr float CENTER_Z = 711.595459f;
+
+    // MAX_DIST_FROM_CENTER_IN_COMBAT / MAX_DIST_FROM_CENTER_TO_START, verbatim.
+    // The first wipes the event; the second is what the AUTOMATIC restart waits
+    // for (every non-GM player alive and inside it). There is no gossip to
+    // re-start the waves — standing in the right place is the whole mechanism.
+    constexpr float LEASH_COMBAT  = 70.5f;
+    constexpr float LEASH_RESTART = 40.0f;
+
+    // WHERE THE PARTY HOLDS THE ALTAR, and it is deliberately not CenterPos.
+    //
+    // Three constraints meet here. The RP actors (the leader, Uther and the intro
+    // Lich King) stand ON the altar for the whole intro and the party must not be
+    // inside that. Marwyn's Well of Corruption (72362) drops a 3yd void zone under
+    // a random member and somebody has to be able to step out of it. And the point
+    // has to sit far enough inside the 70.5yd leash that a 4s Defiling Horror fear
+    // (~28yd) plus a Circle of Destruction knockback (10yd) cannot carry a feared
+    // bot past it.
+    //
+    // 19.8yd from CenterPos on the ENTRANCE side satisfies all three: 50.7yd of
+    // leash margin, off the altar, and inside LEASH_RESTART so the automatic
+    // wave restart is satisfied by the party simply being here.
+    constexpr float CAMP_X = 5296.00f;
+    constexpr float CAMP_Y = 1992.00f;
+    constexpr float CAMP_Z = 709.30f;
+    constexpr float CAMP_LEASH = 6.0f;
+
+    // Grid-scan radius for the wave probe, from the leader standing at the camp.
+    // The pre-spawn ring runs x 5275..5344, y 1972..2043 — 45yd out from centre
+    // at its widest, so ~65yd from the camp. 100 covers it with room for a mob
+    // that has walked at a straggler.
+    constexpr float WAVE_SCAN = 100.0f;
+
+    // --- geometry: the anchors ----------------------------------------------
+    //
+    // OBJ(1), the intro. SpawnPos — where the leader walks to and offers the
+    // gossip — is (5263.22, 1950.96, 707.70); this anchor is 7.2yd short of it on
+    // the entrance side, so ARRIVING puts the tank in interact range without
+    // standing inside the NPC.
+    constexpr float INTRO_X = 5258.00f;
+    constexpr float INTRO_Y = 1946.00f;
+    constexpr float INTRO_Z = 707.70f;
+    constexpr float INTRO_ARRIVE = 6.0f;
+
+    // OBJ(2), the Frostsworn General. His spawn is (5413.92, 2116.50, 707.70) and
+    // he EVADES IF DRAGGED MORE THAN 30YD FROM HOME, so the anchor sits 28.6yd
+    // short of him in the corridor — close enough that arriving is the approach,
+    // far enough that the arrival itself is not already inside the fight.
+    constexpr float GENERAL_X = 5395.00f;
+    constexpr float GENERAL_Y = 2095.00f;
+    constexpr float GENERAL_Z = 707.70f;
+    constexpr float GENERAL_ARRIVE = 8.0f;
+
+    // His home and his evade radius, for the FightInPlaceRegistry box.
+    constexpr float GENERAL_HOME_X = 5413.92f;
+    constexpr float GENERAL_HOME_Y = 2116.50f;
+    constexpr float GENERAL_HOME_Z = 707.695f;
+    constexpr float GENERAL_EVADE_RADIUS = 30.0f;
+
+    // OBJ(3), the throne room. The anchor is the WEST door (197342), which is
+    // spawned open and never scripted — and, crucially, OUTSIDE areatrigger
+    // 5605's box, so arriving here cannot fire the cutscene before the party has
+    // formed up.
+    constexpr float THRONE_X = 5520.00f;
+    constexpr float THRONE_Y = 2229.00f;
+    constexpr float THRONE_Z = 733.00f;
+    constexpr float THRONE_ARRIVE = 8.0f;
+
+    // --- areatrigger 5605, at_hor_shadow_throne -----------------------------
+    //
+    // A BOX, not a sphere (AreaTrigger.dbc box_length / box_width / box_height /
+    // box_yaw are set and radius is 0), 20.5 x 94.5 x 72.1 at yaw 3.942 across
+    // the throne room's mouth. The hook forges from a probed on-mesh point at its
+    // centre.
+    //
+    // IT IS SAFE TO CROSS EARLY. at_hor_shadow_throne no-ops unless
+    // PERSISTENT_DATA_FROSTSWORN_GENERAL is set and PERSISTENT_DATA_LK_INTRO is
+    // not, and crossing it while either is wrong consumes NOTHING — re-crossing
+    // later works. That is the opposite of Pit of Saron's gate spheres and it is
+    // why this hook needs no arming state: the forge is level-triggered and the
+    // server side is level-safe too.
+    constexpr uint32 AREATRIGGER_THRONE = 5605;
+    constexpr float  AT_THRONE_X = 5539.65f;
+    constexpr float  AT_THRONE_Y = 2247.05f;
+    constexpr float  AT_THRONE_Z = 733.01f;
+    constexpr float  AT_THRONE_LENGTH = 20.5f;
+    constexpr float  AT_THRONE_WIDTH  = 94.5f;
+    constexpr float  AT_THRONE_HEIGHT = 72.1f;
+    constexpr float  AT_THRONE_YAW    = 3.942f;
+
+    // The probed stand point the hook forges from — the box centre, snapped.
+    constexpr float FORGE_X = 5539.65f;
+    constexpr float FORGE_Y = 2247.05f;
+    constexpr float FORGE_Z = 733.01f;
+    constexpr float FORGE_LEASH = 5.0f;
+
+    // --- geometry: the escape ------------------------------------------------
+    //
+    // LeaderEscapePos — where Jaina/Sylvanas stands after the freeze cutscene and
+    // where her escape gossip is offered. The party walks PAST the frozen Lich
+    // King to reach her; he sits 36yd south-west of it.
+    constexpr float LEADER_ESCAPE_X = 5576.80566f;
+    constexpr float LEADER_ESCAPE_Y = 2235.55004f;
+    constexpr float LEADER_ESCAPE_Z = 733.012268f;
+
+    // The frozen Lich King's spawn, i.e. where he stands until the gossip.
+    constexpr float LK_SPAWN_X = 5552.77f;
+    constexpr float LK_SPAWN_Y = 2262.57f;
+    constexpr float LK_SPAWN_Z = 733.012f;
+
+    // Where the party musters before the point of no return. Three yards short of
+    // the leader on the approach side, so the gather does not stand on her.
+    constexpr float MUSTER_X = 5573.80f;
+    constexpr float MUSTER_Y = 2235.55f;
+    constexpr float MUSTER_Z = 733.01f;
+    constexpr float MUSTER_LEASH = 4.0f;
+
+    // THE ESCAPE PATH, verbatim from PathWaypoints[19] in halls_of_reflection.h,
+    // and the six WP_STOP indices the leader actually stops at. The party's own
+    // stand points are derived from these (STAND_* below), never from them
+    // directly: the leader stops ~24yd short of each wall and the party must be
+    // AHEAD of her, not on her.
+    //
+    // Direction of travel is -x AND -y for the whole run, which is what makes the
+    // Lich King's own "is this player behind me" test — (p.x - lk.x) + (p.y -
+    // lk.y) > 20 — a single scalar rather than a bearing.
+    constexpr uint32 PATH_WP_COUNT = 19;
+    constexpr uint32 STOP_COUNT = 6;
+    inline constexpr uint8 WP_STOP[STOP_COUNT] = { 0, 5, 8, 10, 14, 18 };
+
+    struct HorPoint { float x, y, z; };
+
+    inline constexpr HorPoint PATH_WAYPOINTS[PATH_WP_COUNT] = {
+        { 5588.055664f, 2229.327393f, 733.011353f },  //  0  start (WP_STOP 0)
+        { 5605.567383f, 2203.448486f, 731.304626f },  //  1
+        { 5607.415039f, 2189.225098f, 731.022217f },  //  2
+        { 5598.958984f, 2169.660156f, 730.919800f },  //  3
+        { 5586.018066f, 2149.685303f, 731.090759f },  //  4
+        { 5558.182617f, 2103.950928f, 731.263000f },  //  5  stop 1 (ice wall 1)
+        { 5534.202637f, 2054.254150f, 731.131165f },  //  6
+        { 5526.244629f, 2023.878540f, 732.408264f },  //  7
+        { 5513.573242f, 1996.611206f, 735.115723f },  //  8  stop 2 (ice wall 2)
+        { 5478.590820f, 1938.773315f, 741.926697f },  //  9
+        { 5456.632324f, 1902.801025f, 747.220886f },  // 10  stop 3 (ice wall 3)
+        { 5423.630371f, 1858.672363f, 754.901367f },  // 11
+        { 5402.314453f, 1829.705811f, 758.029907f },  // 12
+        { 5374.380371f, 1802.807007f, 760.831238f },  // 13
+        { 5340.560059f, 1772.791016f, 766.478149f },  // 14  stop 4 (ice wall 4)
+        { 5318.707031f, 1750.379395f, 771.635132f },  // 15
+        { 5297.951660f, 1725.419067f, 778.211548f },  // 16
+        { 5279.251953f, 1697.474365f, 785.700256f },  // 17
+        { 5262.773926f, 1669.980103f, 784.301697f },  // 18  the end (WP_STOP 5)
+    };
+
+    // The four Ice Wall Targets, in wall order — their live `creature` rows. The
+    // wall GO is summoned ON these, so they are also where the driver looks for
+    // the GO when it asks whether a wall has opened.
+    inline constexpr HorPoint ICE_WALL_TARGETS[4] = {
+        { 5550.62f, 2079.75f, 731.715f },
+        { 5504.20f, 1974.70f, 737.318f },
+        { 5445.09f, 1881.48f, 752.654f },
+        { 5321.39f, 1758.07f, 770.419f },
+    };
+
+    // WHERE THE PARTY STANDS AT EACH WALL, and this is the one piece of authored
+    // geometry on this map that the whole escape rides on.
+    //
+    // Each point is its WP_STOP, offset STAND_AHEAD_YD further along the bearing
+    // to that wall's Ice Wall Target — i.e. a few yards AHEAD of the leader, on
+    // the far side of her from the Lich King. Three things fall out of that:
+    //
+    //   * the party is never inside the 12.5yd circle the CATCH is measured in
+    //     (that check is on the LEADER, not on players, so the only thing a
+    //     player can do about it is clear the wall in time);
+    //   * the party is never BEHIND him in the (x + y) sense, so the 2-second
+    //     10 000-damage Zap (70653) never fires;
+    //   * the adds, which spawn AT the Lich King and run to the LEADER'S stop,
+    //     arrive from behind the party and are fought facing back down the path.
+    //
+    // The offset is small on purpose. The leader stops 24-25yd short of each wall
+    // and the wall itself blocks further movement, so there is room for ~5yd and
+    // no more; and standing further forward would put the witch doctors (20yd
+    // shadow bolt, cast from the Lich King side) further from the melee.
+    constexpr float STAND_AHEAD_YD = 5.0f;
+
+    // Derived offline from WP_STOP + STAND_AHEAD_YD along the bearing to each
+    // wall target, then snapped to the mesh by t/TestHallsOfReflectionRouteProbe
+    // (which re-asserts both the offset and the on-mesh property, so an mmaps
+    // regen that moves this corridor trips red rather than parking the party
+    // inside a wall).
+    inline constexpr HorPoint STAND_POINTS[4] = {
+        { 5556.69f, 2099.18f, 731.35f },  // wall 1
+        { 5511.61f, 1992.01f, 735.58f },  // wall 2
+        { 5454.25f, 1898.40f, 748.34f },  // wall 3
+        { 5336.59f, 1769.75f, 767.29f },  // wall 4
+    };
+
+    // How close to a stand point counts as "there". Generous: this is a party
+    // holding ground, not a trigger to be stood inside.
+    constexpr float STAND_LEASH = 6.0f;
+
+    // How near a WP_STOP the leader has to be before she counts as standing AT
+    // it. Wider than a leash because the number it feeds is an INDEX, not a
+    // position: she is either waiting at a stop or running between two of them,
+    // and eight yards separates those cleanly without ever resolving to the wrong
+    // one (the stops are 100-176yd apart).
+    constexpr float LEADER_STOP_SNAP = 8.0f;
+
+    // WHICH WP_STOP a point at (x, y) is at or heading for — the leader's own
+    // position turned into the escape's state variable.
+    //
+    // currentWall is private to npc_hor_lich_kingAI and nothing exposes it, so
+    // this is how many walls are down. It is also the number the party actually
+    // needs, because the party stands ahead of HER and not ahead of him: she
+    // waits at a stop until WallCompleted fires and then runs to the next one
+    // immediately, so her position tracks the wall count with no lag worth
+    // measuring.
+    //
+    // "The nearest stop within LEADER_STOP_SNAP, else the next one along the
+    // path" — and because the path runs strictly -x AND -y, "the next one along"
+    // is simply the first stop whose (x + y) is below hers. That resolves the
+    // in-between case (running from stop 2 to stop 3) to the stop she is running
+    // TO, which is where the party should be walking as well.
+    //
+    // Pure, so t/TestHallsOfReflection.cpp can pin it against the real waypoints.
+    inline uint8 StopIndexNear(float x, float y)
+    {
+        uint8 best = 0;
+        float bestDist = -1.0f;
+        for (uint8 i = 0; i < STOP_COUNT; ++i)
+        {
+            HorPoint const& p = PATH_WAYPOINTS[WP_STOP[i]];
+            float const dx = p.x - x;
+            float const dy = p.y - y;
+            float const d = dx * dx + dy * dy;
+            if (bestDist < 0.0f || d < bestDist)
+            {
+                bestDist = d;
+                best = i;
+            }
+        }
+
+        if (bestDist >= 0.0f && bestDist <= LEADER_STOP_SNAP * LEADER_STOP_SNAP)
+            return best;
+
+        float const sum = x + y;
+        for (uint8 i = 0; i < STOP_COUNT; ++i)
+        {
+            HorPoint const& p = PATH_WAYPOINTS[WP_STOP[i]];
+            if (p.x + p.y < sum)
+                return i;
+        }
+        return static_cast<uint8>(STOP_COUNT - 1);
+    }
+
+    // Where the party stands for a given target stop. 1..4 are the authored
+    // points a few yards past each of the leader's wall stops; 5 is WP18 itself,
+    // where the wall geometry is over and there is nothing left to be ahead of.
+    inline HorPoint StandPointFor(uint8 targetStop)
+    {
+        if (targetStop >= 5)
+            return PATH_WAYPOINTS[18];
+        uint8 const idx = targetStop >= 1 ? static_cast<uint8>(targetStop - 1) : 0;
+        return STAND_POINTS[idx];
+    }
+
+    // --- the two escape distances the driver acts on ------------------------
+    //
+    // LK_PRESSURE_DIST — Remorseless Winter (69780 -> 69781) deals 7068 +/- 863
+    // frost EVERY SECOND to everything within 10yd of him. 16 is that radius plus
+    // enough margin that a bot which is merely drifting is corrected before it is
+    // taking damage, and it is well inside the 20yd caster range the witch doctors
+    // fight from, so pulling a bot off one is a step and not an abandonment.
+    //
+    // LK_BEHIND_SUM — the core's own rule is (p.x - lk.x) + (p.y - lk.y) > 20.0,
+    // checked every 2 seconds while Winter is up, and failing it costs 10 000
+    // damage AND a knockback that throws the victim FURTHER BEHIND. 6 is a third
+    // of the way to that line: the driver corrects long before the rule bites,
+    // because the rule's own failure mode is self-reinforcing.
+    constexpr float LK_PRESSURE_DIST = 16.0f;
+    constexpr float LK_BEHIND_SUM    = 6.0f;
+
+    // Remorseless Winter's keep-out for the hazard registry, and the aura the
+    // driver reads to know the ring is live. 12 = the 10yd pulse plus 2 of slop.
+    constexpr uint32 SPELL_REMORSELESS_WINTER = 69780;
+    constexpr float  LK_RING_KEEPOUT = 12.0f;
+
+    // Harvest Soul — cast on the LEADER when the Lich King catches her. Three
+    // seconds later she dies and Fury of Frostmourne wipes the party. Nothing can
+    // be done about it by then; the driver logs it once and stops pretending.
+    constexpr uint32 SPELL_HARVEST_SOUL = 70070;
+
+    // Marwyn's Well of Corruption — a 3yd persistent area aura under a random
+    // player within 40yd, 8 seconds, applying +30% shadow damage taken. Exactly
+    // the DcGroundHazard shape.
+    constexpr uint32 SPELL_WELL_OF_CORRUPTION = 72362;
+
+    // --- the clear order ----------------------------------------------------
+    //
+    //   1  objective  OBJ(1)  Start the intro       -> event 1
+    //   2  boss       38112   Falric                (reorder, bit 0)
+    //   3  boss       38113   Marwyn                (reorder, bit 1)
+    //   4  objective  OBJ(2)  Frostsworn General    -> event 3
+    //   5  objective  OBJ(3)  The throne room       -> event 4
+    //   6  boss       36954   The Lich King         (doneBossStateIndex)
+    //
+    // The WAVES between 1 and 2 are deliberately not an objective, for the Pit of
+    // Saron reason: the party is in continuous combat across them and an anchored
+    // event has no combat-side rung (DcRel::AtObjective is non-combat only). They
+    // are event 2, a conditional driver carrying DrivesInCombat. The ESCAPE is
+    // event 5 for the same reason.
+    constexpr int32 ORDER_INTRO   = 1;
+    constexpr int32 ORDER_FALRIC  = 2;
+    constexpr int32 ORDER_MARWYN  = 3;
+    constexpr int32 ORDER_GENERAL = 4;
+    constexpr int32 ORDER_THRONE  = 5;
+    constexpr int32 ORDER_LICH_KING = 6;
+
+    // --- event and hook ids --------------------------------------------------
+    //
+    // Event ids are per-map. HOOK ids are ONE FLAT SPACE across every dungeon
+    // (ObjectiveHookRegistry::AddHook LOG_ERRORs a collision rather than silently
+    // dropping one): 1-14 the older dungeons', 15-19 Violet Hold, 20-21 Blackwing
+    // Lair, 22-23 Halls of Stone, 24 Halls of Lightning, 25-28 Utgarde Pinnacle,
+    // 29-30 Pit of Saron. This map takes 31-35.
+    constexpr uint32 EVENT_INTRO   = 1;
+    constexpr uint32 EVENT_WAVES   = 2;
+    constexpr uint32 EVENT_GENERAL = 3;
+    constexpr uint32 EVENT_THRONE  = 4;
+    constexpr uint32 EVENT_ESCAPE  = 5;
+
+    constexpr uint32 HOOK_HOR_INTRO_GOSSIP = 31;
+    constexpr uint32 HOOK_HOR_WAVES        = 32;
+    constexpr uint32 HOOK_HOR_THRONE       = 33;
+    constexpr uint32 HOOK_HOR_ESCAPE_GO    = 34;
+    constexpr uint32 HOOK_HOR_ESCAPE       = 35;
+
+    // --- gather quorums -----------------------------------------------------
+    //
+    // TWO DIFFERENT ANSWERS, and the difference is not an oversight.
+    //
+    // The throne-room gather (hook 33) is the ordinary 3-of-4: one bot that
+    // cannot path in must never hold the other three, and stranded recovery (42)
+    // owns that member.
+    //
+    // The ESCAPE gossip (hook 34) demands 5 OF 5 ALIVE. It is the point of no
+    // return, and past it there is no out-of-combat resurrect for four to six
+    // minutes — the Lich King SetInCombatWithZone()s every player once a second
+    // for the whole escape — so a bot that is dead at the gossip stays dead for
+    // the rest of the run, and a healer that is dead at the gossip is a wipe.
+    constexpr float GATHER_RADIUS = 20.0f;
+    constexpr float GATHER_QUORUM = 0.75f;
+
+    // Mana floor for the escape gossip. There is no drinking after it, and the
+    // healer has to cover four wall fights.
+    constexpr float ESCAPE_MANA_PCT = 80.0f;
+
+    // --- clocks --------------------------------------------------------------
+    //
+    // The wave event's budget covers the WHOLE first half: ten waves, two boss
+    // fights and any number of automatic leash restarts. The plan's own estimate
+    // is 6-9 minutes of waves; ten is a ceiling on a genuinely broken attempt.
+    constexpr uint32 WAVES_TIMEOUT_MS = 600000;
+
+    // The intro gossip step: the leader is not even VISIBLE for the first 10s
+    // after she loads and has no gossip flag for 19s. Ninety seconds is that plus
+    // a walk-in with room to spare.
+    constexpr uint32 INTRO_GOSSIP_TIMEOUT_MS = 90000;
+
+    // The garrison that walks the party in and holds it at the camp until wave 1
+    // starts. It has to cover the FULL intro (224.5s Alliance, 209s Horde) plus
+    // the walk, because a harness run that did not get the skip quest takes it.
+    constexpr uint32 INTRO_HOLD_TIMEOUT_MS = 300000;
+
+    // The General: a walk plus one fight with five reflections.
+    constexpr uint32 GENERAL_TIMEOUT_MS = 240000;
+
+    // The throne room: a gather, a forge and ~21 seconds of cutscene.
+    constexpr uint32 THRONE_TIMEOUT_MS = 120000;
+
+    // The escape gossip: a gather plus drinking to ESCAPE_MANA_PCT.
+    constexpr uint32 ESCAPE_GO_TIMEOUT_MS = 180000;
+
+    // The escape itself. The measured deadline for the LAST wall is T0+355s and
+    // the outro adds ~40 more; eight minutes is that with a wipe's worth of slack.
+    constexpr uint32 ESCAPE_TIMEOUT_MS = 480000;
+
+    // How long the Lich King may stand within LK_STALL_DIST of the leader at a
+    // shut wall before the driver says so. This is the escape's equivalent of Pit
+    // of Saron's gate-stall WARN: unrecoverable from inside the driver (an add
+    // parked inside the 10yd ring that the melee cannot reach), so the honest act
+    // is to name it once with the adds listed and let the timeout stall the run.
+    constexpr float  LK_STALL_DIST = 30.0f;
+    constexpr uint32 ESCAPE_STALL_MS = 20000;
+
+    // Throttle on the two drivers' per-tick telemetry lines.
+    constexpr uint32 TELEMETRY_MS = 3000;
+}
+
+// Halls of Reflection (668) — five events: the intro gossip + garrison, the
+// conditional wave driver that owns the party from wave 1 to Marwyn's death, the
+// Frostsworn General, the throne-room cutscene + the point-of-no-return gossip,
+// and the conditional escape driver. See HallsOfReflectionEvents.cpp.
+void RegisterHallsOfReflectionEvents(std::vector<DungeonEvent>& out);
+
+
 // Every TempSummon the siege can field — the trash, the elites, the three portal
 // keepers, Ichoron's globules, Xevozz's spheres and Cyanigosa. Probed by
 // ALIVENESS by the wave event's activation predicate, which is sound only
@@ -3042,6 +3675,17 @@ void RegisterUtgardePinnacleRoster(std::vector<BossRosterPatch>& t);
 // above and PitOfSaronEvents.cpp.
 void RegisterPitOfSaronRoster(std::vector<BossRosterPatch>& t);
 
+// Halls of Reflection (668) — the escape row, three travel objectives and three
+// reorders. Unlike Utgarde Pinnacle and Pit of Saron this map's DERIVATION is
+// sound: Falric and Marwyn both have instance_encounters rows AND spawns. What
+// is missing is the third encounter, "Escaped from Arthas", which has
+// DungeonEncounter.dbc rows 843/844 and NO instance_encounters row at all — so
+// there is no credit entry to join on and no kill bit to inherit. It is
+// completed by the instance's own boss-state slot (the Nexus Frozen Commander
+// shape) and anchored at the END of the escape path, so that when the escape
+// driver is not running nothing walks the party TO the Lich King.
+void RegisterHallsOfReflectionRoster(std::vector<BossRosterPatch>& t);
+
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;
 // aggregated by DungeonWingRegistry. Only split maps appear here. Maraudon has
@@ -3102,5 +3746,22 @@ void RegisterUtgardePinnacleRoute();
 // somewhere else snaps the cursor to the far end
 // ([[dc-anchor-route-must-cover-where-the-party-stands]]).
 void RegisterPitOfSaronRoute();
+
+// Halls of Reflection (668) — THREE rows: Marwyn -> the Frostsworn General, the
+// General -> the throne room, and the whole escape corridor keyed on the Lich
+// King's anchor.
+//
+// The first two are the plain "walk the leg" reason plus one door apiece
+// (197341 and 197342, both script-only). The escape row is the Blackwing Lair /
+// Halls of Lightning reason taken to its limit: the driver moves the tank stand
+// point to stand point with TravelTo and never consults the row at all, but if
+// it EVER yields the leg to DcRel::Advance the party must move FORWARD along
+// the path and must never plan a camp on it — so every anchor carries NO_STOP
+// and the row runs strictly -x, -y from the throne room to WP18.
+//
+// Each row is keyed on the entry of its DESTINATION and STARTS WHERE THE PARTY
+// WILL BE STANDING when that leg begins
+// ([[dc-anchor-route-must-cover-where-the-party-stands]]).
+void RegisterHallsOfReflectionRoute();
 
 #endif

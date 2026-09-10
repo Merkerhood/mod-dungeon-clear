@@ -47,6 +47,7 @@ public:
         creators["dungeon clear regroup combat"] = &DungeonClearActionContext::regroup_combat;
         creators["dungeon clear heal reposition"] = &DungeonClearActionContext::heal_reposition;
         creators["dungeon clear hazard vacate"] = &DungeonClearActionContext::hazard_vacate;
+        creators["dungeon clear hor stay ahead"] = &DungeonClearActionContext::hor_stay_ahead;
         creators["dungeon clear razorgore orb"] = &DungeonClearActionContext::razorgore_orb;
         creators["dungeon clear razorgore camp"] = &DungeonClearActionContext::razorgore_camp;
         creators["dungeon clear transit pack"] = &DungeonClearActionContext::transit_pack;
@@ -112,6 +113,7 @@ private:
     static Action* regroup_combat(PlayerbotAI* ai) { return new DungeonClearRegroupCombatAction(ai); }
     static Action* heal_reposition(PlayerbotAI* ai) { return new DungeonClearHealRepositionAction(ai); }
     static Action* hazard_vacate(PlayerbotAI* ai) { return new DungeonClearHazardVacateAction(ai); }
+    static Action* hor_stay_ahead(PlayerbotAI* ai) { return new DungeonClearHorStayAheadAction(ai); }
     static Action* razorgore_orb(PlayerbotAI* ai) { return new DungeonClearRazorgoreOrbAction(ai); }
     static Action* razorgore_camp(PlayerbotAI* ai) { return new DungeonClearRazorgoreCampAction(ai); }
     static Action* transit_pack(PlayerbotAI* ai) { return new DungeonClearTransitPackAction(ai); }

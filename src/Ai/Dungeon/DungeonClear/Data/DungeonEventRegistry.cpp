@@ -441,6 +441,7 @@ namespace
             RegisterHallsOfLightningEvents(t);
             RegisterUtgardePinnacleEvents(t);
             RegisterPitOfSaronEvents(t);
+            RegisterHallsOfReflectionEvents(t);
             return t;
         }();
         return kEvents;

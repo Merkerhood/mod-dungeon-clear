@@ -124,6 +124,58 @@ namespace
         return DcCombatPurge::IsBarred(bot, 29982);
     }
 
+    // Halls of Reflection: the Lich King, for the whole of the escape.
+    //
+    // THIS IS THE ONLY ROW IN THE TABLE WHOSE SUBJECT IS A FULLY LEGAL TARGET.
+    // Creature 36954 has unit_flags 0, no immunities of any kind, faction 2102
+    // and a real health bar — AttackersValue::IsPossibleTarget accepts him
+    // without reservation, and stock TankAssistTrigger / NotDpsTargetActiveTrigger
+    // acquire him within about a second of the escape gossip. Every other row here
+    // bars something the party COULD kill; this one bars something the party WILL
+    // attack unless stopped.
+    //
+    // WHY IT LOSES THE RUN, in the order the costs arrive:
+    //
+    //   1. HE HEALS. npc_hor_lich_kingAI::UpdateAI sets him back to 75% whenever
+    //      he drops below 70, with a HealthModifier of 2000 behind that. No
+    //      quantity of damage does anything at all.
+    //   2. ATTACKING HIM MEANS STANDING IN HIM. He carries Remorseless Winter for
+    //      the whole escape — 7068 +/- 863 frost per second inside 10yd — so a
+    //      melee bot that closes on him is taking more damage per second than the
+    //      entire wall batch deals.
+    //   3. AND IT FREEZES THE PARTY'S MOVEMENT, which is the one that actually
+    //      ends runs. He is NullCreatureAI and never calls Attack, so he is in
+    //      nobody's getAttackers() and DcCombatFlag::IsEngaged reads false for the
+    //      party even though everyone is combat-FLAGGED (he SetInCombatWithZone()s
+    //      once a second). That distinction is what lets every MayDrive rung keep
+    //      working through an escape nobody can leave combat during. One bot
+    //      taking him as a VICTIM destroys it: IsEngaged goes true, AnyPartyEngagement
+    //      fans it to the party, and the follow-tank rung stops moving anybody
+    //      while a Lich King walks at them at 1.4 yd/s. The party is then caught
+    //      by geometry rather than by damage.
+    //
+    // `alsoTank`, and here that is not the usual "the tank walking at it is the
+    // harm" — it is that THERE MUST BE NO HOLDER AT ALL. Razorgore needs an
+    // off-tank between mind controls; this creature must be untouched by every
+    // member of the party, so the hold-fire rung's tank exemption is keyed off
+    // this same flag (see DungeonClearHoldFireTrigger).
+    //
+    // WINDOWED ON THE ESCAPE, not permanent, for the reason every row here is
+    // windowed: outside it the bar is pointless (he is frozen, immune and
+    // unreachable before the gossip) and a permanent row would be a claim about
+    // the map rather than about the encounter. Note this also leaves the row inert
+    // for the entire first two thirds of the dungeon, which is where the map's
+    // other work is.
+    bool HorEscapeRunning(Player* bot)
+    {
+        if (!bot || bot->GetMapId() != DcHallsOfReflection::MAP_ID)
+            return false;
+
+        InstanceScript* inst = bot->GetInstanceScript();
+        return inst &&
+               inst->GetBossState(DcHallsOfReflection::DATA_LICH_KING) == IN_PROGRESS;
+    }
+
     DcTargetExclusionRow const kRows[] = {
         // Blackwing Lair — Razorgore the Untamed. Killing him before the last egg
         // breaks casts 20038 (Explosion) and instakills the raid, so phase-1
@@ -161,6 +213,14 @@ namespace
 
         // Gundrak — Drakkari Raider, for the window after a combat purge dropped it.
         { 604, 29982, &GundrakRaiderJustPurged, /*alsoTank*/ true },
+
+        // Halls of Reflection — the Lich King, for the whole of the escape. The
+        // one row here whose subject is a perfectly legal, perfectly attackable
+        // creature; see HorEscapeRunning above for the three ways attacking him
+        // loses the run and why `alsoTank` means "nobody holds him" rather than
+        // the usual "the tank must not lead the party there".
+        { DcHallsOfReflection::MAP_ID, DcHallsOfReflection::NPC_LICH_KING,
+          &HorEscapeRunning, /*alsoTank*/ true },
     };
 }
 

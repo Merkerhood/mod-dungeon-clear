@@ -46,6 +46,7 @@ enum class DcThrottle : uint8
     RazorgoreOrbIssue,   // the BWL egg runner's walk between eggs
     DtkCampIssue,        // the Drak'Tharon camp-return point move (time only)
     HosTravelIssue,      // HosTravelTo — the Halls of Stone Tribunal arena
+    HorStayAheadIssue,   // the HoR escape's per-follower forward step
 
     // --- log throttles (time only) -----------------------------------------
     TransitLog,          // BwlTransitLog — one crossing telemetry line per 3s
@@ -65,6 +66,12 @@ enum class DcThrottle : uint8
     UpHarpoonMissingLog, // "in the pocket, and launcher 192175 is not there"
     PosGauntletLog,      // the Pit of Saron gauntlet driver's per-tick line
     PosLedgeLog,         // the Pit of Saron ledge hook's per-state line
+    HorWaveLog,          // the Halls of Reflection altar driver's per-tick line
+    HorEscapeLog,        // the Halls of Reflection escape driver's per-tick line
+    HorIntroLog,         // "walking to Jaina/Sylvanas to start the intro"
+    HorThroneLog,        // the throne-room gather / forge line
+    HorEscapeGoLog,      // "not ready for the point of no return, because ..."
+    HorStallWarn,        // the escape's "he is on her and the wall is still shut" WARN
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

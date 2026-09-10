@@ -213,6 +213,37 @@ TEST(DungeonClearRelevanceTest, HazardVacateOutranksNonCombatDrivers)
     EXPECT_LT(DcRel::HazardVacate, DcRel::Chat);
 }
 
+// HALLS OF REFLECTION's forward step sits ONE RUNG ABOVE the generic vacate, and
+// the gap has to be exactly that: they answer the SAME danger — the Lich King's
+// Remorseless Winter ring — with opposite bearings, so whichever wins the tick is
+// the direction the bot actually moves.
+//
+// The generic vacate retreats radially, away from the emitter. On this encounter
+// the party is walking a path that runs -x -y with the Lich King following, and
+// every 2 seconds each player whose (p.x - lk.x) + (p.y - lk.y) exceeds 20 takes
+// 10 000 damage plus a KNOCKBACK THAT THROWS THEM FURTHER BEHIND. So for a bot
+// that is already behind him, "away from him" is deeper into a self-reinforcing
+// rule. The forward step has to outrank it, on the one map where both are armed.
+//
+// It stays under the camp owners (60), which never contend — both of map 668's
+// events carry OwnsThePull, so there is no camp — and under the terminal bailouts.
+TEST(DungeonClearRelevanceTest, TheHorForwardStepOutranksTheRadialVacateItReplaces)
+{
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::HazardVacate)
+        << "the two answer the same emitter with opposite bearings; if the radial vacate "
+           "wins the tick it walks a bot that is behind the Lich King further behind him";
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::PullManeuver);
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::StayAtCamp);
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::PartyDied);
+    EXPECT_LT(DcRel::HorStayAhead, DcRel::Chat);
+
+    // Above everything it has to beat to move a follower mid-fight: the stock
+    // combat movers, and DC's own role repositions.
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::HealReposition);
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::AssistCampCombat);
+    EXPECT_GT(DcRel::HorStayAhead, DcRel::Advance);
+}
+
 // The pull maneuver is dual-engine for the same reason HazardVacate and
 // BreakStuckCombat are: stock `drop target` (99) can move a still-flagged bot onto
 // the NON-combat engine, and every watchdog the maneuver owns lives inside its

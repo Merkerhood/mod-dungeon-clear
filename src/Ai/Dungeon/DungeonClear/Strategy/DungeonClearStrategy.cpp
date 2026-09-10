@@ -304,6 +304,17 @@ void DungeonClearStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
         "dungeon clear hazard vacate",
         { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
 
+    // Halls of Reflection only: while the escape is running, step FORWARD out of
+    // the Lich King's ring rather than radially away from it. Registered in BOTH
+    // engines like the vacate it sits above — the escape is a permanent combat
+    // flag, but a bot whose last add just died can spend a tick on the non-combat
+    // engine, and that is exactly the tick a bot 18yd behind him must not spend
+    // standing still. Inert everywhere else: the trigger's first test is the map
+    // id. See DungeonClearHorStayAheadTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hor stay ahead",
+        { NextAction("dungeon clear hor stay ahead", DcRel::HorStayAhead) }));
+
     // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
     // in BOTH engines: the walk to the ledge starts before the raid pulls and has
     // to survive the pull, and the click itself can land either side of the combat
@@ -536,6 +547,17 @@ void DungeonClearCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigger
     triggers.push_back(new TriggerNode(
         "dungeon clear hazard vacate",
         { NextAction("dungeon clear hazard vacate", DcRel::HazardVacate) }));
+
+    // Halls of Reflection only: while the escape is running, step FORWARD out of
+    // the Lich King's ring rather than radially away from it. Registered in BOTH
+    // engines like the vacate it sits above — the escape is a permanent combat
+    // flag, but a bot whose last add just died can spend a tick on the non-combat
+    // engine, and that is exactly the tick a bot 18yd behind him must not spend
+    // standing still. Inert everywhere else: the trigger's first test is the map
+    // id. See DungeonClearHorStayAheadTrigger.
+    triggers.push_back(new TriggerNode(
+        "dungeon clear hor stay ahead",
+        { NextAction("dungeon clear hor stay ahead", DcRel::HorStayAhead) }));
 
     // Razorgore's orb runner (Blackwing Lair only, one elected member). Registered
     // in BOTH engines: the walk to the ledge starts before the raid pulls and has

@@ -890,6 +890,38 @@ public:
     bool Execute(Event event) override;
 };
 
+// HALLS OF REFLECTION ONLY, every role, BOTH engines. Move this bot FORWARD along
+// the escape path — to the party's stand point, a few yards past the point
+// Jaina/Sylvanas is waiting at — because it is inside the Lich King's Remorseless
+// Winter ring or has fallen behind him.
+//
+// THE DIRECTION IS THE ENTIRE CONTENT OF THIS ACTION. It never computes a bearing
+// away from anything: the destination is an authored point that is ahead of the
+// leader, ahead of the Lich King, and on the far side of both from the summons
+// chasing the party. A radial retreat — which is what DungeonClearHazardVacate
+// would do with the same emitter — is wrong here in the one direction that
+// matters, because "away from him" for a bot that is already behind him is
+// further behind, and behind is a 10 000-damage Zap plus a knockback that makes
+// the next check worse.
+//
+// Which stand point is decided the same way the driver decides it: from the
+// LEADER'S position (DcHallsOfReflection::StopIndexNear), because currentWall is
+// private to the boss AI and her position is the observable equivalent. Both must
+// reach the same answer or the tank and its followers would hold different
+// ground, which is why the arithmetic is one shared pure function rather than two
+// copies.
+//
+// Driven by DungeonClearHorStayAheadTrigger.
+class DungeonClearHorStayAheadAction : public DcMovementAction
+{
+public:
+    DungeonClearHorStayAheadAction(PlayerbotAI* botAI)
+        : DcMovementAction(botAI, "dungeon clear hor stay ahead")
+    {
+    }
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

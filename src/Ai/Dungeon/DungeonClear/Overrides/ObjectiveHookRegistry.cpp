@@ -820,6 +820,7 @@ namespace
             RegisterHallsOfLightningHooks(t);
             RegisterUtgardePinnacleHooks(t);
             RegisterPitOfSaronHooks(t);
+            RegisterHallsOfReflectionHooks(t);
             return t;
         }();
         return kHooks;
