@@ -972,6 +972,63 @@ TEST(DungeonEventHallsOfReflectionTest, EveryDoorIsScriptOnlyAndStillVisibleToNa
     }
 }
 
+// ...and the FIFTH AND SIXTH door-typed gameobjects on this map, which are the
+// exception to every line of the test above because neither is a door.
+//
+// THEY ARE A PAIR, AND THAT IS THE WHOLE POINT OF THIS TEST. Both stand on the
+// Frostmourne dais within 0.03yd of each other — GO 202236 'Frostmourne Altar'
+// at (5309.34, 2006.52) and GO 202302 'Frostmourne', the sword, at
+// (5309.36, 2006.55) — and both wear a GAMEOBJECT_TYPE_DOOR template spawned in
+// state 1. Leg A of the route begins at CenterPos, 0.13yd from that origin, so
+// the corridor's first leg transits BOTH footprints the instant the route to the
+// Frostsworn General is seeded, and neither can be clicked open.
+//
+// They fail for different reasons, which is why one row did not cover the other:
+//
+//   - The ALTAR is never scripted at all. instance_halls_of_reflection lists it
+//     in objectData for lookups only — no HandleGameObject, no doorData row — so
+//     the closed-door predicate reads it shut on every tick, forever.
+//   - The SWORD is scripted, but only ever SHUT: closed on create, opened for
+//     the intro cutscene, then closed again and SetPhaseMask(2)'d at the end of
+//     the Lich King intro. That chain runs on the SKIPPED intro too (it is what
+//     spawns Falric), so past the intro it is shut and out of the party's phase
+//     for the rest of the run.
+//
+// Listing one and not the other changes nothing: the scan just flags whichever
+// is left. That is not a hypothesis — it is the recorded history of this bug.
+// Plan tp-20260907-212113-1 lost all ten runs at 3/6 bosses flagging the altar
+// (GUID 0xf1100315fc000003); the altar was whitelisted; and plan
+// tp-20260907-214408-1 then lost all ten runs at 3/6 bosses flagging the sword
+// (GUID 0xf11003163e000002), each within a second of Marwyn dying.
+TEST(DungeonEventHallsOfReflectionTest, TheFrostmourneDaisPairIsNavigationIgnoredNotScriptDoors)
+{
+    for (uint32 go : { GO_FROSTMOURNE_ALTAR, GO_FROSTMOURNE })
+    {
+        EXPECT_TRUE(DcEventDoorRegistry::IsNavigationIgnored(go))
+            << "gameobject " << go << " sits on Leg A's first anchor and can never open, "
+                                      "so leaving it visible to the blocking-door scan "
+                                      "auto-pauses every run the moment Marwyn dies";
+
+        // IsScriptOnly would suppress only the CLICK; the auto-pause underneath
+        // it is what actually kills the run, so neither may be filed there
+        // instead — the same distinction the Chromaggus portcullis row documents.
+        EXPECT_FALSE(DcEventDoorRegistry::IsScriptOnly(go))
+            << "gameobject " << go << " filed as script-only would leave the run dead on "
+                                      "the dais with the click merely suppressed";
+
+        // And neither may be mistaken for a clickable gate: nothing opens them,
+        // so a bot entitled to click would work one until the door-blocked
+        // watchdog gave up and auto-paused anyway.
+        EXPECT_FALSE(DcEventDoorRegistry::IsLockFreeClickable(go))
+            << "gameobject " << go << " has no open state to reach; clicking it can only "
+                                      "burn the DoorBlockedTimeout budget before pausing";
+    }
+
+    // The two are distinct entries, not one constant spelled twice — the bug was
+    // exactly the belief that the dais held a single door-typed gameobject.
+    EXPECT_NE(GO_FROSTMOURNE_ALTAR, GO_FROSTMOURNE);
+}
+
 // THE LICH KING MUST BE UNTOUCHABLE BY EVERY MEMBER, which needs both registries
 // and is the one place on this map where a missing row is a guaranteed wipe.
 TEST(DungeonEventHallsOfReflectionTest, TheLichKingIsBarredByBothTargetRegistries)

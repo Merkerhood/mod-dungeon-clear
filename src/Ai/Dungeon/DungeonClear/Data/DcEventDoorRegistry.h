@@ -363,6 +363,62 @@ namespace DcEventDoorRegistry
             case 184125:  // Hydromancer Thespia's panel
             case 184126:  // Mekgineer Steamrigger's panel
                 return true;
+            // Halls of Reflection (map 668) — the Frostmourne Altar. The
+            // Steamvault shape again, and the most expensive version of it yet:
+            // a decorative DAIS whose template is GAMEOBJECT_TYPE_DOOR
+            // (displayId 9294, startOpen 0, lock 0), spawned state 1 and left
+            // there forever. instance_halls_of_reflection carries it in
+            // objectData purely so GetGameObject can find it — there is no
+            // HandleGameObject, no SetGoState, no doorData row anywhere in the
+            // core, and the only altar code path at all is the glow spell cast
+            // on the altar bunny. So IsDoorClosed reads it shut on every tick
+            // of every run, permanently, and nothing will ever open it.
+            //
+            // It blocks nothing — the party fights all three altar waves
+            // standing around it — but Leg A of the authored route begins at
+            // CenterPos, which is 0.13yd in xy from the altar's own origin, so
+            // the corridor's FIRST leg transits its footprint the instant the
+            // route to the Frostsworn General is seeded. Lock-free and not
+            // IsLockFreeClickable, so BotCanOpenDoorLikePlayer refuses, and the
+            // walk-in park lands "at door (0.0yd along path)" on tick one and
+            // falls straight through to the auto-pause.
+            //
+            // That is unconditional, and it ended ALL TEN runs of plan
+            // tp-20260907-212113-1 at 3/6 bosses, every one of them within a
+            // second of Marwyn dying and none of them ever reaching the Arthas
+            // door: tr-20260907-212118-1/-2 and -212119-3/-4/-5/-6/-7/-8/-9/-10,
+            // each flagging the same GUID 0xf1100315fc000003 and auto-pausing
+            // on "a closed door is blocking the path".
+            //
+            // IsNavigationIgnored and NOT IsScriptOnly, for the Chromaggus
+            // reason above: IsScriptOnly suppresses only the CLICK, and it is
+            // the auto-pause underneath it that actually kills the run.
+            case 202236:  // Halls of Reflection — Frostmourne Altar
+            // ...and its TWIN, which is why the altar row alone was not enough.
+            // GO 202302 'Frostmourne' — the sword — is a SECOND
+            // GAMEOBJECT_TYPE_DOOR spawned at (5309.36, 2006.55), 0.03yd from
+            // the altar's own origin and on the same first leg. Whitelisting
+            // only the altar just handed the flag to the sword: plan
+            // tp-20260907-214408-1 repeated tp-20260907-212113-1 exactly — all
+            // ten runs paused at 3/6 bosses seconds after Marwyn died, this time
+            // flagging GUID 0xf11003163e000002 entry 202302.
+            //
+            // Unlike the altar the sword IS scripted — but it is scripted SHUT.
+            // instance_halls_of_reflection's OnGameObjectCreate closes it, the
+            // intro opens it for the cutscene, and EVENT_INTRO_LK_4_2/4_3 close
+            // it again and SetPhaseMask(2) it out of the party's phase. That
+            // chain runs on the SKIPPED intro too — it is what spawns Falric —
+            // so from the end of the intro onward the sword is shut and phased
+            // away forever, blocking nothing and opening never.
+            //
+            // The phase is the real tell, and the scan now skips out-of-phase
+            // gameobjects for exactly that reason (see the InSamePhase guard in
+            // DungeonClearBlockingDoorValue). This row stays anyway: it is the
+            // cheap, map-specific statement of a fact the generic guard only
+            // implies, and it holds even for the ticks BEFORE the intro phases
+            // the sword out, when it is in phase and still unopenable.
+            case 202302:  // Halls of Reflection — Frostmourne (the sword)
+                return true;
             // The Violet Hold (map 608) — the six Activation Crystals. Like the
             // Steamvault access panels these are wall CONTROLS, not doors, but
             // their template is GAMEOBJECT_TYPE_DOOR (lock 86 / 57, startOpen 0)

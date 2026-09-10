@@ -3084,6 +3084,20 @@ namespace DcHallsOfReflection
     constexpr uint32 GO_DOOR_AFTER_THRONE  = 197343;  // (5582.81, 2230.62)
     constexpr uint32 GO_ICE_WALL           = 201385;  // summoned at the wall targets
 
+    // NOT a door, despite a GAMEOBJECT_TYPE_DOOR template: the Frostmourne
+    // altar dais, spawned shut and never scripted, standing 0.13yd from the
+    // CenterPos that Leg A of the route begins at. Navigation-ignored in
+    // DcEventDoorRegistry; see the row there for what leaving it unlisted cost.
+    constexpr uint32 GO_FROSTMOURNE_ALTAR  = 202236;  // (5309.34, 2006.52)
+
+    // And the SWORD standing in it — a second GAMEOBJECT_TYPE_DOOR 0.03yd from
+    // the altar's origin. This one IS scripted, but only ever shut: the instance
+    // closes it on create, the intro opens it for the cutscene, and the end of
+    // the Lich King intro closes it and phases it to mask 2. Left unlisted it
+    // simply inherits the altar's old job of auto-pausing every run the moment
+    // Leg A is seeded. Navigation-ignored alongside the altar.
+    constexpr uint32 GO_FROSTMOURNE        = 202302;  // (5309.36, 2006.55)
+
     // The two doors an authored leg passes, so the route rows can declare them
     // rather than meet them. Both are opened by the instance well before the
     // party arrives (the Arthas door on Marwyn's death; the west throne door is
