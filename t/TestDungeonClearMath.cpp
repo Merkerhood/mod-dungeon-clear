@@ -1667,6 +1667,59 @@ TEST(DcFlaggedCombatGateTest, ARetargetHoleInARealFightNeverResumesDriving)
     EXPECT_TRUE(DungeonClearMath::MayDriveWhileFlagged(true, false, 3400 + grace, grace, since));
 }
 
+// ===== Conditional-event rung gate (EventDueGateOpen) =====
+//
+// The same gate, plus the drivesInCombat exemption that used to live only in the
+// combat-ENGINE copy of the rung. Being combat-FLAGGED and running the combat
+// ENGINE are different facts: playerbots enters BOT_STATE_COMBAT only from
+// AttackAction::Attack, so a flagged bot with an empty attacker set sits in the
+// non-combat engine, where the exemption was unreachable and both rungs were off
+// at once. HoR tr-20260908-215109-1 lost thirty seconds of wall 4 to it;
+// tr-20260908-215112-9 lost fifty-five and wiped.
+
+TEST(DcEventDueGateTest, DrivesInCombatIgnoresALiveFight)
+{
+    // THE REGRESSION. Flagged AND really engaged — MayDriveWhileFlagged's hard
+    // stand-down — must still drive an event that owns the fight.
+    std::uint32_t since = 0;
+    EXPECT_FALSE(DungeonClearMath::MayDriveWhileFlagged(true, true, 1000, 5000, since));
+    EXPECT_TRUE(DungeonClearMath::EventDueGateOpen(true, true, true, 1000, 5000, since));
+}
+
+TEST(DcEventDueGateTest, DrivesInCombatLeavesTheSharedLatchAlone)
+{
+    // The latch is shared with every other MayDrive-gated rung, so the exempt
+    // path must not restart a grace window one of them is already counting.
+    std::uint32_t since = 4242;
+    EXPECT_TRUE(DungeonClearMath::EventDueGateOpen(true, true, true, 9000, 5000, since));
+    EXPECT_EQ(since, 4242u);
+    EXPECT_TRUE(DungeonClearMath::EventDueGateOpen(true, false, false, 9000, 5000, since));
+    EXPECT_EQ(since, 4242u);
+}
+
+TEST(DcEventDueGateTest, AnOrdinaryEventKeepsTheOldGateExactly)
+{
+    // drivesInCombat false -> byte-for-byte MayDriveWhileFlagged, latch included.
+    constexpr std::uint32_t grace = 5000;
+    std::uint32_t plain = 0;
+    std::uint32_t gated = 0;
+
+    for (std::uint32_t now : {1000u, 3000u, 3200u, 3400u, 3400u + grace})
+    {
+        bool const engaged = now == 3200u;
+        EXPECT_EQ(DungeonClearMath::MayDriveWhileFlagged(true, engaged, now, grace, plain),
+                  DungeonClearMath::EventDueGateOpen(false, true, engaged, now, grace, gated));
+        EXPECT_EQ(plain, gated);
+    }
+}
+
+TEST(DcEventDueGateTest, OutOfCombatDrivesEitherWay)
+{
+    std::uint32_t since = 777;
+    EXPECT_TRUE(DungeonClearMath::EventDueGateOpen(false, false, false, 1000, 5000, since));
+    EXPECT_EQ(since, 0u);   // the ordinary path still clears the streak
+}
+
 TEST(DcFlaggedCombatGateTest, ZeroGraceResumesImmediately)
 {
     std::uint32_t since = 0;

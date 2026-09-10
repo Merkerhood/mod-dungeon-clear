@@ -728,6 +728,46 @@ namespace DungeonClearMath
         return now >= sinceMs && (now - sinceMs) >= graceMs;
     }
 
+    // The conditional-event rung's combat gate (pure).
+    //
+    // MayDriveWhileFlagged is right for an event whose work happens BETWEEN
+    // pulls and exactly wrong for one flagged DungeonEvent::drivesInCombat,
+    // whose whole premise is that the driver keeps steering while the party
+    // fights. That exemption used to live only in the COMBAT-engine copy of the
+    // rung, which requires the bot to be running the combat ENGINE — a different
+    // fact from being combat-FLAGGED, and the gap between them is a hole both
+    // rungs fall through:
+    //
+    //   Playerbots never switches engines on Unit::IsInCombat (PlayerbotAI.cpp
+    //   only clears stale targets there); the sole way into BOT_STATE_COMBAT is
+    //   AttackAction::Attack. So a bot that is FLAGGED but holds an empty
+    //   attacker set sits in the NON-combat engine — where this gate shuts it
+    //   down — while the combat rung that would have exempted it is in an engine
+    //   that is not running. The driver then gets no ticks at all.
+    //
+    // Halls of Reflection, tr-20260908-215109-1, wall 4 of the escape: the Lich
+    // King flags the party every second, the twelve summons took the dps and the
+    // healer, the tank's attacker set emptied, and HorDriveEscape was not called
+    // once for thirty seconds. The tank stood beside the leader on a stale
+    // spline while the ranged tanked the batch; recovery was accidental, since
+    // TankAssistTrigger needs attacker count > 0 and had to wait for a summon to
+    // wander into melee. Sibling tr-20260908-215112-9 held the same window open
+    // for fifty-five seconds and wiped inside it.
+    //
+    // `sinceMs` is deliberately UNTOUCHED on the exempt path: the latch is shared
+    // with every other MayDrive-gated rung, so zeroing it here would restart a
+    // grace window one of them is already counting.
+    //
+    // Returns TRUE when the conditional-event rung may own this tick.
+    inline bool EventDueGateOpen(bool drivesInCombat, bool flagged, bool engaged,
+                                 std::uint32_t now, std::uint32_t graceMs,
+                                 std::uint32_t& sinceMs)
+    {
+        if (drivesInCombat)
+            return true;
+        return MayDriveWhileFlagged(flagged, engaged, now, graceMs, sinceMs);
+    }
+
     // Loot-roll rung starvation bound (pure, by-reference latch).
     //
     // The rung that answers an open loot roll sits at relevance 95, above the

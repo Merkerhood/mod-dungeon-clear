@@ -317,6 +317,16 @@ namespace DcCombatFlag
             DC_FLAGGED_NO_ENGAGE_GRACE_MS, appr.flaggedNoEngageSinceMs);
     }
 
+    bool MayDriveEvent(Player* bot, AiObjectContext* context, bool drivesInCombat)
+    {
+        if (!bot || !context)
+            return false;
+        DcApproachState& appr = context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get();
+        return DungeonClearMath::EventDueGateOpen(
+            drivesInCombat, bot->IsInCombat(), AnyPartyEngagement(bot), getMSTime(),
+            DC_FLAGGED_NO_ENGAGE_GRACE_MS, appr.flaggedNoEngageSinceMs);
+    }
+
     bool IsPhantomFlag(Player* bot, AiObjectContext* context)
     {
         if (!bot || !context)
