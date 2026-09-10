@@ -355,6 +355,25 @@ struct DcRunState
     uint8  horEscapeStop = 0;            // the stop the stall latch belongs to
     uint32 horEscapeStopHoldMs = 0;
     bool   horEscapeStallReported = false;
+    uint32 horEscapeTargetStopMs = 0;    // when horEscapeStop last CHANGED
+
+    // HOW LONG A SUMMON HAS BEEN UP WITH NONE OF IT ON THE TANK, and whether the
+    // party has ever actually made the stop it is standing at. The first arms the
+    // driver's pickup (a tank with nothing on it and nothing in reach did nothing
+    // at all for eighty-seven seconds on tr-20260908-225156-15); the second tells
+    // an unfinished 180yd LEG, which must end on the stand point, from a chase
+    // step that drifted off a stop the party already owns, which must end on the
+    // near edge of the band. Both are cleared whenever the stop changes.
+    uint32 horEscapeIdleMs = 0;
+    bool   horEscapeReachedStand = false;
+
+    // THE PER-FOLLOWER ADVANCE LATCH (DcHorEscape::DecideFollow). Set when this
+    // bot is further from the party's stand point than STAND_LEAVE_LEASH,
+    // cleared when it gets inside STAND_LEASH — the same Schmitt pair the driver
+    // uses on the tank, and for the same reason: without the hysteresis the rung
+    // hands the tick back to MoveChase halfway through a 136yd leg and the bot
+    // is walked back onto the add it left.
+    bool   horFollowAdvancing = false;
 
     // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
 
@@ -444,6 +463,10 @@ struct DcRunState
         horEscapeStop = 0;
         horEscapeStopHoldMs = 0;
         horEscapeStallReported = false;
+        horEscapeTargetStopMs = 0;
+        horEscapeIdleMs = 0;
+        horEscapeReachedStand = false;
+        horFollowAdvancing = false;
         ClearThrottle(DcThrottle::HorWaveLog);
         ClearThrottle(DcThrottle::HorEscapeLog);
         ClearThrottle(DcThrottle::HorIntroLog);

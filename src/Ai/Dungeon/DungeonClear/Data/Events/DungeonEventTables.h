@@ -3387,6 +3387,174 @@ namespace DcHallsOfReflection
     // holding ground, not a trigger to be stood inside.
     constexpr float STAND_LEASH = 6.0f;
 
+    // ...AND HOW FAR OFF IT COUNTS AS "GONE". The pair is a SCHMITT TRIGGER and
+    // the gap between them is the whole point: arriving takes STAND_LEASH,
+    // leaving takes this.
+    //
+    // Measured on tp-20260907-221612-1, where the escape driver had only the one
+    // radius. At wall 2 the tank sat on the boundary and flipped Advance <->
+    // Fight every one to two seconds for fifty-six seconds — distToStand
+    // 6.7 -> 5.0 -> 6.7 -> 5.0, fifty-seven transitions in one run, nine to
+    // fifty-seven in each of the other nine. Each Advance re-issued a TravelTo
+    // that cancelled the bear's melee approach; each Fight handed the tick back
+    // to the combat engine, which walked it 1.7yd off the stand point and
+    // re-armed Advance. Three summons stayed alive for the entire 105 seconds
+    // that took, the wall never opened, and the leader was caught at stop 2.
+    //
+    // TWELVE YARDS WAS NOT ENOUGH, and tp-20260907-232556-1 measured by how much.
+    // The hysteresis did kill the one-to-two-second boundary flutter, but the
+    // thing MoveChase is chasing is a Risen Witch Doctor, and a witch doctor
+    // stops at 20yd to cast — on the Lich King's side of the party, by design.
+    // So the tank's melee approach is a TWENTY-FIVE YARD walk, not a chase step:
+    // at stand 3 it ran 0.1 -> past 12 -> Advance -> travel back to 0.1 and round
+    // again, fifteen times per run, with distToStand peaking at 24.7yd. Each
+    // Advance claims the tick and re-plots the spline, so roughly half of every
+    // wall fight was spent NOT fighting — which is why three summons survived a
+    // hundred seconds and the wall never opened.
+    //
+    // Thirty yards is that measured approach plus margin. It is safe on both
+    // sides: a real leg to the next wall is 110-180yd and is outside this within
+    // one tick of setting off, drift FORWARD into the slab is caught by Recenter
+    // (which fires only while atStand, so a wider radius covers MORE of it), and
+    // drift BACKWARD toward him is caught by Pressure at LK_PRESSURE_DIST, which
+    // outranks every other state.
+    constexpr float STAND_LEAVE_LEASH = 30.0f;
+
+    // HOW FAR FORWARD OF THE STAND POINT THE TANK MAY DRIFT while the wall in
+    // front of it is still shut.
+    //
+    // The stand points sit 18.8-20.4yd out from the wall gameobject's origin and
+    // are clear of it. The tank does not stay on them: yielding the whole of a
+    // wall fight to the combat engine lets MoveChase walk it forward, and on the
+    // same plan bots were logged 13.4yd from a SHUT wall's origin — five yards
+    // past the stand point, inside the 2.5x-scaled slab, which is the clipping
+    // the walls were reported for.
+    //
+    // Nothing is gained by that drift and the correction is free: the summons
+    // spawn AT the Lich King and run at the party from BEHIND, so every yard back
+    // toward the stand point is a yard TOWARD what the tank is meant to be
+    // holding. Three yards of slack keeps the correction off a bot that is merely
+    // strafing.
+    constexpr float WALL_STANDOFF_SLACK = 3.0f;
+
+    // HOW LONG THE TANK MAY SPEND PICKING UP A BATCH before it is made to walk
+    // on, once the leader has moved to the next stop.
+    //
+    // The escape driver used to travel the instant her stop index changed, with
+    // no regard for what was already on the party. On tp-20260907-221612-1 that
+    // ran the tank 88 yards to stand 2 while eight summons were alive and on the
+    // group — it arrived 153yd ahead of the Lich King, which is where they spawn,
+    // and the three non-tanks died 12 to 26 seconds later to a Lumbering
+    // Abomination and two Risen Witch Doctors that were never tanked.
+    //
+    // The fix is NOT to wait for the batch to die (the header on
+    // DcHorEscapeDecision.h is right that the clock is absolute and finishing the
+    // last ghoul at the old stop is wasted time). It is to take THREAT and then
+    // walk: the summons chase whoever holds them, so a tank that leaves with the
+    // batch on it drags them to the next wall, which is exactly where they were
+    // going anyway. Six seconds is a taunt plus an AoE swing and cannot spend a
+    // wall's margin even if the pickup never completes.
+    constexpr uint32 GRAB_THREAT_MS = 6000;
+
+    // HOW FAR INSIDE STAND_LEAVE_LEASH A DRIFTED TANK IS PULLED BACK — and the
+    // reason it is not pulled back to the stand point at all.
+    //
+    // The Schmitt pair says a bot that has crossed STAND_LEAVE_LEASH is "gone".
+    // What the driver then did with that was travel to the STAND POINT, whose
+    // arrival leash is STAND_LEASH — so a tank that chased a witch doctor to
+    // 30yd was walked the whole 24yd home, dropping the mob it was on, and then
+    // walked back out to it. tp-20260908-225156-2, tr-...-15, wall 3: Fight at
+    // 7.1yd -> 28.2 -> Advance -> back to 6 -> Fight -> 28.8 -> Advance, twice in
+    // twenty seconds, each Advance re-plotting a spline over the melee approach.
+    //
+    // THE STAND POINT IS A LEASH, NOT A PARKING SPACE. Nothing about this fight
+    // wants the tank on the exact point — the summons come to the party and the
+    // only geometry that matters is "not behind him, not in his ring, not inside
+    // the slab", all of which hold anywhere in the band. So a drifted tank is
+    // returned to the NEAR EDGE of the band (DcTransit::HoldPoint, the same
+    // near-edge rule Blackwing Lair's camp uses and for the same reason) and goes
+    // straight back to swinging.
+    //
+    // Six yards inside 30 leaves a 24-to-30yd working band: wide enough that the
+    // recall is not re-armed by the next chase step, narrow enough that the tank
+    // is never the rearmost thing on the path. Both edges stay covered by rules
+    // that outrank this one — Pressure at LK_PRESSURE_DIST going backward,
+    // Recenter against the slab going forward.
+    constexpr float STAND_EDGE_MARGIN = 6.0f;
+
+    // The snap box for that edge point and the leash it arrives on. Same numbers
+    // Blackwing Lair's pack hold uses, and for the same reasons: the chord has to
+    // land on a polygon the pathfinder can name, and the arrival leash has to be
+    // tighter than the margin or the rung hands the tick back while the bot is
+    // still outside the band it was recalled from.
+    constexpr float STAND_EDGE_SNAP_RADIUS = 3.0f;
+    constexpr float STAND_EDGE_SNAP_TOLERANCE = 2.0f;
+    constexpr float STAND_EDGE_ARRIVE_LEASH = 2.0f;
+
+    // THE ARRIVAL LEASH FOR THE RECENTER STEP, and it has to be tight for a
+    // reason that made the whole state a no-op.
+    //
+    // Recenter fires while the tank is AT the stand point (it is a forward drift
+    // of a few yards inside the leash), and the driver issued it as
+    // TravelTo(stand, STAND_LEASH). TravelTo returns without moving when the bot
+    // is already inside the leash it is handed — and 6yd is wider than every
+    // clipping episode there is, so the correction never once landed. On
+    // tr-20260908-225156-15 the state fired 27 times and moved the tank nowhere:
+    // logged at 1.4yd and 4.3yd from the stand, both comfortably inside 6.
+    //
+    // The step back is 3-6 yards, so the leash has to be smaller than that.
+    constexpr float WALL_RECENTER_LEASH = 1.5f;
+
+    // ...AND THE HYSTERESIS THAT STOPS IT CHATTERING. Arming at
+    // standWallDist - WALL_STANDOFF_SLACK and disarming at the same number is one
+    // threshold, so the state flipped Fight -> Recenter -> Fight every two to
+    // three seconds for the whole of a wall. Recenter now HOLDS until the tank is
+    // back within this of the stand point's own standoff, so the correction is
+    // one step rather than twenty-seven.
+    constexpr float WALL_STANDOFF_CLEAR = 1.0f;
+
+    // --- THE IDLE TANK -------------------------------------------------------
+    //
+    // ENGAGE_REACH_YD / ENGAGE_MELEE_YD / ENGAGE_IDLE_MS. The escape driver's
+    // header says this file never walks the tank at a hostile, on the grounds
+    // that every activation here ends in SetInCombatWithZone plus an explicit
+    // AttackStart so the fight always starts itself. That is true about STARTING
+    // a fight and it is silent about this: the fight has started, the tank is
+    // flagged, and the summon it has targeted is out of reach and beating on
+    // somebody else.
+    //
+    // tr-20260908-225156-15, wall 4, 23:04:41 to 23:06:08 — EIGHTY-SEVEN SECONDS
+    // with distToStand pinned at exactly 1.0yd and 9 adds falling to 2 without
+    // the tank contributing a swing. The engine trace is unambiguous: 448 ticks
+    // of "no actions executed", 399 melee prereq failures, 358 combat-formation
+    // -move failures, and every rung IMPOSSIBLE with result 67 (out of range)
+    // against a Risen Witch Doctor. Fight had yielded the tick, and there was
+    // nothing left in the stock engine that closes 20 yards. The tank died at
+    // 23:06:28 and the party wiped to the Lumbering Abomination it never held.
+    //
+    // So the driver takes the one step the engine cannot: when a summon is alive,
+    // none of them is on this bot, and the nearest is between melee reach and
+    // ENGAGE_REACH_YD, walk at it. Bounded on BOTH sides on purpose —
+    //
+    //   * inside ENGAGE_MELEE_YD the rotation can reach it, so steering there
+    //     would only tear down the approach the engine is already running;
+    //   * past ENGAGE_REACH_YD the add is not a straggler, it is still running in
+    //     from the Lich King 200yd back, and walking at it is walking at him.
+    //
+    // TWENTY-FIVE AND NOT THIRTY, which is the number the geometry asks for
+    // twice over. It is the witch doctor's 20yd cast range plus margin — the one
+    // add this exists for — and it is STRICTLY inside STAND_LEAVE_LEASH, so a
+    // pickup begun from the stand point can never end outside the band and hand
+    // itself straight to the recall. (A pickup begun from mid-band still can,
+    // and that is fine: the recall is then a six-yard correction to the edge,
+    // not the twenty-four-yard round trip to the centre this change removed.)
+    //
+    // The three-second arm keeps it off the ordinary gap between one summon dying
+    // and the next arriving, which is under a second.
+    constexpr float  ENGAGE_REACH_YD = 25.0f;
+    constexpr float  ENGAGE_MELEE_YD = 5.0f;
+    constexpr uint32 ENGAGE_IDLE_MS  = 3000;
+
     // How near a WP_STOP the leader has to be before she counts as standing AT
     // it. Wider than a leash because the number it feeds is an INDEX, not a
     // position: she is either waiting at a stop or running between two of them,
@@ -3578,8 +3746,55 @@ namespace DcHallsOfReflection
     // of Saron's gate-stall WARN: unrecoverable from inside the driver (an add
     // parked inside the 10yd ring that the melee cannot reach), so the honest act
     // is to name it once with the adds listed and let the timeout stall the run.
-    constexpr float  LK_STALL_DIST = 30.0f;
-    constexpr uint32 ESCAPE_STALL_MS = 20000;
+    //
+    // THE FIRST PAIR (30yd / 20s) COULD NEVER FIRE, and that is arithmetic rather
+    // than bad luck. He closes on a leader who is standing still at 1.445 yd/s,
+    // so the window between crossing LK_STALL_DIST and catching her at 12.5yd is
+    // (30 - 12.5) / 1.445 = 12.1 SECONDS — and the latch needs 20 continuous
+    // seconds inside it before it reports. Ten runs of tp-20260907-221612-1
+    // stalled at a wall and produced zero STALLED lines between them; every one
+    // of them went straight to the Doomed WARN, which names nothing about WHY.
+    //
+    // 60yd gives (60 - 12.5) / 1.445 = 32.9 seconds inside the window, so a 12s
+    // hold reports with ~21 seconds still on the clock — early enough that the
+    // line is a diagnosis and not an obituary.
+    constexpr float  LK_STALL_DIST = 60.0f;
+    constexpr uint32 ESCAPE_STALL_MS = 12000;
+
+    // HOW FAR OUT THE DRIVER MAY BELIEVE ITS OWN GRID SCANS. Both numbers exist
+    // because a grid searcher answers "nothing within R" identically to "nothing
+    // at all", and on this map the two are routinely different things: the legs
+    // between stand points run 110-180yd and every summon batch is cast AT the
+    // Lich King, who is at the far end of the leg the party is crossing.
+    //
+    // ESCAPE_ADD_SCAN_YD — the add census. The old 120yd read zero adds for the
+    // whole of every transit. On tr-20260907-232601-9 the tank logged
+    // "0 add(s) up, wall shut" for twenty-one seconds at stand 3 while the batch
+    // that held that wall was alive 155-172yd back at him, and it reappeared as
+    // 2, then 3, then 4 as he walked it into range. A false zero mutes the stall
+    // watchdog (which needs addsAlive > 0), and it makes `batchLoose` false, so
+    // the Threat pickup cannot fire in the one window it exists for. The longest
+    // stand-to-previous-stop is stand 4's 180.3yd; 200 covers it with margin.
+    constexpr float ESCAPE_ADD_SCAN_YD = 200.0f;
+
+    // WALL_READ_RANGE — how near the ice wall target the bot must be before an
+    // EMPTY gameobject scan may be read as "the wall is open".
+    //
+    // The wall GO is summoned, never DB-spawned, so absent genuinely means open —
+    // but only if the scan could have seen it. Out at 145yd the scan cannot, and
+    // the driver logged "wall OPEN" at 23:36:26 and 23:36:32 on
+    // tr-20260907-232601-10 and "wall shut" at 23:36:39 with nothing having
+    // changed in the world except the tank's distance to it. Out of range is
+    // UNKNOWN, and unknown must read shut: both consumers (Recenter, and the
+    // stall watchdog's `wallShut`) only act when the party is standing at the
+    // wall, so a conservative answer at range costs nothing and a false "open"
+    // silences the one line that explains a stalled run.
+    //
+    // 100 rather than the scan's own 120 because the GO is matched within 20yd of
+    // the target: at 100yd from the target the GO is inside 120yd of the bot for
+    // certain.
+    constexpr float WALL_READ_RANGE = 100.0f;
+    constexpr float WALL_SCAN_YD = 120.0f;
 
     // Throttle on the two drivers' per-tick telemetry lines.
     constexpr uint32 TELEMETRY_MS = 3000;

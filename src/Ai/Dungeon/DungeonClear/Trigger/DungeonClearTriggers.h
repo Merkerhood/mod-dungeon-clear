@@ -627,6 +627,14 @@ public:
 //   * (bot.x + bot.y) - (lk.x + lk.y) above LK_BEHIND_SUM (6) — the core zaps at
 //     20 on exactly this scalar, and the path runs -x -y so it IS "behind him".
 //
+// ...OR the party has simply MOVED ON without it: the wall opened, the leader ran
+// 100-186yd to her next stop, the escape driver took the tank after her and this
+// bot is still at the old wall. That arm is latched (STAND_LEAVE_LEASH to arm,
+// STAND_LEASH to clear) and is NOT gated on Remorseless Winter, because the last
+// 131yd to the gunship is run with the aura already gone. Without it the rung was
+// a pressure valve that moved a bot a few yards and disarmed, and the party split
+// at every wall — see the block comment on DcHorStayAheadAction.cpp.
+//
 // Free on every other map — the first test is an integer compare on the map id.
 class DungeonClearHorStayAheadTrigger : public Trigger
 {

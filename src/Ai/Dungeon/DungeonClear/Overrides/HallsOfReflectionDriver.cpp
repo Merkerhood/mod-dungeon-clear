@@ -32,6 +32,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DcCombatFlag.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHorEscapeDecision.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcHorWaveDecision.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcMovement.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSuppressionTransit.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcTargeting.h"
@@ -69,14 +70,24 @@
 // not swing, and this dungeon has ten waves, two bosses, a general and four
 // summon batches to get through.
 //
-// ONE THING THIS FILE DELIBERATELY NEVER DOES: it never pulls, never engages and
-// never walks the tank AT a hostile. Pit of Saron needed a standoff-breaker
-// because its waves emerge passive and AzerothCore's proximity aggro is
-// relocation-driven, so a parked party and a parked mob can stare at each other
-// for ever. Nothing on this map can do that: every activation ends in
+// ONE THING THIS FILE NEVER DOES: it never PULLS. Pit of Saron needed a
+// standoff-breaker because its waves emerge passive and AzerothCore's proximity
+// aggro is relocation-driven, so a parked party and a parked mob can stare at
+// each other for ever. Nothing on this map can do that: every activation ends in
 // SetInCombatWithZone() plus an explicit AttackStart, so the fight always starts
 // itself and a driver that went looking for one would only be walking toward a
 // leash.
+//
+// IT DOES, IN EXACTLY ONE STATE, WALK THE TANK AT A HOSTILE — and the paragraph
+// above is why that is not a contradiction. Engage is not a pull. The fight has
+// already started itself, the summon is already on the party, and the tank is
+// already flagged; the only thing missing is the twenty yards between a bot and
+// a Risen Witch Doctor that casts from range at whoever is rearmost. The stock
+// engine has no rung left that closes it — on tr-20260908-225156-15 that was
+// eighty-seven seconds of "no actions executed" with every ability returning
+// SPELL_FAILED_OUT_OF_RANGE — so the driver takes the step. It is bounded to
+// ENGAGE_REACH_YD precisely so it can never become the walk-toward-a-leash this
+// paragraph warns about.
 
 namespace
 {
@@ -842,6 +853,18 @@ namespace
     // DB-spawned, so "absent" and "GO_STATE_ACTIVE" both mean open — the first
     // because it has not been summoned yet or has been deleted, the second
     // because WallCompleted opened it. Only "present and not ACTIVE" is shut.
+    //
+    // ...WITH ONE PRECONDITION, because a grid searcher cannot tell "no wall"
+    // from "not looking that far". The scan is centred on the BOT, and while the
+    // party is crossing a 110-180yd leg the wall it is heading for is simply out
+    // of it — which is how tr-20260907-232601-10 logged "wall OPEN" at 126yd and
+    // 135yd from stand 2 and "wall shut" once it had closed to 92yd, with nothing
+    // in the world having changed. Out of WALL_READ_RANGE the honest answer is
+    // UNKNOWN, and unknown reads SHUT: both consumers act only while the party is
+    // standing at the wall (Recenter needs atStand; the stall watchdog needs him
+    // inside LK_STALL_DIST of a leader who is at that same stop), so nothing is
+    // lost by being conservative at range, and a false "open" mutes the one WARN
+    // that explains a stalled run.
     bool WallIsOpen(Player* bot, uint8 targetStop)
     {
         if (!bot || targetStop < 1 || targetStop > 4)
@@ -849,8 +872,11 @@ namespace
 
         HorPoint const& target = ICE_WALL_TARGETS[targetStop - 1];
 
+        if (bot->GetExactDist2d(target.x, target.y) > WALL_READ_RANGE)
+            return false;
+
         std::list<GameObject*> found;
-        bot->GetGameObjectListWithEntryInGrid(found, GO_ICE_WALL, 120.0f);
+        bot->GetGameObjectListWithEntryInGrid(found, GO_ICE_WALL, WALL_SCAN_YD);
         for (GameObject* go : found)
         {
             if (!go)
@@ -863,24 +889,62 @@ namespace
         return true;
     }
 
-    // Live escape summons within reach of the party.
-    uint32 CountEscapeAdds(Player* bot)
+    // Live escape summons anywhere on the leg, and how many of them are on THIS
+    // bot.
+    //
+    // The second number is what tells "the batch is still alive" (fine — the
+    // party is killing it) apart from "the batch is loose" (not fine — walking
+    // off leaves it on whoever it did pick). The driver runs on the tank, so
+    // `onMe` is literally how much of the pull it is holding.
+    //
+    // ESCAPE_ADD_SCAN_YD, not a party-sized radius, because the batch is cast AT
+    // THE LICH KING and he is at the far end of the leg the party is crossing.
+    // A 120yd census read zero for the whole of every transit and for the first
+    // twenty seconds at the new stand — a false zero that mutes the stall
+    // watchdog and makes `batchLoose` false in the one window Threat exists for.
+    // ...AND THE NEAREST ONE THAT IS NOT ON THIS BOT, which is what the pickup
+    // walks at. "Not on this bot" rather than "not on anybody": a summon beating
+    // on the healer and a summon casting at nobody are the same problem to a tank
+    // that cannot reach either, and the kernel's own batchLoose test already uses
+    // exactly this distinction (addsAlive > addsTargetingMe).
+    //
+    // `looseDist` stays 0 when there is none, which is the kernel's "no candidate"
+    // sentinel — it tests looseAddDist > engageMelee, so zero can never arm it.
+    void CountEscapeAdds(Player* bot, uint32& alive, uint32& onMe, float& looseDist,
+                         ObjectGuid& looseGuid)
     {
+        alive = 0;
+        onMe = 0;
+        looseDist = 0.0f;
+        looseGuid.Clear();
         if (!bot)
-            return 0;
+            return;
 
         static std::vector<uint32> const kAdds = {
             NPC_RAGING_GHOUL, NPC_RISEN_WITCH_DOCTOR, NPC_LUMBERING_ABOMINATION,
         };
 
         std::list<Creature*> found;
-        bot->GetCreatureListWithEntryInGrid(found, kAdds, 120.0f);
+        bot->GetCreatureListWithEntryInGrid(found, kAdds, ESCAPE_ADD_SCAN_YD);
 
-        uint32 alive = 0;
         for (Creature* c : found)
-            if (c && c->IsAlive() && !c->IsImmuneToPC())
-                ++alive;
-        return alive;
+        {
+            if (!c || !c->IsAlive() || c->IsImmuneToPC())
+                continue;
+            ++alive;
+            if (c->GetVictim() == bot)
+            {
+                ++onMe;
+                continue;
+            }
+
+            float const d = bot->GetExactDist(c);
+            if (!looseGuid || d < looseDist)
+            {
+                looseDist = d;
+                looseGuid = c->GetGUID();
+            }
+        }
     }
 
     // The stall WARN's payload: which adds are still up, where they stand, and
@@ -900,7 +964,7 @@ namespace
         };
 
         std::list<Creature*> found;
-        bot->GetCreatureListWithEntryInGrid(found, kAdds, 120.0f);
+        bot->GetCreatureListWithEntryInGrid(found, kAdds, ESCAPE_ADD_SCAN_YD);
         for (Creature* c : found)
         {
             if (!c || !c->IsAlive())
@@ -932,9 +996,11 @@ namespace
                   DcHorEscape::StateName(v.state), in.addsAlive,
                   in.wallOpen ? "OPEN" : "shut", in.distToLk, in.sumMinusLkSum,
                   in.lkToLeaderDist, in.distToStand,
-                  v.travel      ? "moving up"
-                  : v.yieldTick ? "yielding — fight"
-                                : "holding");
+                  v.travelToAdd    ? "walking at the loose summon"
+                  : v.travelToEdge ? "back to the leash edge"
+                  : v.travel       ? "moving up"
+                  : v.yieldTick    ? "yielding — fight"
+                                   : "holding");
     }
 
     // --- hook 35: ESCAPE THE LICH KING — the second controller -------------
@@ -976,8 +1042,30 @@ namespace
         in.lkToLeaderDist = (lk && leader) ? lk->GetExactDist2d(leader) : -1.0f;
         in.distToStand = bot->GetExactDist(stand.x, stand.y, stand.z);
         in.standLeash = STAND_LEASH;
-        in.addsAlive = CountEscapeAdds(bot);
+        in.standLeaveLeash = STAND_LEAVE_LEASH;
+        ObjectGuid looseGuid;
+        CountEscapeAdds(bot, in.addsAlive, in.addsTargetingMe, in.looseAddDist, looseGuid);
+        in.engageReach = ENGAGE_REACH_YD;
+        in.engageMelee = ENGAGE_MELEE_YD;
+        in.engageIdleMs = ENGAGE_IDLE_MS;
+        in.idleSinceMs = st.horEscapeIdleMs;
+        in.reachedStand = st.horEscapeReachedStand;
         in.partyInCombat = DcCombatFlag::AnyPartyEngagement(bot);
+
+        // The wall standoff, in 2D: the slab is a vertical thing in a corridor
+        // that climbs, so height has nothing to say about how far into it a bot
+        // has walked. Zeroed at stop 5, where there is no wall at all and
+        // standWallDist == 0 switches the kernel's test off.
+        if (target >= 1 && target <= 4)
+        {
+            HorPoint const& wall = ICE_WALL_TARGETS[target - 1];
+            in.wallDist = bot->GetExactDist2d(wall.x, wall.y);
+            in.standWallDist =
+                std::sqrt((stand.x - wall.x) * (stand.x - wall.x) +
+                          (stand.y - wall.y) * (stand.y - wall.y));
+        }
+        in.wallStandoffSlack = WALL_STANDOFF_SLACK;
+        in.wallStandoffClear = WALL_STANDOFF_CLEAR;
         in.pressureDist = LK_PRESSURE_DIST;
         in.behindSum = LK_BEHIND_SUM;
         in.nowMs = getMSTime();
@@ -988,15 +1076,36 @@ namespace
         in.stallDist = LK_STALL_DIST;
         in.stallMs = ESCAPE_STALL_MS;
         in.stopHoldSinceMs = st.horEscapeStopHoldMs;
+        in.targetStopSinceMs = st.horEscapeTargetStopMs;
+        in.grabThreatMs = GRAB_THREAT_MS;
 
         DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
 
         bool const changed = st.horEscapeState != v.storeState;
+
+        // THE DRIVER'S FIRST TICK. Whatever is carrying the bot right now was
+        // issued by something that did not know the escape had started — on
+        // tp-20260907-221612-1 that was DcRel::Advance's off-line rejoin, aimed at
+        // the throne-room anchor 54yd BEHIND the party, issued in the very tick
+        // the gossip landed. Kill the glide so this driver's own spline is not
+        // queued behind it (the event sets StepsOwnMovement, so nothing else
+        // cancels it) and clear the move wait so the steer lands now rather than
+        // up to maxWaitForMove later.
+        if (st.horEscapeState == static_cast<uint8>(DcHorEscape::State::Done) &&
+            v.storeState != static_cast<uint8>(DcHorEscape::State::Done))
+        {
+            DcMovement::ResolveEscortConflict(bot);
+            DcMovement::ClearMovementWait(bot);
+        }
+
         st.horEscapeState = v.storeState;
         st.horEscapeStateMs = v.stateSinceMs;
         st.horEscapeStop = v.stallStop;
         st.horEscapeStallReported = v.stallReported;
         st.horEscapeStopHoldMs = v.stopHoldSinceMs;
+        st.horEscapeTargetStopMs = v.targetStopSinceMs;
+        st.horEscapeIdleMs = v.idleSinceMs;
+        st.horEscapeReachedStand = v.reachedStand;
 
         HorEscapeLog(bot, st, v, in);
 
@@ -1031,6 +1140,85 @@ namespace
 
         if (v.travel)
         {
+            // WHERE THIS TICK'S STEER IS AIMED. Three destinations, and which one
+            // is chosen is the kernel's call, not this file's:
+            //
+            //   the stand point   — a leg (Prelude/Advance), the pressure step,
+            //                       and the step back off the slab (Recenter);
+            //   the band's EDGE   — a drift-out at a stop the party already owns
+            //                       (Regroup), so the tank returns to the fight
+            //                       rather than to the middle of the floor;
+            //   the loose summon  — the pickup (Engage).
+            float dx = stand.x, dy = stand.y, dz = stand.z;
+
+            // The arrival leash goes with the destination. STAND_LEASH is wider
+            // than every clipping episode there is, which is what made Recenter a
+            // twenty-seven-times-per-run no-op — TravelTo returns without moving
+            // when the bot is already inside the leash it is handed.
+            float leash = STAND_LEASH;
+            bool forcePath = false;
+            float epsilon = 2.0f;
+
+            if (v.state == DcHorEscape::State::Recenter)
+                leash = WALL_RECENTER_LEASH;
+
+            if (v.travelToEdge)
+            {
+                // No authored polyline to fall back on here — this corridor is a
+                // route of anchors, not a transit slice — so HoldPoint gets a null
+                // row and returns the snapped chord. That is the right answer on
+                // this ground: the recall is a few yards back along a corridor the
+                // party has just walked, not a crossing of a C-shaped shelf.
+                Position const anchor(stand.x, stand.y, stand.z, 0.0f);
+                DcTransit::HoldTarget const hold =
+                    DcTransit::HoldPoint(bot, anchor, STAND_LEAVE_LEASH, STAND_EDGE_MARGIN,
+                                         STAND_EDGE_SNAP_RADIUS, STAND_EDGE_SNAP_TOLERANCE,
+                                         /*route*/ nullptr);
+                dx = hold.x;
+                dy = hold.y;
+                dz = hold.z;
+                leash = STAND_EDGE_ARRIVE_LEASH;
+                forcePath = hold.viaRoute;
+            }
+            else if (v.travelToAdd)
+            {
+                Creature* const add =
+                    looseGuid ? inst->instance->GetCreature(looseGuid) : nullptr;
+                if (!add || !add->IsAlive())
+                {
+                    // It died between the census and here. Nothing to walk at and
+                    // nothing to correct; hand the tick to the rotation.
+                    return ObjectiveArriveResult::Done;
+                }
+
+                dx = add->GetPositionX();
+                dy = add->GetPositionY();
+                dz = add->GetPositionZ();
+                leash = ENGAGE_MELEE_YD;
+
+                // A WIDER RE-ISSUE EPSILON, because this destination MOVES. Two
+                // yards against a summon running at the party re-plots the spline
+                // on most ticks, and re-plotting is what tears down the melee
+                // approach the engine lays over it. Four yards is inside the
+                // arrival leash, so the walk still ends on the add.
+                epsilon = 4.0f;
+            }
+
+            // RE-ISSUE FLOOR, the same one the per-follower rung has carried since
+            // it was written (DungeonClearHorStayAheadAction::Execute) and the
+            // driver did not. The stand point only moves when the leader reaches
+            // her next stop, so without this the driver re-plots the identical
+            // spline every tick it steers — and because TravelTo has no
+            // "already moving" guard by design, each re-plot tears down the melee
+            // approach the combat engine laid over it. Paired with the kernel's
+            // Schmitt trigger this is what ends the fifty-seven-transition thrash.
+            //
+            // CLAIMS THE TICK on suppression rather than yielding, for the reason
+            // spelled out below: a yield here hands the leg to DcRel::Advance.
+            if (st.ThrottledIssue(DcThrottle::HorEscapeIssue, dx, dy, dz, epsilon,
+                                  /*windowMs*/ 1500))
+                return ObjectiveArriveResult::Running;
+
             // FORWARD, ALWAYS, and never radially away from him. TravelTo through
             // LongRangePathfinder because the legs between stops run 100-176yd
             // and a bare MovePoint truncates silently past ~30.
@@ -1041,7 +1229,7 @@ namespace
             // (the authored route is NO_STOP end to end for exactly that reason),
             // it would do it at the pace of a clear rather than at the pace of a
             // Lich King.
-            DcTransit::TravelTo(bot, botAI, stand.x, stand.y, stand.z, STAND_LEASH);
+            DcTransit::TravelTo(bot, botAI, dx, dy, dz, leash, forcePath);
             return ObjectiveArriveResult::Running;
         }
 

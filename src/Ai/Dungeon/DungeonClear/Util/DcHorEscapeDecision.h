@@ -72,6 +72,10 @@ namespace DcHorEscape
         Advance,     // the wall opened / the leader moved on — take the next stand
         Final,       // wall 4 is down; run the last 131yd to WP18 with her
         Doomed,      // Harvest Soul is on the leader; Fury lands in 3 seconds
+        Threat,      // the leader moved on but the batch is loose — take it first
+        Recenter,    // drifted forward into the shut wall — step back off it
+        Regroup,     // drifted off the band at THIS stop — back to its near edge
+        Engage,      // a summon is loose, none is on me, and it is out of reach
     };
 
     inline char const* StateName(State s)
@@ -85,6 +89,10 @@ namespace DcHorEscape
             case State::Advance:  return "the wall is open — moving up";
             case State::Final:    return "wall 4 is down — running for the gunship";
             case State::Doomed:   return "the leader has been caught; Fury of Frostmourne is coming";
+            case State::Threat:   return "taking the batch before moving up";
+            case State::Recenter: return "too far forward — stepping back off the wall";
+            case State::Regroup:  return "drifted off the stand — back to the leash edge";
+            case State::Engage:   return "nothing is on me — walking at the loose summon";
             case State::Done:
             default:              return "not running";
         }
@@ -137,9 +145,55 @@ namespace DcHorEscape
 
         // --- geometry and the fight --------------------------------------------
         float distToStand = 0.0f;   // this bot -> the stand point for the target stop
+
+        // THE SCHMITT TRIGGER. standLeash is how near counts as ARRIVED,
+        // standLeaveLeash how far counts as GONE, and they are deliberately not
+        // the same number — see DcHallsOfReflection::STAND_LEAVE_LEASH for the
+        // fifty-seven-transition thrash that having only one of them produced.
         float standLeash = 0.0f;
+        float standLeaveLeash = 0.0f;
+
         uint32 addsAlive = 0;
+
+        // How many of those are actually ON this bot (their victim is it). The
+        // driver runs on the tank, so `addsAlive > addsTargetingMe` is "part of
+        // the batch is loose" — which is the thing that must not be walked away
+        // from, as distinct from a batch that is merely still alive.
+        uint32 addsTargetingMe = 0;
+
         bool   partyInCombat = false;
+
+        // This bot's distance to the CURRENT wall's gameobject origin, and the
+        // stand point's own distance to it. Their difference is how far forward of
+        // the stand the bot has drifted; wallStandoffSlack is how much of that is
+        // tolerated before it is walked back. Only meaningful while the wall is
+        // shut — once it opens the party walks through the thing.
+        float wallDist = 0.0f;
+        float standWallDist = 0.0f;
+        float wallStandoffSlack = 0.0f;
+
+        // ...and how near the standoff the tank has to get back BEFORE Recenter
+        // lets go. Arming and disarming on one number is what made the state
+        // flip Fight -> Recenter -> Fight twenty-seven times in a single run;
+        // see DcHallsOfReflection::WALL_STANDOFF_CLEAR.
+        float wallStandoffClear = 0.0f;
+
+        // --- the loose summon --------------------------------------------------
+
+        // Distance to the NEAREST living summon whose victim is not this bot, or
+        // <= 0 when there is none. The pair below bounds what the driver will
+        // walk at: inside engageMelee the rotation reaches it unaided, past
+        // engageReach it is still running in from the Lich King and walking at it
+        // is walking at HIM.
+        float looseAddDist = 0.0f;
+        float engageReach = 0.0f;
+        float engageMelee = 0.0f;
+
+        // How long "a summon is up and none of it is on me" must have held
+        // before the driver acts, so the ordinary sub-second gap between one add
+        // dying and the next arriving is not a reason to walk anywhere.
+        uint32 engageIdleMs = 0;
+        uint32 idleSinceMs = 0;     // when that first became true; 0 = not idle
 
         // --- the two thresholds -------------------------------------------------
         float pressureDist = 0.0f;  // DcHallsOfReflection::LK_PRESSURE_DIST
@@ -154,6 +208,20 @@ namespace DcHorEscape
         float  stallDist = 0.0f;    // DcHallsOfReflection::LK_STALL_DIST
         uint32 stallMs = 0;
         uint32 stopHoldSinceMs = 0; // when the party first stood at THIS stop
+
+        // When targetStop last CHANGED — i.e. when the leader moved on and the
+        // party acquired a new place to be. The threat-pickup gate is measured
+        // from here, so it is spent once per wall and cannot accumulate.
+        uint32 targetStopSinceMs = 0;
+        uint32 grabThreatMs = 0;    // DcHallsOfReflection::GRAB_THREAT_MS
+
+        // HAS THE PARTY EVER MADE THIS STOP? The difference between the two
+        // reasons a bot can be off the stand point, and they want opposite
+        // moves: not yet arrived is a 100-180yd LEG and must end on the point,
+        // while arrived-then-drifted is a chase step and must end on the near
+        // EDGE of the band (see STAND_EDGE_MARGIN). Cleared whenever the stop
+        // changes, so the first crossing of every wall is always a leg.
+        bool reachedStand = false;
     };
 
     struct Verdict
@@ -170,6 +238,11 @@ namespace DcHorEscape
         bool holdStill = false;  // issue no movement, but claim the tick
         bool yieldTick = false;  // hand the tick to the stock combat engine
 
+        // WHERE `travel` is aimed, when it is not the stand point itself.
+        // Exactly one of these is ever set, and neither without `travel`.
+        bool travelToEdge = false;  // the near edge of the band, not the centre
+        bool travelToAdd = false;   // the loose summon the rotation cannot reach
+
         // --- derived facts the glue logs or stores ---------------------------
         bool complete = false;
         bool reportStall = false;
@@ -180,6 +253,9 @@ namespace DcHorEscape
         uint8  stallStop = 0;
         bool   stallReported = false;
         uint32 stopHoldSinceMs = 0;
+        uint32 targetStopSinceMs = 0;
+        uint32 idleSinceMs = 0;
+        bool   reachedStand = false;
     };
 
     // Which stand point the party should hold, given where the leader is. The
@@ -202,6 +278,9 @@ namespace DcHorEscape
         v.stallStop = in.stallStop;
         v.stallReported = in.stallReported;
         v.stopHoldSinceMs = in.stopHoldSinceMs;
+        v.targetStopSinceMs = in.targetStopSinceMs;
+        v.idleSinceMs = in.idleSinceMs;
+        v.reachedStand = in.reachedStand;
         v.targetStop = TargetStopFor(in.leaderStop);
 
         // --- 1. is the escape ours? ------------------------------------------
@@ -221,6 +300,9 @@ namespace DcHorEscape
             v.stallStop = 0;
             v.stallReported = false;
             v.stopHoldSinceMs = 0;
+            v.targetStopSinceMs = 0;
+            v.idleSinceMs = 0;
+            v.reachedStand = false;
             return v;
         }
 
@@ -256,13 +338,122 @@ namespace DcHorEscape
                                (in.distToLk < in.pressureDist ||
                                 in.sumMinusLkSum > in.behindSum);
 
-        // --- 3. which state ---------------------------------------------------
+        // --- 3. WHICH STOP, and has it just changed? --------------------------
+        //
+        // Hoisted above the state choice because the threat-pickup gate below is
+        // measured from the change. Re-armed per stop rather than per state,
+        // because the party legitimately cycles Hold -> Fight -> Hold several
+        // times at one wall.
+        if (v.stallStop != v.targetStop)
+        {
+            v.stallStop = v.targetStop;
+            v.stallReported = false;
+            v.stopHoldSinceMs = 0;
+            v.targetStopSinceMs = in.nowMs;
+            // A NEW STOP IS ALWAYS A LEG. Whatever the party had reached belongs
+            // to the wall it is leaving, so the crossing that follows ends on the
+            // point rather than on the band's edge, and the idle clock restarts
+            // rather than carrying a stale arm across 180 yards.
+            v.reachedStand = false;
+            v.idleSinceMs = 0;
+        }
+
+        // --- 4. which state ---------------------------------------------------
+        //
+        // AM I AT THE STAND POINT is a SCHMITT TRIGGER, not a comparison. Arriving
+        // costs standLeash; leaving costs the wider standLeaveLeash, and only the
+        // states that mean "holding ground here" latch the wide one. With a single
+        // radius the tank oscillated across it every one to two seconds for the
+        // whole of a wall fight, re-issuing a spline that cancelled its own melee
+        // approach each time — see STAND_LEAVE_LEASH.
+        //
+        // Regroup and Engage HOLD GROUND TOO, and both must. Regroup ends inside
+        // the wide band by construction (STAND_EDGE_MARGIN inside it), so reading
+        // it against the narrow leash would leave atStand false at the very point
+        // it just walked to and re-arm itself for ever; Engage deliberately walks
+        // AWAY from the stand point, up to engageReach, and reading that against
+        // the narrow leash would turn every pickup into a recall.
+        bool const holdingGround = in.state == static_cast<uint8>(State::Hold) ||
+                                   in.state == static_cast<uint8>(State::Fight) ||
+                                   in.state == static_cast<uint8>(State::Recenter) ||
+                                   in.state == static_cast<uint8>(State::Regroup) ||
+                                   in.state == static_cast<uint8>(State::Engage);
+        float const atStandWithin = holdingGround ? in.standLeaveLeash : in.standLeash;
+        bool const atStand = in.distToStand <= atStandWithin;
+
+        // ARRIVAL IS THE NARROW LEASH, ALWAYS, whatever the state. This is not
+        // the "am I there" question the Schmitt trigger answers — it is the
+        // one-way record of having genuinely made this stop, and it is what tells
+        // a later drift-out from a leg that has not finished yet.
+        if (in.distToStand <= in.standLeash)
+            v.reachedStand = true;
+
+        // PART OF THE BATCH IS LOOSE. The summons chase whoever holds them, so a
+        // tank that walks to the next wall WITH them on it is doing the right
+        // thing and one that walks off and leaves them on the healer is not.
+        // Bounded by grabThreatMs from the stop change so a witch doctor that
+        // never melees anyone cannot hold the party at a dead wall.
+        uint32 const sinceStopChangeMs =
+            in.nowMs >= v.targetStopSinceMs ? in.nowMs - v.targetStopSinceMs : 0;
+        bool const batchLoose = in.addsAlive > in.addsTargetingMe;
+        bool const grabbing =
+            !atStand && batchLoose && in.grabThreatMs && sinceStopChangeMs < in.grabThreatMs;
+
+        // DRIFTED FORWARD INTO A SHUT WALL. Yielding the fight to the combat
+        // engine lets MoveChase walk the tank past the stand point and into the
+        // slab; the summons are all BEHIND, so stepping back is also stepping
+        // toward them.
+        //
+        // TWO THRESHOLDS, not one. Arming is the slack; CLEARING is
+        // wallStandoffClear of the stand point's own standoff, so the state holds
+        // through the whole step back instead of dropping out the moment the tank
+        // is a yard better off and being re-armed by the next MoveChase.
+        bool const wasRecentering = in.state == static_cast<uint8>(State::Recenter);
+        float const clipArmAt = in.standWallDist - in.wallStandoffSlack;
+        float const clipClearAt = in.standWallDist - in.wallStandoffClear;
+        bool const clippingWall =
+            atStand && !in.wallOpen && in.standWallDist > 0.0f &&
+            in.wallDist < (wasRecentering ? clipClearAt : clipArmAt);
+
+        // --- THE IDLE TANK ----------------------------------------------------
+        //
+        // A summon is up, none of them is on this bot, and the rotation has
+        // nothing it can reach. Held on a clock so the sub-second gap between one
+        // add dying and the next arriving is not a reason to walk anywhere, and
+        // bounded on both sides so the walk is a pickup and never a trip back
+        // down the path at the Lich King.
+        bool const nothingOnMe = in.addsAlive > 0 && in.addsTargetingMe == 0;
+        if (nothingOnMe)
+        {
+            if (!v.idleSinceMs)
+                v.idleSinceMs = in.nowMs;
+        }
+        else
+        {
+            v.idleSinceMs = 0;
+        }
+
+        uint32 const idleForMs =
+            v.idleSinceMs && in.nowMs >= v.idleSinceMs ? in.nowMs - v.idleSinceMs : 0;
+        bool const engaging = atStand && nothingOnMe && in.engageIdleMs &&
+                              idleForMs >= in.engageIdleMs &&
+                              in.looseAddDist > in.engageMelee &&
+                              in.looseAddDist <= in.engageReach;
+
         if (pressured)
             v.state = State::Pressure;
         else if (v.targetStop >= 5)
             v.state = State::Final;
-        else if (in.distToStand > in.standLeash)
-            v.state = in.leaderStop < 1 ? State::Prelude : State::Advance;
+        else if (grabbing)
+            v.state = State::Threat;
+        else if (!atStand)
+            v.state = in.leaderStop < 1 ? State::Prelude
+                      : v.reachedStand  ? State::Regroup
+                                        : State::Advance;
+        else if (clippingWall)
+            v.state = State::Recenter;
+        else if (engaging)
+            v.state = State::Engage;
         else if (in.addsAlive > 0 || in.partyInCombat)
             v.state = State::Fight;
         else
@@ -272,7 +463,7 @@ namespace DcHorEscape
         if (in.state != v.storeState)
             v.stateSinceMs = in.nowMs;
 
-        // --- 4. the stall watchdog --------------------------------------------
+        // --- 5. the stall watchdog --------------------------------------------
         //
         // ONE LINE PER STOP, and only for the shape that is genuinely
         // unrecoverable from inside the driver: he is closing on her, the wall is
@@ -283,15 +474,7 @@ namespace DcHorEscape
         // pulling them off it. Naming which adds are alive and where they stand is
         // what turns that from "the run stalled at wall 3" into a fix.
         //
-        // Re-armed per stop rather than per state, because the party legitimately
-        // cycles Hold -> Fight -> Hold several times at one wall.
-        if (v.stallStop != v.targetStop)
-        {
-            v.stallStop = v.targetStop;
-            v.stallReported = false;
-            v.stopHoldSinceMs = 0;
-        }
-
+        // The per-stop re-arm happens in section 3, above the state choice.
         bool const wallShut = !in.wallOpen && in.addsAlive > 0;
         if (wallShut && in.lkToLeaderDist > 0.0f && in.lkToLeaderDist <= in.stallDist)
         {
@@ -311,9 +494,45 @@ namespace DcHorEscape
             v.stopHoldSinceMs = 0;
         }
 
-        // --- 5. what to do about it -------------------------------------------
+        // --- 6. what to do about it -------------------------------------------
         switch (v.state)
         {
+            case State::Recenter:
+                // BACKWARDS, and this is the one state where that is right: the
+                // stand point is behind the drifted tank and the summons are
+                // behind it too, so the step off the wall is a step onto them.
+                v.travel = true;
+                return v;
+
+            case State::Threat:
+                // Stand still and swing. There is nothing to walk at — the batch
+                // is coming to the party — and the whole point is to be the thing
+                // it arrives on before the party moves off.
+                v.yieldTick = true;
+                return v;
+
+            case State::Regroup:
+                // THE NEAR EDGE, NOT THE CENTRE. The stand point is a leash and
+                // not a parking space: every geometric rule this fight enforces
+                // holds anywhere in the band, so a tank that chased a witch
+                // doctor to the boundary is put back just inside it and returned
+                // to the fight, rather than walked the whole way home and out
+                // again. See DcHallsOfReflection::STAND_EDGE_MARGIN for the two
+                // round trips per wall that cost.
+                v.travel = true;
+                v.travelToEdge = true;
+                return v;
+
+            case State::Engage:
+                // The one place this driver walks the tank AT a hostile, and it
+                // is not a pull: the fight is already running, the summon is
+                // already on the party, and the only thing missing is twenty
+                // yards the stock engine has no rung left to close. See
+                // ENGAGE_REACH_YD.
+                v.travel = true;
+                v.travelToAdd = true;
+                return v;
+
             case State::Pressure:
             case State::Prelude:
             case State::Advance:
@@ -345,6 +564,119 @@ namespace DcHorEscape
                 v.holdStill = true;
                 return v;
         }
+    }
+
+    // ======================================================================
+    // THE PER-FOLLOWER HALF — the same rule for the four bots the driver does
+    // not steer.
+    //
+    // DungeonClearEventDueTrigger is leader-only, so the escape driver above
+    // moves the TANK and nothing else. Everyone else spends the escape in the
+    // stock combat engine, and the ONE thing the module told them was "you are
+    // inside his ring, step forward" (DungeonClearHorStayAheadAction).
+    //
+    // THAT IS A PRESSURE-RELIEF VALVE, NOT A WAY OF GETTING ANYWHERE, and on
+    // tp-20260908-000109-1 the difference cost all ten runs. When a wall opens
+    // the leader runs 100-186yd to her next stop and the driver walks the tank
+    // after her; the followers were never told, so they stayed on the adds at
+    // the OLD wall while the Lich King walked into them. The valve then armed at
+    // LK_PRESSURE_DIST, pushed them a few yards, and DISARMED — so MoveChase
+    // pulled them straight back onto a witch doctor standing on his side of the
+    // party, and they oscillated on the edge of the ring instead of travelling.
+    //
+    // Redas, tr-20260908-000117-1, the rung firing every 1.5-2s: 16.0 -> 13.2
+    // -> 11.1 -> 15.1 -> 5.9 -> 14.6 -> 9.1yd from him over twenty seconds,
+    // net displacement nil, while the tank crossed 136yd to stand 2 alone. The
+    // three dps died 12-41s later to a Lumbering Abomination that was never
+    // tanked, the healer 77s after that, and the bear met wall 4's nineteen
+    // summons by itself. Ten runs, ten wipes, all at 5/6 bosses.
+    //
+    // SO THE FOLLOWERS GET THE SECOND REASON THE DRIVER ALREADY HAS: Advance.
+    // Where the driver reads it off the leader's stop index, a follower reads it
+    // off its OWN distance to the stand point that index picks — same point, so
+    // the party converges rather than each bot solving a different problem.
+    //
+    // It is a LATCH and not a comparison, for the reason STAND_LEAVE_LEASH
+    // exists at all: a bot that armed at 40yd and disarmed at 39 would hand the
+    // tick back to MoveChase, which walks it back toward the add it left, which
+    // re-arms the rung. Arming costs standLeaveLeash and clearing it costs
+    // standLeash, so once a follower sets off it keeps the tick — and therefore
+    // keeps its spline — for the whole leg.
+    // ======================================================================
+
+    struct FollowInputs
+    {
+        // The escape is running and he is alive. NOT gated on Remorseless
+        // Winter: the pressure half is (his rules only exist while it is up),
+        // but the advance half has to cover the last 131yd to WP18 as well,
+        // which is run with Winter already gone.
+        bool active = false;
+
+        bool  lkHasWinter = false;
+        float distToLk = 0.0f;
+        float sumMinusLkSum = 0.0f;
+        float pressureDist = 0.0f;   // LK_PRESSURE_DIST
+        float behindSum = 0.0f;      // LK_BEHIND_SUM
+
+        // This bot -> the stand point for the stop the LEADER picks, and the
+        // same Schmitt pair the driver uses on the tank.
+        float distToStand = 0.0f;
+        float standLeash = 0.0f;
+        float standLeaveLeash = 0.0f;
+
+        // The stored advance latch (DcRunState::horFollowAdvancing).
+        bool advancing = false;
+
+        // THIS BOT IS THE ONE HOOK 35 STEERS (the dungeon-clear leader). The
+        // driver already walks it to the same stand point through its own
+        // re-issue floor, so the advance half must stand down or one bot carries
+        // two of them. The pressure half is unaffected.
+        bool driverSteered = false;
+    };
+
+    struct FollowVerdict
+    {
+        bool travel = false;     // TravelTo the stand point
+        bool pressured = false;  // ...because he is on top of me / I am behind him
+        bool advancing = false;  // ...because the party has moved on; latch to store
+    };
+
+    inline FollowVerdict DecideFollow(FollowInputs const& in)
+    {
+        FollowVerdict v;
+        if (!in.active)
+            return v;
+
+        // The original rung, unchanged and still Winter-gated. Outranks nothing
+        // and is outranked by nothing — either reason alone is enough to move,
+        // and both want the same destination.
+        v.pressured = in.lkHasWinter &&
+                      (in.distToLk < in.pressureDist || in.sumMinusLkSum > in.behindSum);
+
+        // THE LATCH. Set wide, cleared narrow; see the block comment above.
+        // THE DRIVER OWNS ITS BOT'S LEGS: on the leader the latch is held clear
+        // rather than merely unset, so a bot that was promoted to leader mid-leg
+        // does not carry an armed latch into hook 35's territory.
+        v.advancing = false;
+        if (!in.driverSteered)
+        {
+            v.advancing = in.advancing;
+            if (in.distToStand > in.standLeaveLeash)
+                v.advancing = true;
+            else if (in.distToStand <= in.standLeash)
+                v.advancing = false;
+        }
+
+        // ALREADY THERE OUTRANKS BOTH. A follower inside the leash that still
+        // reads pressured has had the Lich King walk up to IT — the ordinary
+        // state of a wall that is taking a while — and there is nowhere better
+        // to stand. Re-issuing a move to where the bot already is would only
+        // tear down the melee approach the combat engine is running.
+        if (in.distToStand <= in.standLeash)
+            return v;
+
+        v.travel = v.pressured || v.advancing;
+        return v;
     }
 }
 

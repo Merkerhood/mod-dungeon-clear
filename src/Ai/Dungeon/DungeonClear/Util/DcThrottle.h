@@ -68,6 +68,7 @@ enum class DcThrottle : uint8
     PosLedgeLog,         // the Pit of Saron ledge hook's per-state line
     HorWaveLog,          // the Halls of Reflection altar driver's per-tick line
     HorEscapeLog,        // the Halls of Reflection escape driver's per-tick line
+    HorEscapeIssue,      // the escape driver's own re-issue floor on the stand point
     HorIntroLog,         // "walking to Jaina/Sylvanas to start the intro"
     HorThroneLog,        // the throne-room gather / forge line
     HorEscapeGoLog,      // "not ready for the point of no return, because ..."

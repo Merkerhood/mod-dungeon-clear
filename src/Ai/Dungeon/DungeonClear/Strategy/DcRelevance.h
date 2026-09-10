@@ -241,7 +241,7 @@ namespace DcRel
     // under the terminal bailouts (100). Inert everywhere else: the trigger's
     // first test is the map id, its second the escape's boss state.
     // See DungeonClearHorStayAhead{Trigger,Action}.
-    inline constexpr float HorStayAhead           = 56.0f; // any role: forward, out of the Lich King's ring
+    inline constexpr float HorStayAhead           = 56.0f; // any role: forward, with the party and out of his ring
     inline constexpr float HazardVacate           = 55.0f; // any role: clear an unfightable hazard's pulse
     inline constexpr float AssistCampCombat       = 35.0f; // follower: onto the leader's pack
     // Leader-only, combat side of the KillCreature-engage objective. A stealthed

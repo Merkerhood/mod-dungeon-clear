@@ -2327,7 +2327,40 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         return false;
 
     if (vC == DungeonClearApproach::Verdict::OffLineRejoin)
+    {
+        // NOT WHILE AN EVENT THAT OWNS THE PULL HAS TAKEN OVER. The rejoin aims at
+        // the ROUTE CURSOR, and an event that steps its own movement has by
+        // definition been walking the party somewhere the cursor knows nothing
+        // about — so the cursor is stale, and "rejoin the route" means "walk back
+        // to the last place the route was right", which is backwards.
+        //
+        // Measured on tp-20260907-221612-1 (Halls of Reflection). The escape
+        // gossip lands; the throne-room objective clears in that same tick; this
+        // rung fires 54.2yd off-line and DcMoveTo's the tank to the THRONE anchor
+        // it has just left, 54 yards the wrong way. The move sets a LastMovement
+        // wait, the whole ladder idles out the ~5s cap, and by the time the escape
+        // driver gets a tick the party is west of the corridor mouth and has to
+        // come back east THROUGH the Lich King — 183.9yd of path for 133.3yd of
+        // net travel, ending 13.4yd from him inside Remorseless Winter. All ten
+        // runs; the driver reported TOO CLOSE / BEHIND HIM 16-19s in, every time.
+        //
+        // The predicate is the same one the pull pipeline and the scout-lag ask,
+        // and it reads true for a CONDITIONAL event the moment its activation
+        // condition does — which for the escape is the tick the boss state flips,
+        // i.e. the tick this rung would otherwise misfire in. Yield rather than
+        // claim: the event is about to steer, and this rung has nothing useful to
+        // contribute to a party whose route cursor is behind it.
+        if (DungeonEventExecutor::IsPullOwningEventDriving(bot, context))
+        {
+            LOG_DEBUG("playerbots.dungeonclear",
+                      "[DC:{}] off-line {:.1f}yd -> NOT rejoining: a pull-owning event is "
+                      "driving and the route cursor (seg {} pt {}) is behind the party",
+                      bot->GetName(), st.routeDeviation, st.follower->segmentIdx,
+                      st.follower->pointIdx);
+            return false;
+        }
         return DoOffLineRejoin(st) == Step::ReturnTrue;
+    }
 
     // IssueSplineWindow, then the terminal per-point MoveTo (window < 2 points, or
     // a SplinePath that refused). DoIssueSplineWindow returns Continue when the

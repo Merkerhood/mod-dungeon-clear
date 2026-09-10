@@ -35,6 +35,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -103,8 +104,27 @@ namespace
         in.lkToLeaderDist = 60.0f;
         in.distToStand = 1.0f;
         in.standLeash = STAND_LEASH;
+        in.standLeaveLeash = STAND_LEAVE_LEASH;
         in.addsAlive = 0;
+        in.addsTargetingMe = 0;
         in.partyInCombat = false;
+        // On the stand point for wall 2, so the wall standoff reads clear.
+        in.standWallDist = 18.8f;
+        in.wallDist = 18.8f;
+        in.wallStandoffSlack = WALL_STANDOFF_SLACK;
+        in.wallStandoffClear = WALL_STANDOFF_CLEAR;
+        // No loose summon and no idle clock running: every pickup test has to
+        // say so itself, so the states that existed before this one cannot be
+        // silently re-routed through it.
+        in.looseAddDist = 0.0f;
+        in.engageReach = ENGAGE_REACH_YD;
+        in.engageMelee = ENGAGE_MELEE_YD;
+        in.engageIdleMs = ENGAGE_IDLE_MS;
+        in.idleSinceMs = 0;
+        // Has NOT yet made this stop, so an off-stand test is a leg unless it
+        // says otherwise. The baseline itself sits on the point, which sets the
+        // latch inside Decide -- that is the arrival, not a carried-in state.
+        in.reachedStand = false;
         in.pressureDist = LK_PRESSURE_DIST;
         in.behindSum = LK_BEHIND_SUM;
         in.nowMs = 1'000'000;
@@ -115,6 +135,30 @@ namespace
         in.stallDist = LK_STALL_DIST;
         in.stallMs = ESCAPE_STALL_MS;
         in.stopHoldSinceMs = 0;
+        // Already settled at this stop, so the threat-pickup gate has expired and
+        // a test that wants it has to say so.
+        in.targetStopSinceMs = 1'000'000 - 60'000;
+        in.grabThreatMs = GRAB_THREAT_MS;
+        return in;
+    }
+
+    // --- the FOLLOWER kernel's baseline -----------------------------------
+    //
+    // A dps standing on the party's stand point at wall 2, out of his ring and
+    // ahead of him on the scalar, with the advance latch clear. Nothing to do.
+    DcHorEscape::FollowInputs FollowBase()
+    {
+        DcHorEscape::FollowInputs in;
+        in.active = true;
+        in.lkHasWinter = true;
+        in.distToLk = 40.0f;
+        in.sumMinusLkSum = -60.0f;
+        in.pressureDist = LK_PRESSURE_DIST;
+        in.behindSum = LK_BEHIND_SUM;
+        in.distToStand = 1.0f;
+        in.standLeash = STAND_LEASH;
+        in.standLeaveLeash = STAND_LEAVE_LEASH;
+        in.advancing = false;
         return in;
     }
 
@@ -543,11 +587,537 @@ TEST(DcHorEscapeTest, TheAdvanceDoesNotWaitForTheLastAddToDie)
     in.leaderStop = 3;
     in.distToStand = 90.0f;
     in.addsAlive = 2;
+    in.addsTargetingMe = 2;  // ...and they are on the tank, so they come along
     in.partyInCombat = true;
 
     DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
     EXPECT_EQ(v.state, DcHorEscape::State::Advance);
     EXPECT_TRUE(v.travel);
+}
+
+// ...BUT IT DOES WAIT TO TAKE THE BATCH, briefly. The rule above is about the
+// adds being ALIVE; this one is about them being LOOSE. On tp-20260907-221612-1
+// the driver ran the tank 88yd to the next wall while eight summons were up and
+// on the group — it arrived 153yd ahead of the Lich King, which is where they
+// spawn, and the three non-tanks died to a batch nothing was holding.
+//
+// The summons chase whoever has threat, so a tank that leaves WITH them drags
+// them to the wall it is going to anyway. The gate is only for picking them up.
+TEST(DcHorEscapeTest, ALooseBatchIsTakenBeforeTheTankWalksToTheNextWall)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.leaderStop = 3;         // she has moved on: stand 3 is 90yd away
+    in.distToStand = 90.0f;
+    in.wallOpen = true;
+    in.addsAlive = 8;
+    in.addsTargetingMe = 0;    // ...and not one of them is on the tank
+    in.partyInCombat = true;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Threat);
+    EXPECT_TRUE(v.yieldTick) << "it has to swing to take them, not walk";
+    EXPECT_FALSE(v.travel);
+    ExpectClaimsOrYields(v, "the batch is loose and the leader has moved on");
+    EXPECT_EQ(v.targetStopSinceMs, in.nowMs) << "the gate's clock starts at the stop change";
+}
+
+// AND THE GATE IS BOUNDED, because a Risen Witch Doctor casting from 20yd may
+// never melee anybody: the tank must not be able to stand at a cleared wall for
+// ever waiting for threat it cannot get. Past GRAB_THREAT_MS it walks regardless.
+TEST(DcHorEscapeTest, TheThreatPickupGateExpiresAndTheTankWalksAnyway)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.leaderStop = 3;
+    in.distToStand = 90.0f;
+    in.wallOpen = true;
+    in.addsAlive = 8;
+    in.addsTargetingMe = 0;
+    in.partyInCombat = true;
+    in.stallStop = 3;  // already at this stop, so the change is not re-detected
+    in.targetStopSinceMs = in.nowMs - GRAB_THREAT_MS - 1;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Advance);
+    EXPECT_TRUE(v.travel);
+}
+
+// THE SCHMITT TRIGGER. With one radius the tank flipped Advance <-> Fight every
+// one to two seconds for the whole of a wall fight — fifty-seven transitions in
+// one run of tp-20260907-221612-1, distToStand alternating 6.7 and 5.0 — because
+// each Advance re-issued a spline that cancelled the melee approach the combat
+// engine had just laid over it. Arriving costs STAND_LEASH; leaving costs more.
+TEST(DcHorEscapeTest, HoldingGroundDoesNotFlipToAdvanceOnASingleChaseStep)
+{
+    ASSERT_GT(STAND_LEAVE_LEASH, STAND_LEASH) << "the two radii ARE the hysteresis";
+
+    // The exact drift that thrashed: just outside the arrive radius, well inside
+    // the leave radius, while already holding ground.
+    DcHorEscape::Inputs in = EscapeBase();
+    in.distToStand = STAND_LEASH + 0.7f;
+    in.addsAlive = 3;
+    in.addsTargetingMe = 3;
+    in.partyInCombat = true;
+    in.state = static_cast<uint8>(DcHorEscape::State::Fight);
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Fight) << "a chase step is not a departure";
+    EXPECT_FALSE(v.travel);
+
+    // Past the leave radius it is a real departure and the driver steers again.
+    DcHorEscape::Inputs gone = in;
+    gone.distToStand = STAND_LEAVE_LEASH + 0.1f;
+    EXPECT_EQ(DcHorEscape::Decide(gone).state, DcHorEscape::State::Advance);
+
+    // ...and a bot that is NOT already holding ground still has to get inside the
+    // narrow radius before it counts as arrived, or the hysteresis would let it
+    // stop six yards short every time.
+    DcHorEscape::Inputs arriving = in;
+    arriving.state = static_cast<uint8>(DcHorEscape::State::Advance);
+    EXPECT_EQ(DcHorEscape::Decide(arriving).state, DcHorEscape::State::Advance);
+}
+
+// ...AND THE HYSTERESIS HAS TO BE WIDER THAN A WITCH DOCTOR'S CASTING RANGE.
+// Twelve yards stopped the boundary flutter and did not stop the thrash, because
+// the thing MoveChase walks the tank at is a Risen Witch Doctor parked at 20yd
+// on the Lich King's side of the party. On tp-20260907-232556-1 the tank cycled
+// 0.1yd -> past 12 -> Advance -> back to 0.1 fifteen times per run at stand 3,
+// peaking at 24.7yd; each Advance claimed the tick and re-plotted the spline, so
+// half of every wall fight was spent not fighting and three summons outlived a
+// hundred seconds of it.
+TEST(DcHorEscapeTest, TheLeaveLeashClearsAWitchDoctorsCastingRange)
+{
+    // 20yd of cast range plus the stand offset the melee starts from. Anything
+    // narrower re-arms Advance in the middle of the approach that has to land for
+    // the wall to open at all.
+    ASSERT_GE(STAND_LEAVE_LEASH, 25.0f)
+        << "a 20yd caster on his side of the party is a walk, not a chase step";
+
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 3;
+    in.partyInCombat = true;
+    in.state = static_cast<uint8>(DcHorEscape::State::Fight);
+    in.distToStand = 24.7f;  // the measured peak of the thrash
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Fight)
+        << "the melee approach to a 20yd caster must not re-arm Advance";
+    EXPECT_FALSE(v.travel);
+    ExpectClaimsOrYields(v, "melee approach inside the leave leash");
+
+    // A real leg is 110-180yd and is a departure however wide the leash gets.
+    DcHorEscape::Inputs leg = in;
+    leg.distToStand = 110.0f;
+    EXPECT_EQ(DcHorEscape::Decide(leg).state, DcHorEscape::State::Advance);
+
+    // And the wider radius must not swallow the wall standoff: Recenter fires
+    // only while atStand, so widening that covers MORE of the forward drift.
+    DcHorEscape::Inputs clipping = in;
+    clipping.wallDist = in.standWallDist - WALL_STANDOFF_SLACK - 1.0f;
+    EXPECT_EQ(DcHorEscape::Decide(clipping).state, DcHorEscape::State::Recenter);
+}
+
+// THE TWO GRID-SCAN RANGES. A grid searcher answers "nothing within R" and
+// "nothing at all" with the same empty list, and on this map they are routinely
+// different things: the legs between stand points run 110-180yd and every summon
+// batch is cast AT the Lich King, at the far end of the leg being crossed.
+TEST(DcHorEscapeTest, TheGridScansReachTheFarEndOfTheLongestLeg)
+{
+    // The longest stand-to-previous-stop is stand 4 -> stop 3. The census has to
+    // reach it or it reads a live batch as zero for the whole transit -- which
+    // mutes the stall watchdog (it needs addsAlive > 0) and makes batchLoose
+    // false in the one window the Threat pickup exists for.
+    float worstLeg = 0.0f;
+    for (uint8 stop = 1; stop <= 4; ++stop)
+    {
+        HorPoint const stand = StandPointFor(stop);
+        HorPoint const& prev = PATH_WAYPOINTS[WP_STOP[stop - 1]];
+        float const dx = stand.x - prev.x, dy = stand.y - prev.y, dz = stand.z - prev.z;
+        worstLeg = std::max(worstLeg, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+    EXPECT_GT(ESCAPE_ADD_SCAN_YD, worstLeg)
+        << "the add census must reach the Lich King the batch spawns on";
+
+    // The wall read is the other half: an EMPTY scan may only be believed from
+    // inside a range where the scan could have seen the gameobject. The GO is
+    // matched within 20yd of the target, so the readable range has to leave that
+    // much room inside the scan itself.
+    EXPECT_LE(WALL_READ_RANGE + 20.0f, WALL_SCAN_YD)
+        << "an empty scan is only 'open' where the scan could have seen the wall";
+}
+
+// THE WALL STANDOFF. The stand points are clear of the slab; the tank does not
+// stay on them, because yielding the fight lets MoveChase walk it forward. Bots
+// were logged 13.4yd from a SHUT wall's origin against a stand point 18.8yd out.
+// Stepping back is also stepping toward the summons, which are all behind.
+TEST(DcHorEscapeTest, DriftingForwardIntoAShutWallIsWalkedBack)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 3;
+    in.partyInCombat = true;
+    in.wallDist = in.standWallDist - WALL_STANDOFF_SLACK - 1.0f;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Recenter);
+    EXPECT_TRUE(v.travel) << "back to the stand point, which is behind";
+    ExpectClaimsOrYields(v, "drifted into the shut wall");
+
+    // Inside the slack it is an ordinary wall fight and nothing is corrected.
+    DcHorEscape::Inputs slack = in;
+    slack.wallDist = in.standWallDist - WALL_STANDOFF_SLACK + 0.1f;
+    EXPECT_EQ(DcHorEscape::Decide(slack).state, DcHorEscape::State::Fight);
+
+    // An OPEN wall is a doorway, not an obstacle: the party walks through it.
+    DcHorEscape::Inputs opened = in;
+    opened.wallOpen = true;
+    EXPECT_NE(DcHorEscape::Decide(opened).state, DcHorEscape::State::Recenter);
+}
+
+// THE RECENTER STEP HAS TO ACTUALLY LAND, and for a year it never did.
+//
+// Recenter fires while the tank is AT the stand point -- it is a forward drift of
+// a few yards INSIDE the leash -- and the driver issued it as
+// TravelTo(stand, STAND_LEASH). TravelTo returns without moving when the bot is
+// already inside the leash it is handed, and 6yd is wider than every clipping
+// episode there is. On tr-20260908-225156-15 the state fired 27 times, logged at
+// 1.4yd and 4.3yd from the stand, and moved the tank nowhere.
+TEST(DcHorEscapeTest, TheRecenterArrivalLeashIsTighterThanTheDriftItCorrects)
+{
+    EXPECT_LT(WALL_RECENTER_LEASH, WALL_STANDOFF_SLACK)
+        << "a leash wider than the drift makes the whole correction a no-op";
+    EXPECT_LT(WALL_RECENTER_LEASH, STAND_LEASH)
+        << "STAND_LEASH is what made it a no-op; the step back needs its own";
+}
+
+// ...AND IT HAS TO BE ONE STEP, NOT TWENTY-SEVEN. Arming and clearing on the same
+// number is a single threshold, so the state dropped out the moment the tank was
+// a yard better off and MoveChase re-armed it two seconds later. It now HOLDS
+// until the standoff is genuinely back.
+TEST(DcHorEscapeTest, TheRecenterHoldsUntilTheStandoffIsActuallyCleared)
+{
+    ASSERT_LT(WALL_STANDOFF_CLEAR, WALL_STANDOFF_SLACK)
+        << "clearing must be a STRICTER test than arming, or there is no hysteresis";
+
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 3;
+    in.partyInCombat = true;
+
+    // Part-way back: past the arming threshold, not yet at the clearing one.
+    // From Fight this is an ordinary wall fight; from Recenter it is unfinished.
+    float const partWayBack = in.standWallDist - WALL_STANDOFF_SLACK + 0.5f;
+    ASSERT_LT(partWayBack, in.standWallDist - WALL_STANDOFF_CLEAR);
+
+    DcHorEscape::Inputs fighting = in;
+    fighting.wallDist = partWayBack;
+    fighting.state = static_cast<uint8>(DcHorEscape::State::Fight);
+    EXPECT_EQ(DcHorEscape::Decide(fighting).state, DcHorEscape::State::Fight)
+        << "arming is still the slack -- a bot that never clipped is left alone";
+
+    DcHorEscape::Inputs stepping = in;
+    stepping.wallDist = partWayBack;
+    stepping.state = static_cast<uint8>(DcHorEscape::State::Recenter);
+    EXPECT_EQ(DcHorEscape::Decide(stepping).state, DcHorEscape::State::Recenter)
+        << "the step back must hold to the clearing threshold, not drop out early";
+
+    // All the way back onto the standoff: done.
+    DcHorEscape::Inputs done = stepping;
+    done.wallDist = in.standWallDist;
+    EXPECT_NE(DcHorEscape::Decide(done).state, DcHorEscape::State::Recenter);
+}
+
+// =========================================================================
+// THE LEASH IS A BAND, NOT A PARKING SPACE
+// =========================================================================
+//
+// tr-20260908-225156-15, wall 3: Fight at 7.1yd -> chased a Risen Witch Doctor to
+// 28.2 -> crossed STAND_LEAVE_LEASH -> travelled all the way home to 6 -> Fight
+// -> out to 28.8 -> round again. Two full 30-to-6yd round trips in twenty
+// seconds, each re-plotting a spline over the melee approach. The tank does not
+// need to be on the point; it needs to be in the band.
+TEST(DcHorEscapeTest, ADriftedTankReturnsToTheBandEdgeNotTheStandPoint)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 3;
+    in.partyInCombat = true;
+    in.state = static_cast<uint8>(DcHorEscape::State::Fight);
+    in.reachedStand = true;               // the party owns this stop already
+    in.distToStand = STAND_LEAVE_LEASH + 1.0f;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Regroup);
+    EXPECT_TRUE(v.travel);
+    EXPECT_TRUE(v.travelToEdge) << "the near edge of the band, never the centre";
+    EXPECT_FALSE(v.travelToAdd);
+    ExpectClaimsOrYields(v, "drifted off a stop the party already owns");
+    EXPECT_TRUE(v.reachedStand) << "drifting out does not un-arrive";
+}
+
+// ...AND AN UNFINISHED LEG IS THE OPPOSITE CASE. 110-180yd with the party not yet
+// at the wall is a crossing, and a crossing has to end ON the point -- the band
+// edge is 24yd of nothing, a hundred yards short of where the batch will arrive.
+TEST(DcHorEscapeTest, ALegThatHasNeverArrivedStillEndsOnTheStandPoint)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.reachedStand = false;
+    in.distToStand = 110.0f;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Advance);
+    EXPECT_TRUE(v.travel);
+    EXPECT_FALSE(v.travelToEdge) << "a 110yd crossing must not stop 24yd short";
+}
+
+// A NEW STOP IS ALWAYS A LEG. Whatever the party had reached belongs to the wall
+// it is leaving; carrying the latch across would turn the next 180yd crossing
+// into a recall that stops 24yd from the point.
+TEST(DcHorEscapeTest, ArrivalIsForgottenWhenTheLeaderMovesOn)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.reachedStand = true;
+    in.distToStand = 140.0f;
+    in.leaderStop = 3;      // she has moved on...
+    in.stallStop = 2;       // ...and the latch still belongs to stop 2
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_FALSE(v.reachedStand) << "the new stop has never been reached";
+    EXPECT_EQ(v.state, DcHorEscape::State::Advance);
+    EXPECT_FALSE(v.travelToEdge);
+    EXPECT_EQ(v.idleSinceMs, 0u) << "a stale idle arm must not cross a leg";
+}
+
+// THE RECALL MUST NOT RE-ARM ITSELF. It ends inside the WIDE leash by
+// construction (STAND_EDGE_MARGIN inside it), so reading Regroup against the
+// narrow one would leave atStand false at the very point it just walked to.
+TEST(DcHorEscapeTest, TheRecallEndsInsideTheBandItWasRecalledTo)
+{
+    ASSERT_LT(STAND_EDGE_MARGIN, STAND_LEAVE_LEASH);
+    ASSERT_GT(STAND_LEAVE_LEASH - STAND_EDGE_MARGIN, STAND_LEASH)
+        << "the edge point has to sit OUTSIDE the narrow leash, or this is the "
+           "run-all-the-way-home the whole change removes";
+
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 3;
+    in.partyInCombat = true;
+    in.reachedStand = true;
+    in.state = static_cast<uint8>(DcHorEscape::State::Regroup);
+    in.distToStand = STAND_LEAVE_LEASH - STAND_EDGE_MARGIN;  // where it lands
+
+    EXPECT_EQ(DcHorEscape::Decide(in).state, DcHorEscape::State::Fight)
+        << "back in the band is back in the fight, not another recall";
+}
+
+// =========================================================================
+// THE IDLE TANK
+// =========================================================================
+//
+// tr-20260908-225156-15, wall 4, 23:04:41 to 23:06:08: distToStand pinned at
+// exactly 1.0yd for EIGHTY-SEVEN SECONDS while nine summons fell to two without a
+// swing from the tank. The engine trace is 448 ticks of "no actions executed",
+// 399 melee prereq failures and every ability IMPOSSIBLE with result 67 (out of
+// range) against a Risen Witch Doctor. Fight had yielded the tick and there was
+// nothing left in the stock engine that closes twenty yards.
+TEST(DcHorEscapeTest, ATankWithNothingOnItWalksAtTheLooseSummon)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 0;         // none of it is on me
+    in.partyInCombat = true;
+    in.looseAddDist = 20.0f;        // a witch doctor's cast range
+    in.idleSinceMs = in.nowMs - ENGAGE_IDLE_MS - 1;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Engage);
+    EXPECT_TRUE(v.travel);
+    EXPECT_TRUE(v.travelToAdd);
+    EXPECT_FALSE(v.travelToEdge);
+    ExpectClaimsOrYields(v, "nothing on the tank and nothing in reach");
+}
+
+// ...BUT NOT ON THE GAP BETWEEN ONE SUMMON DYING AND THE NEXT ARRIVING, which is
+// under a second and is not a reason to walk anywhere.
+TEST(DcHorEscapeTest, ThePickupWaitsOutTheGapBetweenSummons)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 0;
+    in.partyInCombat = true;
+    in.looseAddDist = 20.0f;
+    in.idleSinceMs = in.nowMs - (ENGAGE_IDLE_MS / 2);
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Fight) << "half the arm is not the arm";
+    EXPECT_EQ(v.idleSinceMs, in.idleSinceMs) << "the clock has to keep running";
+
+    // A cold clock STARTS here rather than firing here.
+    DcHorEscape::Inputs cold = in;
+    cold.idleSinceMs = 0;
+    DcHorEscape::Verdict const started = DcHorEscape::Decide(cold);
+    EXPECT_EQ(started.state, DcHorEscape::State::Fight);
+    EXPECT_EQ(started.idleSinceMs, in.nowMs) << "first tick of idle stamps the clock";
+}
+
+// BOUNDED ON BOTH SIDES. Inside melee reach the rotation gets there unaided and
+// steering would only tear down the approach; past ENGAGE_REACH_YD the summon is
+// not a straggler, it is still running in from the Lich King two hundred yards
+// back, and walking at it is walking at HIM.
+TEST(DcHorEscapeTest, ThePickupIsBoundedAtBothEnds)
+{
+    ASSERT_LT(ENGAGE_MELEE_YD, ENGAGE_REACH_YD);
+    EXPECT_LT(ENGAGE_REACH_YD, STAND_LEAVE_LEASH)
+        << "a pickup begun on the stand point must not end outside the band and "
+           "hand itself straight to the recall";
+    EXPECT_GE(ENGAGE_REACH_YD, 20.0f)
+        << "the witch doctor this exists for casts from 20yd";
+
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 0;
+    in.partyInCombat = true;
+    in.idleSinceMs = in.nowMs - ENGAGE_IDLE_MS - 1;
+
+    DcHorEscape::Inputs inMelee = in;
+    inMelee.looseAddDist = ENGAGE_MELEE_YD - 0.5f;
+    EXPECT_EQ(DcHorEscape::Decide(inMelee).state, DcHorEscape::State::Fight)
+        << "the rotation reaches this one on its own";
+
+    DcHorEscape::Inputs faraway = in;
+    faraway.looseAddDist = ENGAGE_REACH_YD + 0.5f;
+    EXPECT_EQ(DcHorEscape::Decide(faraway).state, DcHorEscape::State::Fight)
+        << "that is an inbound summon, not a straggler";
+
+    // And no candidate at all is the sentinel, not a zero-distance target.
+    DcHorEscape::Inputs none = in;
+    none.looseAddDist = 0.0f;
+    EXPECT_EQ(DcHorEscape::Decide(none).state, DcHorEscape::State::Fight);
+}
+
+// A SUMMON THAT IS ON THE TANK IS THE TANK DOING ITS JOB. The clock resets, so a
+// batch that lands mid-fight cannot leave a stale arm behind it.
+TEST(DcHorEscapeTest, ASummonOnTheTankIsNeverAPickup)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 1;
+    in.partyInCombat = true;
+    in.looseAddDist = 20.0f;
+    in.idleSinceMs = in.nowMs - ENGAGE_IDLE_MS - 1;
+
+    DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+    EXPECT_EQ(v.state, DcHorEscape::State::Fight);
+    EXPECT_EQ(v.idleSinceMs, 0u) << "something is on me; the idle clock is dead";
+}
+
+// THE ORDER OF THE THREE NEW REASONS AGAINST THE OLD ONES. Pressure still outranks
+// everything (7068 frost/s beats any add), the slab still outranks the pickup
+// (walking at a summon must never be walking into the wall), and a leg still
+// outranks both.
+TEST(DcHorEscapeTest, ThePickupNeverOutranksPressureOrTheSlab)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 0;
+    in.partyInCombat = true;
+    in.looseAddDist = 20.0f;
+    in.idleSinceMs = in.nowMs - ENGAGE_IDLE_MS - 1;
+    ASSERT_EQ(DcHorEscape::Decide(in).state, DcHorEscape::State::Engage);
+
+    DcHorEscape::Inputs pressured = in;
+    pressured.distToLk = LK_PRESSURE_DIST - 1.0f;
+    EXPECT_EQ(DcHorEscape::Decide(pressured).state, DcHorEscape::State::Pressure);
+
+    DcHorEscape::Inputs clipping = in;
+    clipping.wallDist = in.standWallDist - WALL_STANDOFF_SLACK - 1.0f;
+    EXPECT_EQ(DcHorEscape::Decide(clipping).state, DcHorEscape::State::Recenter);
+
+    DcHorEscape::Inputs leg = in;
+    leg.distToStand = 110.0f;
+    EXPECT_NE(DcHorEscape::Decide(leg).state, DcHorEscape::State::Engage);
+}
+
+// THE PICKUP MUST NOT TURN ITSELF INTO A RECALL. Engage deliberately walks AWAY
+// from the stand point, up to ENGAGE_REACH_YD -- read against the narrow leash
+// that would be "gone" on the very next tick.
+TEST(DcHorEscapeTest, WalkingAtASummonIsNotReadAsLeavingTheStand)
+{
+    DcHorEscape::Inputs in = EscapeBase();
+    in.addsAlive = 3;
+    in.addsTargetingMe = 0;
+    in.partyInCombat = true;
+    in.looseAddDist = 20.0f;
+    in.idleSinceMs = in.nowMs - ENGAGE_IDLE_MS - 1;
+    in.reachedStand = true;
+    in.state = static_cast<uint8>(DcHorEscape::State::Engage);
+    in.distToStand = 20.0f;   // mid-pickup, outside STAND_LEASH, inside the band
+
+    EXPECT_EQ(DcHorEscape::Decide(in).state, DcHorEscape::State::Engage)
+        << "the pickup holds the wide leash like every other holding-ground state";
+}
+
+// EXACTLY ONE DESTINATION PER STEER, for every state the kernel can reach. The two
+// flags are read by the glue to pick between three different points; both set at
+// once, or either set without `travel`, is a bot walked somewhere nobody chose.
+TEST(DcHorEscapeTest, ASteerNeverCarriesTwoDestinations)
+{
+    auto check = [](DcHorEscape::Verdict const& v, char const* what)
+    {
+        if (!v.travel)
+        {
+            EXPECT_FALSE(v.travelToEdge) << what << ": aimed without steering";
+            EXPECT_FALSE(v.travelToAdd) << what << ": aimed without steering";
+            return;
+        }
+        EXPECT_FALSE(v.travelToEdge && v.travelToAdd) << what << ": two destinations";
+    };
+
+    DcHorEscape::Inputs base = EscapeBase();
+    base.addsAlive = 3;
+    base.partyInCombat = true;
+
+    for (uint8 leaderStop = 0; leaderStop <= 5; ++leaderStop)
+        for (uint32 onMe : {0u, 3u})
+            for (float dist : {0.5f, 20.0f, 110.0f})
+                for (bool reached : {false, true})
+                    for (bool clipped : {false, true})
+                    {
+                        DcHorEscape::Inputs in = base;
+                        in.leaderStop = leaderStop;
+                        in.addsTargetingMe = onMe;
+                        in.distToStand = dist;
+                        in.reachedStand = reached;
+                        in.looseAddDist = onMe ? 0.0f : 20.0f;
+                        in.idleSinceMs = in.nowMs - ENGAGE_IDLE_MS - 1;
+                        if (clipped)
+                            in.wallDist = in.standWallDist - WALL_STANDOFF_SLACK - 1.0f;
+                        DcHorEscape::Verdict const v = DcHorEscape::Decide(in);
+                        check(v, "escape sweep");
+                        ExpectClaimsOrYields(v, "escape sweep");
+                    }
+}
+
+// THE STALL WARN HAS TO BE REACHABLE. He closes on a stationary leader at
+// 1.445 yd/s and catches her at 12.5yd, so the window between crossing
+// LK_STALL_DIST and the catch is (LK_STALL_DIST - 12.5) / 1.445 seconds. The
+// first pair (30yd / 20s) gave 12.1 seconds for a latch that needed 20 — ten
+// runs stalled at a wall and produced zero STALLED lines between them.
+TEST(DcHorEscapeTest, TheStallBudgetFitsInsideTheTimeHeTakesToCoverTheStallDistance)
+{
+    constexpr float kCatchDist = 12.5f;      // npc_hor_lich_kingAI's own catch range
+    constexpr float kLkSpeed = 1.445f;       // yd/s under Remorseless Winter
+
+    ASSERT_GT(LK_STALL_DIST, kCatchDist);
+    float const windowS = (LK_STALL_DIST - kCatchDist) / kLkSpeed;
+    float const budgetS = static_cast<float>(ESCAPE_STALL_MS) / 1000.0f;
+
+    EXPECT_LT(budgetS, windowS)
+        << "the latch needs " << budgetS << "s but only " << windowS
+        << "s exist between LK_STALL_DIST and the catch — it can never fire";
+    // ...and with enough left over that the line is a diagnosis rather than an
+    // obituary: at least ten seconds of warning before he reaches her.
+    EXPECT_GE(windowS - budgetS, 10.0f);
 }
 
 TEST(DcHorEscapeTest, AWallFightOnTheStandPointYieldsTheTick)
@@ -668,7 +1238,223 @@ TEST(DcHorEscapeTest, AnOpenWallNeverStalls)
 }
 
 // =========================================================================
-// 3. the authored data
+// 3. the follower kernel — "come with the tank"
+// =========================================================================
+
+// The whole of tp-20260908-000109-1 in one assertion. The wall has opened, the
+// leader is 136yd up the corridor at her next stop and the tank has gone after
+// her; the Lich King is nowhere near this bot, so the PRESSURE half says nothing
+// at all. Before DecideFollow existed that was the only half there was, and the
+// dps stayed at the old wall until he walked into them.
+TEST(DcHorFollowTest, AFollowerLeftBehindByAnOpenedWallTravelsEvenWithNoPressure)
+{
+    DcHorEscape::FollowInputs in = FollowBase();
+    in.distToStand = 136.0f;
+    in.distToLk = 90.0f;          // far outside the ring
+    in.sumMinusLkSum = -120.0f;   // and comfortably ahead of him
+
+    DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+    EXPECT_FALSE(v.pressured);
+    EXPECT_TRUE(v.advancing);
+    EXPECT_TRUE(v.travel);
+}
+
+// The advance arm is a SCHMITT TRIGGER, exactly as the driver's is, and this is
+// the property that makes it work at all: a bot that armed at 40yd and disarmed
+// at 39 would hand the tick straight back to MoveChase, which walks it toward
+// the add it just left, which re-arms the rung — the oscillation Redas ran for
+// twenty seconds in tr-20260908-000117-1 while covering no ground.
+TEST(DcHorFollowTest, TheAdvanceLatchArmsWideAndClearsNarrow)
+{
+    DcHorEscape::FollowInputs in = FollowBase();
+
+    // Inside the wide radius with the latch clear: nothing happens. A follower
+    // fighting the batch a few yards off the stand point is not "left behind".
+    in.distToStand = STAND_LEAVE_LEASH - 1.0f;
+    EXPECT_FALSE(DcHorEscape::DecideFollow(in).advancing);
+    EXPECT_FALSE(DcHorEscape::DecideFollow(in).travel);
+
+    // Past it, it arms.
+    in.distToStand = STAND_LEAVE_LEASH + 1.0f;
+    DcHorEscape::FollowVerdict armed = DcHorEscape::DecideFollow(in);
+    EXPECT_TRUE(armed.advancing);
+    EXPECT_TRUE(armed.travel);
+
+    // And STAYS armed all the way in, through the whole band the arm test would
+    // have dropped it in.
+    in.advancing = armed.advancing;
+    for (float d : { STAND_LEAVE_LEASH - 1.0f, 20.0f, 12.0f, STAND_LEASH + 0.5f })
+    {
+        in.distToStand = d;
+        DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+        EXPECT_TRUE(v.advancing) << "latch dropped at " << d << "yd";
+        EXPECT_TRUE(v.travel) << "stopped travelling at " << d << "yd";
+        in.advancing = v.advancing;
+    }
+
+    // Arrival clears it, and clears the travel with it.
+    in.distToStand = STAND_LEASH - 0.1f;
+    DcHorEscape::FollowVerdict const done = DcHorEscape::DecideFollow(in);
+    EXPECT_FALSE(done.advancing);
+    EXPECT_FALSE(done.travel);
+}
+
+// The original rung, unchanged: inside his ring, or behind him on the encounter's
+// own scalar, is a move even when the party has not gone anywhere.
+TEST(DcHorFollowTest, ThePressureHalfStillFiresOnItsOwn)
+{
+    {
+        DcHorEscape::FollowInputs in = FollowBase();
+        in.distToStand = 12.0f;   // inside the wide leash, so no advance
+        in.distToLk = LK_PRESSURE_DIST - 1.0f;
+        DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+        EXPECT_TRUE(v.pressured);
+        EXPECT_FALSE(v.advancing);
+        EXPECT_TRUE(v.travel);
+    }
+    {
+        DcHorEscape::FollowInputs in = FollowBase();
+        in.distToStand = 12.0f;
+        in.sumMinusLkSum = LK_BEHIND_SUM + 1.0f;
+        DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+        EXPECT_TRUE(v.pressured);
+        EXPECT_TRUE(v.travel);
+    }
+}
+
+// Remorseless Winter gates the PRESSURE half and nothing else. Both of the
+// encounter's own rules hang off that aura, so without it standing near him is
+// merely pointless — but the last 131yd to the gunship is run with the aura gone
+// and the party still has to make it together.
+TEST(DcHorFollowTest, WinterGatesThePressureHalfButNotTheAdvanceHalf)
+{
+    DcHorEscape::FollowInputs in = FollowBase();
+    in.lkHasWinter = false;
+    in.distToLk = 2.0f;               // standing on him
+    in.sumMinusLkSum = 50.0f;         // and well behind him
+    in.distToStand = 12.0f;
+    EXPECT_FALSE(DcHorEscape::DecideFollow(in).travel);
+
+    // ...and the run for WP18, on the same dead aura, still moves.
+    in.distToStand = 131.0f;
+    DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+    EXPECT_FALSE(v.pressured);
+    EXPECT_TRUE(v.advancing);
+    EXPECT_TRUE(v.travel);
+}
+
+// ALREADY THERE outranks both reasons. A bot on the stand point that still reads
+// pressured has had the Lich King walk up to IT — the ordinary state of a wall
+// that is taking a while — and re-issuing a move to where it is standing would
+// only tear down the melee approach the combat engine is running. The answer to
+// that situation is killing the wall's adds.
+TEST(DcHorFollowTest, ABotOnTheStandPointNeverReIssuesAMoveToWhereItIs)
+{
+    DcHorEscape::FollowInputs in = FollowBase();
+    in.distToStand = STAND_LEASH - 0.5f;
+    in.distToLk = 4.0f;
+    in.sumMinusLkSum = 30.0f;
+    in.advancing = true;   // ...even arriving off a leg
+
+    DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+    EXPECT_TRUE(v.pressured);
+    EXPECT_FALSE(v.advancing) << "arrival must clear the latch";
+    EXPECT_FALSE(v.travel);
+}
+
+// Outside the escape the rung is inert and the latch is dropped, so a bot that
+// died mid-leg and was resurrected after the event does not resume walking at a
+// stand point the encounter has finished with.
+TEST(DcHorFollowTest, AnInactiveEscapeIsInertAndDropsTheLatch)
+{
+    DcHorEscape::FollowInputs in = FollowBase();
+    in.active = false;
+    in.advancing = true;
+    in.distToStand = 200.0f;
+    in.distToLk = 1.0f;
+
+    DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+    EXPECT_FALSE(v.travel);
+    EXPECT_FALSE(v.advancing);
+    EXPECT_FALSE(v.pressured);
+}
+
+// The tank is steered by hook 35, which walks it to this same stand point behind
+// its OWN re-issue floor. Arming the advance half there too would give one bot
+// two independent 1500ms floors both re-plotting a spline at the same point —
+// exactly the double-issue thrash STAND_LEAVE_LEASH was widened to end. The
+// pressure half is left alone: it costs one extra correction at most and the
+// driver's own Pressure state wants the same move.
+TEST(DcHorFollowTest, TheDriverSteeredBotGetsThePressureHalfButNotTheAdvanceHalf)
+{
+    DcHorEscape::FollowInputs in = FollowBase();
+    in.driverSteered = true;
+    in.distToStand = 136.0f;
+    in.distToLk = 90.0f;
+    in.sumMinusLkSum = -120.0f;
+
+    DcHorEscape::FollowVerdict const v = DcHorEscape::DecideFollow(in);
+    EXPECT_FALSE(v.advancing);
+    EXPECT_FALSE(v.travel);
+
+    // ...and an already-armed latch is HELD clear, not merely left alone, so a
+    // bot promoted to leader mid-leg does not carry one into the driver's lap.
+    in.advancing = true;
+    EXPECT_FALSE(DcHorEscape::DecideFollow(in).advancing);
+
+    // The pressure half still fires on it.
+    in.distToLk = LK_PRESSURE_DIST - 1.0f;
+    DcHorEscape::FollowVerdict const pressed = DcHorEscape::DecideFollow(in);
+    EXPECT_TRUE(pressed.pressured);
+    EXPECT_TRUE(pressed.travel);
+    EXPECT_FALSE(pressed.advancing);
+}
+
+// THE TWO HALVES OF THE ESCAPE MUST AGREE ABOUT WHERE THE PARTY IS GOING. The
+// driver picks the tank's destination with TargetStopFor + StandPointFor off the
+// leader's stop; the follower rung picks its own with the same two calls off the
+// same leader. If they ever diverged the tank and its followers would hold ground
+// fifty yards apart with a Lich King between them.
+TEST(DcHorFollowTest, TheFollowerAndTheDriverResolveTheSameStandPoint)
+{
+    for (uint8 leaderStop = 0; leaderStop <= 6; ++leaderStop)
+    {
+        uint8 const target = DcHorEscape::TargetStopFor(leaderStop);
+        HorPoint const driverStand = StandPointFor(target);
+
+        // The follower's own derivation, as DcHorStayAheadAction::Probe does it.
+        uint8 const followerTarget = DcHorEscape::TargetStopFor(leaderStop);
+        HorPoint const followerStand = StandPointFor(followerTarget);
+
+        EXPECT_EQ(followerTarget, target) << "leader at stop " << int(leaderStop);
+        EXPECT_FLOAT_EQ(followerStand.x, driverStand.x);
+        EXPECT_FLOAT_EQ(followerStand.y, driverStand.y);
+        EXPECT_FLOAT_EQ(followerStand.z, driverStand.z);
+    }
+}
+
+// The legs this rung has to cover are LONG — that is the whole reason the arm
+// radius is not simply "off the stand point". Pinning them here means a change to
+// the stand points that shortened a leg below the hysteresis band would trip red
+// rather than silently turning the advance arm into a no-op.
+TEST(DcHorFollowTest, EveryLegBetweenStandPointsIsWellOutsideTheArmRadius)
+{
+    auto legLength = [](HorPoint const& a, HorPoint const& b) {
+        float const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+
+    for (uint8 stop = 1; stop <= 4; ++stop)
+    {
+        float const leg = legLength(StandPointFor(stop), StandPointFor(stop + 1));
+        EXPECT_GT(leg, STAND_LEAVE_LEASH * 2.0f)
+            << "the leg from stand " << int(stop) << " to " << int(stop + 1)
+            << " is only " << leg << "yd — the advance arm would barely fire";
+    }
+}
+
+// =========================================================================
+// 4. the authored data
 // =========================================================================
 
 // THE INSTANCE-DATA SLOTS, hand-copied from halls_of_reflection.h. `enum Data`
