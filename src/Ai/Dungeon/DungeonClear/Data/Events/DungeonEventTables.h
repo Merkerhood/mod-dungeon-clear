@@ -4320,6 +4320,254 @@ void RegisterCullingOfStratholmeEvents(std::vector<DungeonEvent>& out);
 // into a gauntlet that is three objectives ahead of them.
 std::vector<uint32> const& CosWaveEntries();
 
+// --- Trial of the Champion (map 650) ---------------------------------------
+//
+// A three-encounter ARENA with no navigation problem and no roster. All three
+// instance_encounters rows are ENCOUNTER_CREDIT_CAST_SPELL (68572 / 68574 /
+// 68663), every boss is a script summon with no `creature` row, and two of the
+// three NEVER DIE — the Grand Champions and Eadric/Paletress park at 1 HP, turn
+// friendly and evade. So BossSpawnIndex emits nothing and every run used to fail
+// at setup with "no boss roster for this map", the Culling of Stratholme
+// diagnosis exactly.
+//
+// THE WHOLE DUNGEON IS ONE COUNTER, GetData(DATA_INSTANCE_PROGRESS), 0..9, and
+// the announcer's gossip, which he re-offers at 0, 6 and 8. Unlike the Culling's
+// counter this one GOES BACKWARDS: a full wipe runs InstanceCleanup, which
+// rewinds 1-4 to 0 and 7 to 6 and re-homes the announcer with his gossip up. So
+// nothing here may latch on having clicked him — the driver re-decides from the
+// counter every tick, and the three objectives hold on thresholds a rewind
+// cannot satisfy early.
+//
+// PHASE 1 IS A JOUST AND IT IS WON BY TRAMPLING, NOT BY DAMAGE. A Grand Champion
+// at 1 HP drops his mount, goes NON_ATTACKABLE and walks to a spare horse, and
+// remounts at 50k HP; 4 -> 5 needs all three dismounted at once, and a player
+// riding the party's OWN-faction horse within 5yd of a walking champion stuns
+// him for 15s. The fighting — lance, mount, the four vehicle buttons, the Charge
+// cycle and the trample shadowing — is mod-playerbots' `wotlk-toc` strategy.
+// This module only musters the party, clicks the announcer and keeps its own
+// movement off a mounted tank.
+//
+// Every slot and value below is hand-copied from trial_of_the_champion.h, whose
+// enums are plain and unnumbered past their first member.
+namespace DcTrialOfTheChampion
+{
+    constexpr uint32 MAP_ID = 650;
+
+    // --- instance data (enum eData) ------------------------------------------
+    //
+    // GetData answers ONLY slots 4 and 14; every other slot reads 0.
+    // GetGuidData answers only 5 and 15.
+    constexpr uint32 DATA_INSTANCE_PROGRESS  = 4;
+    constexpr uint32 DATA_ANNOUNCER          = 5;   // GetGuidData — the announcer
+    constexpr uint32 DATA_TEAMID_IN_INSTANCE = 14;
+    // DATA_PALETRESS in the core, but it holds whichever Argent champion the click
+    // at progress 6 rolled — Eadric OR Paletress.
+    constexpr uint32 DATA_ARGENT_CHAMPION    = 15;  // GetGuidData
+
+    // --- DATA_INSTANCE_PROGRESS values (enum eProgress) ------------------------
+    constexpr uint32 PROGRESS_INITIAL               = 0;  // announcer gossip up (mounted clicker)
+    constexpr uint32 PROGRESS_REACHED_DEST          = 1;  // champions parked; wave 1 incoming
+    constexpr uint32 PROGRESS_GROUP_DIED_1          = 2;
+    constexpr uint32 PROGRESS_GROUP_DIED_2          = 3;
+    constexpr uint32 PROGRESS_GROUP_DIED_3          = 4;  // the mounted champions themselves
+    constexpr uint32 PROGRESS_CHAMPIONS_UNMOUNTED   = 5;  // horses despawned; on-foot fight
+    constexpr uint32 PROGRESS_CHAMPIONS_DEAD        = 6;  // bit 0; gossip back in 15s
+    constexpr uint32 PROGRESS_SOLDIERS_DIED         = 7;  // Eadric/Paletress walks in
+    constexpr uint32 PROGRESS_ARGENT_CHALLENGE_DIED = 8;  // bit 1; gossip back in 15s
+    constexpr uint32 PROGRESS_FINISHED              = 9;  // bit 2; the Black Knight is dead
+
+    // The three DungeonEncounter bits (DBC 334/336, 338/339, 340/341). All three
+    // are cast-spell credits that really do land, so 0x7 is the expected final
+    // mask on a roster with no boss rows at all.
+    constexpr uint32 BIT_GRAND_CHAMPIONS  = 0;
+    constexpr uint32 BIT_ARGENT_CHALLENGE = 1;
+    constexpr uint32 BIT_BLACK_KNIGHT     = 2;
+
+    // --- creatures -----------------------------------------------------------
+    //
+    // THE ANNOUNCER IS TWO ENTRIES AND ONE CREATURE: the DB spawn is 35004 and
+    // Reset() UpdateEntry()s him to 35005 for an Alliance party. Resolve him
+    // through GetGuidData(DATA_ANNOUNCER), never by entry.
+    constexpr uint32 NPC_ANNOUNCER_HORDE    = 35004;  // Jaeren Sunsworn
+    constexpr uint32 NPC_ANNOUNCER_ALLIANCE = 35005;  // Arelas Brightstar
+
+    // The two horse entries, 12 of each ringing the wall in every instance. The
+    // party rides its OWN faction's (Alliance 35644, Horde 36558) — the one the
+    // trample hackfix counts — and the champions remount on the other. Either
+    // counts as "mounted" here: the gossip only asks for a vehicle, and which
+    // horse a bot picks is mod-playerbots' decision.
+    constexpr uint32 NPC_ARGENT_WARHORSE   = 35644;
+    constexpr uint32 NPC_ARGENT_BATTLEWORG = 36558;
+
+    // The ten Grand Champions (five per side; the party faces the other side's).
+    constexpr uint32 NPC_MOKRA = 35572, NPC_ERESSEA = 35569, NPC_RUNOK = 35571,
+                     NPC_ZULTORE = 35570, NPC_VISCERI = 35617;
+    constexpr uint32 NPC_JACOB = 34705, NPC_AMBROSE = 34702, NPC_COLOSOS = 34701,
+                     NPC_JAELYNE = 34657, NPC_LANA = 34703;
+
+    // The Argent Challenge. Nine soldiers, summoned at the gate mouth and marched
+    // to three packs on the y ~ 650 line; `DoZoneInCombat` is COMMENTED OUT in
+    // EVENT_ARGENT_SOLDIER_GROUP_ATTACK, so they engage by proximity only and the
+    // two side packs, 30yd apart, have to be pulled.
+    constexpr uint32 NPC_ARGENT_MONK         = 35305;
+    constexpr uint32 NPC_ARGENT_PRIESTESS    = 35307;
+    constexpr uint32 NPC_ARGENT_LIGHTWIELDER = 35309;
+    // The Priestess's healing fountain: attackable (PACIFIED only), faction 16.
+    constexpr uint32 NPC_FOUNTAIN_OF_LIGHT   = 35311;
+    constexpr uint32 NPC_EADRIC              = 35119;
+    constexpr uint32 NPC_PALETRESS           = 34928;
+
+    // Paletress at 25%: Reflective Shield, a 999 999 absorb, until her Memory
+    // dies — the Memory's JustDied calls her DoAction(1), which removes it. So
+    // the AURA is the unkillable window, exactly; see the target-exclusion row.
+    constexpr uint32 SPELL_REFLECTIVE_SHIELD = 66515;
+
+    // The Black Knight rides in on a gryphon, kills the announcer and talks for
+    // ~50s before he is attackable. 35614 is Desecration's ground hazard — a
+    // CREATURE (unit_flags 0, faction 14, TRIGGER by flags_extra only), not a
+    // DynamicObject — so it gets a hazard emitter AND a never-target row.
+    constexpr uint32 NPC_BLACK_KNIGHT          = 35451;
+    constexpr uint32 NPC_BLACK_KNIGHT_GRYPHON  = 35491;
+    constexpr uint32 NPC_RISEN_JAEREN          = 35545;
+    constexpr uint32 NPC_RISEN_ARELAS          = 35564;
+    constexpr uint32 NPC_RISEN_CHAMPION        = 35590;
+    constexpr uint32 NPC_DESECRATION_STALKER   = 35614;
+    constexpr float  DESECRATION_RADIUS        = 8.0f;   // 67781, radius index 14
+
+    // --- gameobjects ---------------------------------------------------------
+    //
+    // The four arena gates. All GAMEOBJECT_TYPE_DOOR, all opened and shut only by
+    // the instance script, and two of them stand right where the party works: the
+    // North Portcullis is 2.6yd from where the party lands and shuts at progress
+    // 1, and the Main Gate is 17yd behind the soldier line.
+    constexpr uint32 GO_MAIN_GATE        = 195647;  // (746.70, 677.47) north wall
+    constexpr uint32 GO_EAST_PORTCULLIS  = 195648;  // (746.65, 556.93)
+    constexpr uint32 GO_SOUTH_PORTCULLIS = 195649;  // (685.51, 618.06)
+    constexpr uint32 GO_NORTH_PORTCULLIS = 195650;  // (807.84, 618.06) the entrance
+    constexpr uint32 GO_LANCE_RACK       = 196398;  // four, one 7yd from the entrance
+
+    // The lance and its aura, both gates on the horses' spellclick (a conditions
+    // row AND BeforeSpellClick). mod-playerbots' `toc lance` takes it.
+    constexpr uint32 ITEM_ARGENT_LANCE    = 46106;
+    constexpr uint32 SPELL_LANCE_EQUIPPED = 62853;
+
+    // The rider bar, for the record: mod-playerbots presses these, DC never does.
+    constexpr uint32 SPELL_THRUST         = 68505;  // 0-6yd
+    constexpr uint32 SPELL_SHIELD_BREAKER = 62575;  // 5-25yd, strips a Defend stack
+    constexpr uint32 SPELL_CHARGE         = 68282;  // 5-25yd, 20 000
+    constexpr uint32 SPELL_DEFEND         = 66482;  // self, 3 stacks
+    constexpr uint32 SPELL_TRAMPLED       = 67867;  // the 15s stun on a walking champion
+
+    // --- the announcer's gossip (menu 10614, npc_announcer_toc5) ---------------
+    //
+    // POSITIONAL, which SelectGossip maps to the DB OptionID. At progress 0 the
+    // menu has two items, OptionIDs 0 ("I am ready.") and 3 ("...skip the
+    // pageantry."), and ONLY WHEN THE CLICKER HAS A VEHICLE — unmounted, the text
+    // comes back with no options at all. Option 1 is the short version: all three
+    // champions summoned in place and progress straight to 1, against ~90s of
+    // speeches, gate cycles and waypoint walks. At 6 and 8 there is one option.
+    constexpr int32 GOSSIP_OPTION_SHORT_JOUST = 1;
+    constexpr int32 GOSSIP_OPTION_NEXT_PHASE  = 0;
+
+    // Interaction reach for the click, centre to centre. The core allows 5.5
+    // (INTERACTION_DISTANCE, bounding radii included); a yard under it absorbs the
+    // horse's own drift. The approach aims GOSSIP_STANDOFF short of him.
+    constexpr float GOSSIP_REACH    = 4.5f;
+    constexpr float GOSSIP_STANDOFF = 3.0f;
+
+    // --- anchors -------------------------------------------------------------
+    //
+    // The arena floor is one open bowl around the centre (748.3, 619.4); every
+    // anchor is inside it and route-probed by t/TestTrialOfTheChampionRouteProbe.cpp.
+    constexpr float ARENA_X = 748.31f, ARENA_Y = 619.49f, ARENA_Z = 411.17f;  // announcer spawn
+
+    // OBJ(1): 11yd south of the wave convergence point, the announcer 11yd north.
+    // Also the JOUST POST — where the driver parks a mounted tank between waves.
+    constexpr float CHAMPIONS_X = 748.3f, CHAMPIONS_Y = 608.0f, CHAMPIONS_Z = 411.3f;
+    // OBJ(2): 19yd from the middle soldier pack (they aggro on arrival), 3yd from
+    // the announcer's phase-2 spot, 4yd from where the boss walks to.
+    constexpr float ARGENT_X = 747.0f, ARGENT_Y = 631.0f, ARGENT_Z = 411.4f;
+    // OBJ(3): 3yd from the Black Knight's walk-to point (746.81, 623.15).
+    constexpr float KNIGHT_X = 749.0f, KNIGHT_Y = 626.0f, KNIGHT_Z = 411.3f;
+    constexpr float OBJ_ARRIVE  = 10.0f;
+    constexpr float HOLD_RADIUS = 12.0f;
+
+    // A mounted tank farther than this from the joust post between waves is
+    // ridden back to it.
+    constexpr float POST_RADIUS = 10.0f;
+
+    // --- the driver's tuning -----------------------------------------------------
+
+    // Grid-scan radius from the tank. The four gates put the bowl's radius at
+    // ~60yd and the entrance is 57yd from its centre, so the far wall is ~117yd
+    // from where the party lands; 125 covers every census from anywhere.
+    constexpr float ARENA_RADIUS = 60.0f;
+    constexpr float ARENA_SCAN   = 125.0f;
+
+    // Four riders out of five — or everyone alive, if fewer — before the click,
+    // and never waiting more than 90s past the tank's own mount for them.
+    constexpr uint32 MUSTER_QUORUM     = 4;
+    constexpr uint32 MUSTER_TIMEOUT_MS = 90000;
+
+    // One WARN if the tank has had 2 minutes at progress 0-4 without a horse:
+    // mod-playerbots' `toc lance` / `toc mount` are the only things that mount
+    // it, and the run cannot start without them.
+    constexpr uint32 MOUNT_WARN_MS = 120000;
+
+    // Progress 8 with neither the Knight nor the announcer for this long means
+    // the Knight evaded — which DESPAWNS him — after killing the announcer. The
+    // survivors are stranded until a full wipe runs InstanceCleanup; reported,
+    // never "fixed" from here.
+    constexpr uint32 STRAND_GRACE_MS = 30000;
+
+    constexpr uint32 TELEMETRY_MS     = 10000;  // the `DcToc progress=...` line
+    constexpr uint32 WARN_THROTTLE_MS = 60000;
+    // The driver's point-move floor. A re-issued MovePoint restarts the spline, so
+    // the same destination is not re-sent inside this window; every leg in the
+    // bowl is under five seconds on a horse at twice run speed.
+    constexpr uint32 MOVE_REISSUE_MS  = 2000;
+    // One announcer click per window. A click that landed drops his gossip flag at
+    // once, so this only ever spaces out clicks that did NOT land.
+    constexpr uint32 CLICK_RETRY_MS   = 2000;
+
+    // --- step timeouts -----------------------------------------------------------
+    constexpr uint32 CHAMPIONS_TIMEOUT_MS = 900000;   // 15 min: muster + joust + on-foot
+    constexpr uint32 ARGENT_TIMEOUT_MS    = 900000;   // 15 min: nine soldiers + the boss
+    constexpr uint32 KNIGHT_TIMEOUT_MS    = 720000;   // 12 min: ~50s intro + three phases
+    // The driver's Custom step. Repeatable + Optional, so a timeout RE-ARMS it.
+    constexpr uint32 DRIVER_TIMEOUT_MS    = 1200000;
+
+    // --- event / objective ids -----------------------------------------------
+    constexpr uint32 EVENT_CHAMPIONS    = 1;
+    constexpr uint32 EVENT_ARGENT       = 2;
+    constexpr uint32 EVENT_BLACK_KNIGHT = 3;
+    constexpr uint32 EVENT_DRIVER       = 4;  // conditional driver, no objective
+
+    constexpr uint32 ORDER_CHAMPIONS    = 1;
+    constexpr uint32 ORDER_ARGENT       = 2;
+    constexpr uint32 ORDER_BLACK_KNIGHT = 3;
+
+    // ObjectiveHookRegistry id. One flat space; 37 follows the Culling's 36.
+    constexpr uint32 HOOK_TOC_DRIVER = 37;
+}
+
+// Trial of the Champion (650) — FOUR events: three anchored counter holds, one
+// per encounter, and the conditional driver that musters the party, clicks the
+// announcer and pulls the Argent soldiers. See TrialOfTheChampionEvents.cpp.
+void RegisterTrialOfTheChampionEvents(std::vector<DungeonEvent>& out);
+
+// The ten Grand Champion entries, for the driver's "walking champion" census.
+std::vector<uint32> const& TocChampionEntries();
+
+// The three Argent soldier entries, for the driver's side-pack census. Every one
+// is a summon, so there is no static spawn to filter out.
+std::vector<uint32> const& TocSoldierEntries();
+
+// Is `bot` a Trial of the Champion rider still on foot during the joust? Then
+// mod-playerbots' `toc lance` / `toc mount` own its movement and follow-tank
+// stands down (DcTocDriver::FollowerMountsItself has the why).
+bool TocFollowerMountsItself(Player* bot);
+
 
 // Every TempSummon the siege can field — the trash, the elites, the three portal
 // keepers, Ichoron's globules, Xevozz's spheres and Cyanigosa. Probed by
@@ -4445,6 +4693,13 @@ void RegisterHallsOfReflectionRoster(std::vector<BossRosterPatch>& t);
 // the escort and wave events, and the bits flip from those kills exactly as they
 // would from any other.
 void RegisterCullingOfStratholmeRoster(std::vector<BossRosterPatch>& t);
+
+// Trial of the Champion (650) — THREE objectives and NO boss rows, one per
+// encounter, each completed by the progress counter. BossSpawnIndex derives an
+// EMPTY list here for the Culling's reason (every boss is a summon; every credit
+// is a cast-spell), and a boss row would be wrong even if one could be joined:
+// two of the three never die, and the third does not exist until a gossip click.
+void RegisterTrialOfTheChampionRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;

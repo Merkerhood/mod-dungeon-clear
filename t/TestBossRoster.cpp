@@ -53,6 +53,9 @@ TEST(BossRosterRegistryTest, HasPatchOnlyForPatchedMaps)
     EXPECT_TRUE(BossRosterRegistry::HasPatch(595));   // Culling of Stratholme — objectives-only
                                                       // (the derived list is EMPTY: all four
                                                       // encounters are script TempSummons)
+    EXPECT_TRUE(BossRosterRegistry::HasPatch(650));   // Trial of the Champion — objectives-only
+                                                      // (every boss a summon, every credit a
+                                                      // cast-spell, two bosses never die)
     EXPECT_FALSE(BossRosterRegistry::HasPatch(0));
     EXPECT_FALSE(BossRosterRegistry::HasPatch(34));   // Stockades — no patch
 }

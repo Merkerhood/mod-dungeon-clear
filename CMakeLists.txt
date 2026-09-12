@@ -15,6 +15,15 @@
 
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
+# New files added: Data/Events/TrialOfTheChampionEvents.cpp,
+#   Overrides/TrialOfTheChampionDriver.cpp, Util/DcTocDriverDecision.h
+#   (Trial of the Champion, map 650 — greenfield before this: every run failed at
+#    setup with "no boss roster for this map", because all three encounters are
+#    cast-spell credits on script summons and two of the bosses never die. Three
+#    objectives held on the rewinding DATA_INSTANCE_PROGRESS counter, and one
+#    conditional driver, hook 37, that musters the mounted party, clicks the
+#    announcer from horseback and pulls the Argent side packs.)
+
 # New files added: Data/Events/CullingOfStratholmeEvents.cpp,
 #   Overrides/CullingOfStratholmeDriver.cpp, Util/DcCosWaveDecision.h
 #   (The Culling of Stratholme, map 595 — greenfield before this: no roster, no

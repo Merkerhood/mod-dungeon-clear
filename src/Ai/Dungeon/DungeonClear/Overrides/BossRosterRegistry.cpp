@@ -70,6 +70,7 @@ namespace
             RegisterPitOfSaronRoster(t);
             RegisterHallsOfReflectionRoster(t);
             RegisterCullingOfStratholmeRoster(t);
+            RegisterTrialOfTheChampionRoster(t);
             return t;
         }();
         return kPatches;

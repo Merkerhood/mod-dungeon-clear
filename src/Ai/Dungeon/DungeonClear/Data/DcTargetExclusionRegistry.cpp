@@ -5,8 +5,10 @@
 
 #include "DcTargetExclusionRegistry.h"
 
+#include "Creature.h"
 #include "GameObject.h"
 #include "InstanceScript.h"
+#include "ObjectAccessor.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Script/Playerbots.h"
@@ -176,6 +178,36 @@ namespace
                inst->GetBossState(DcHallsOfReflection::DATA_LICH_KING) == IN_PROGRESS;
     }
 
+    // Trial of the Champion: Paletress, while her Memory lives.
+    //
+    // At 25% she casts Reflective Shield (66515, a 999 999 absorb) and summons a
+    // Memory; the Memory's death calls her DoAction(1), which removes the shield.
+    // Until then no quantity of damage does anything, and bots on `dps assist`
+    // sit on her for the whole window while the Memory — the one thing that ends
+    // it — goes unhit.
+    //
+    // The AURA is the gate, not a scan for the Memory's 25 entries: it IS the
+    // unkillable window, to the tick, and it costs one aura lookup per pick. If the
+    // shield ever fails to land she is killable and the row rightly stands down.
+    // Resolved through the instance's Argent-champion slot, which holds whichever
+    // of Eadric or Paletress the click rolled.
+    //
+    // NOT `alsoTank`: the tank keeps her — she is the one who is hitting people.
+    bool PaletressShielded(Player* bot)
+    {
+        if (!bot || bot->GetMapId() != DcTrialOfTheChampion::MAP_ID)
+            return false;
+
+        InstanceScript* inst = bot->GetInstanceScript();
+        if (!inst)
+            return false;
+
+        Creature* boss = ObjectAccessor::GetCreature(
+            *bot, inst->GetGuidData(DcTrialOfTheChampion::DATA_ARGENT_CHAMPION));
+        return boss && boss->IsAlive() && boss->GetEntry() == DcTrialOfTheChampion::NPC_PALETRESS &&
+               boss->HasAura(DcTrialOfTheChampion::SPELL_REFLECTIVE_SHIELD);
+    }
+
     DcTargetExclusionRow const kRows[] = {
         // Blackwing Lair — Razorgore the Untamed. Killing him before the last egg
         // breaks casts 20038 (Explosion) and instakills the raid, so phase-1
@@ -221,6 +253,12 @@ namespace
         // the usual "the tank must not lead the party there".
         { DcHallsOfReflection::MAP_ID, DcHallsOfReflection::NPC_LICH_KING,
           &HorEscapeRunning, /*alsoTank*/ true },
+
+        // Trial of the Champion — Paletress, for as long as Reflective Shield is
+        // up. DPS and attacker pools only; the tank holds her. See
+        // PaletressShielded above.
+        { DcTrialOfTheChampion::MAP_ID, DcTrialOfTheChampion::NPC_PALETRESS,
+          &PaletressShielded, /*alsoTank*/ false },
     };
 }
 

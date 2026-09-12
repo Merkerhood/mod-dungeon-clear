@@ -252,9 +252,24 @@ namespace
     // one here: before the escape he is frozen at his spawn 36yd from where the
     // party musters, and after it the run is over. A permanent 12yd keep-out
     // around this creature is correct at every moment of the dungeon.
-    constexpr std::array<DcHazardEmitter, 9> kEmitters = {{
+    // ---- Trial of the Champion (650): Desecration ------------------------
+    //
+    // The Black Knight's phase-2 Desecration (67778 -> 67779) summons creature
+    // 35614 at a player's position for 15 seconds, and the stalker carries the
+    // ground aura 67781, radius index 14 = 8 yards. A CREATURE, not a
+    // DynamicObject, so it belongs in this table rather than the ground-pool one.
+    // It is a "trigger" by flags_extra only — unit_flags 0, faction 14 — so it
+    // also carries a never-target row.
+    //
+    // The ordinary leave-once shape, the Searing Gaze row's: vacate the RAW 8yd
+    // pulse, keep-out 11 for placement drift, default 2/6 bands — the retreat
+    // aims at 14, outside the 11yd cylinder, so it always finds a spot it
+    // accepts. It lands under someone mid-fight in an open bowl, and stepping
+    // past it is all it asks.
+    constexpr std::array<DcHazardEmitter, 10> kEmitters = {{
         //                    radius  zBand  vacate  hold  slack
         { 668, 36954, /*Lich King, Remorseless Winter    */ 12.0f, 10.0f,  0.0f, 2.0f, 6.0f },
+        { 650, 35614, /*Desecration stalker (leave once) */ 11.0f, 12.0f,  8.0f, 2.0f, 6.0f },
         { 552, 20869, /*Arcatraz Sentinel  (fought)      */ 22.0f, 12.0f,  0.0f, 2.0f, 6.0f },
         { 552, 21761, /*Destroyed Sentinel (leave once)  */ 15.0f, 12.0f, 15.0f, 2.0f, 6.0f },
         { 552, 21303, /*Defender Corpse                  */ 12.0f,  8.0f,  0.0f, 2.0f, 6.0f },

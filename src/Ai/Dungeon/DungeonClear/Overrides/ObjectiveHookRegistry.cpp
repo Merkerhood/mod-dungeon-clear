@@ -822,6 +822,7 @@ namespace
             RegisterPitOfSaronHooks(t);
             RegisterHallsOfReflectionHooks(t);
             RegisterCullingOfStratholmeHooks(t);
+            RegisterTrialOfTheChampionHooks(t);
             return t;
         }();
         return kHooks;

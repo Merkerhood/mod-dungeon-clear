@@ -403,6 +403,19 @@ struct DcRunState
                                      // hand a stuck party a fresh full one; only
                                      // actually recovering clears it.
 
+    // --- Trial of the Champion: the arena driver (map 650) -------------------
+    //
+    // Three "since when" clocks the kernel round-trips (DcTocDriver::Decide), and
+    // the last progress value the telemetry line reported. No latch: the counter
+    // rewinds on a full wipe, so everything the driver knows is re-derived from it
+    // every tick and these only measure how long the current shape has held.
+    uint8  tocState = 0;               // DcTocDriver::State last logged
+    uint32 tocStateMs = 0;             // getMSTime() it was entered
+    uint32 tocMountedSinceMs = 0;      // the tank has been on a horse since (muster timeout)
+    uint32 tocUnmountedSinceMs = 0;    // ...on foot through the joust since (mount WARN)
+    uint32 tocStrandSinceMs = 0;       // progress 8, no Knight and no announcer, since
+    uint32 tocLastProgress = 0xFFFFFFFFu;  // the progress the telemetry last reported
+
     // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
 
     DcThrottleSlot throttles[kDcThrottleCount]{};
@@ -515,6 +528,22 @@ struct DcRunState
         cosWaveRestMs = 0;
         cosWaveRestSpentMs = 0;
         ClearThrottle(DcThrottle::CosWaveLog);
+    }
+
+    // Drop the Trial of the Champion block once the Knight is dead, for the
+    // Culling's reason: the driver is Repeatable.
+    void ClearToc()
+    {
+        tocState = 0;
+        tocStateMs = 0;
+        tocMountedSinceMs = 0;
+        tocUnmountedSinceMs = 0;
+        tocStrandSinceMs = 0;
+        tocLastProgress = 0xFFFFFFFFu;
+        ClearThrottle(DcThrottle::TocTelemetryLog);
+        ClearThrottle(DcThrottle::TocMoveIssue);
+        ClearThrottle(DcThrottle::TocWarn);
+        ClearThrottle(DcThrottle::TocClick);
     }
 
     void ClearTransit()

@@ -308,6 +308,15 @@ namespace DcEventDoorRegistry
             //     stray door-blocked walk-in can never single it out.
             case 188686:  // CoS — Town Hall bookcase (opens at Arthas's waypoint 36)
             case 191788:  // CoS — City Entrance Gate (opens at PROGRESS_FINISHED)
+            // Trial of the Champion (map 650) — the four arena gates. All four
+            // are opened and shut by instance_trial_of_the_champion alone (the
+            // champions' and soldiers' entrances, the Knight's exit, every
+            // cleanup), and none is ever the party's to open. Also
+            // navigation-ignored below.
+            case 195647:  // ToC — Main Gate (north wall; the soldiers come through it)
+            case 195648:  // ToC — East Portcullis
+            case 195649:  // ToC — South Portcullis
+            case 195650:  // ToC — North Portcullis (the entrance; shuts at progress 1)
                 return true;
             default:
                 return false;
@@ -459,6 +468,19 @@ namespace DcEventDoorRegistry
             // So it needs BOTH rows, and the reason it needs both is the reason
             // Thrall's prison door and the Chromaggus portcullis do.
             case 188686:  // CoS — Town Hall bookcase (Arthas opens it at waypoint 36)
+                return true;
+            // Trial of the Champion (map 650) — the four arena gates, and here the
+            // row is about WHERE THEY STAND, not about passing through them. The
+            // run never leaves the bowl, so no route needs any of them open; but
+            // the North Portcullis is 2.6yd from where the party lands and shuts
+            // behind it at progress 1, and the Main Gate is 17yd behind the
+            // soldier line. A shut TYPE_DOOR that close to the fighting is exactly
+            // what the blocking-door value flags and the auto-pause halts on — in
+            // front of a door the run has no use for.
+            case 195647:  // ToC — Main Gate
+            case 195648:  // ToC — East Portcullis
+            case 195649:  // ToC — South Portcullis
+            case 195650:  // ToC — North Portcullis (the entrance)
                 return true;
             // The Violet Hold (map 608) — the six Activation Crystals. Like the
             // Steamvault access panels these are wall CONTROLS, not doors, but

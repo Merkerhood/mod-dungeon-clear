@@ -119,7 +119,10 @@ Underbog, Steamvault, Sethekk Halls, Mechanar, Arcatraz, Black Morass, Old
 Hillsbrad, and Magisters' Terrace; and in Wrath of the Lich King: Utgarde Keep,
 the Nexus, Azjol-Nerub, Ahn'kahet, Drak'Tharon Keep, the Violet Hold, Gundrak,
 Halls of Stone, Halls of Lightning, Utgarde Pinnacle, the Culling of Stratholme,
-Pit of Saron, and Halls of Reflection. Coverage continues to expand.
+Trial of the Champion, Pit of Saron, and Halls of Reflection. Coverage continues
+to expand. (Trial of the Champion's joust itself is fought by mod-playerbots'
+`wotlk-toc` strategy; mod-dungeon-clear musters the mounted party and starts
+each phase.)
 
 Faction-specific events run only for the relevant side, and heroic-only events
 never fire on a normal run. If an event cannot complete (for example, a scripted

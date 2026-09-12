@@ -328,6 +328,17 @@ namespace
             // add nothing, and Done is its "nothing to steer this tick" yield rather
             // than a completion. Repeatable besides: a momentary Done latches nothing.
             {595, 10},
+            // Trial of the Champion "The Champion's Arena": TocDriverDue is true for
+            // the WHOLE run (progress < 9), from the entrance — and that is sound
+            // here because the map IS the arena. The party lands 57yd from the
+            // centre of one open bowl ~110yd across, every actor the driver touches
+            // (the announcer, the soldiers, the boss, the Knight) stands inside it,
+            // and there is no second room anywhere to fire from a distance into.
+            // Its lone step (hook 37, TocDriveArena) owns its own movement — it
+            // rides the tank's horse to the announcer and back to the joust post —
+            // so an arrival step would add nothing, and Done is its yield.
+            // Repeatable: it never completes; the predicate going false ends it.
+            {650, 4},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)
@@ -921,6 +932,14 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // Note it yields the tick on every wave tick it is not steering, which is
         // most of them, so the flag's usual cost is paid only while it is walking.
         {595, 10},
+        // Trial of the Champion "The Champion's Arena". The flag here is for the
+        // OPPOSITE reason to every row above: the driver never steers under fire.
+        // It takes combat ticks only to hand them straight back — every in-combat
+        // verdict is a yield (the joust is mod-playerbots' `wotlk-toc`, every
+        // other fight the stock engine's) — and it needs to SEE them because the
+        // progress counter moves mid-fight and the telemetry line reports it.
+        // Its combat rung (61) is below `toc mounted` (66) regardless.
+        {650, 4},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1380,6 +1399,13 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // mobs plus two bosses have to be killed by a party whose leader is running
         // a rung above the stock combat movers.
         {595, 10},
+        // Trial of the Champion "The Champion's Arena": hook 37 RIDES A HORSE.
+        // While the tank is mounted it steers the vehicle base itself (to the
+        // announcer, back to the joust post), because nothing else in the module
+        // can — the per-tick hold would cancel that before the hook saw it. And
+        // Done has to yield: the Argent soldiers, the Argent champion and the
+        // Black Knight are all stock-engine fights.
+        {650, 4},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -2268,6 +2294,13 @@ TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
         // wave summon (the static Risen Zombies are 250yd away in Fire Street,
         // which belongs to the LAST objective of the dungeon).
         {595, 10},
+        // Trial of the Champion "The Champion's Arena". There is no trash on this
+        // map at all — every hostile is an encounter summon — and the one pull the
+        // party makes, the Argent side packs, the driver makes itself. The
+        // advanced pull's answer to them (a fresh camp dragged back to clear
+        // ground) would walk the party away from the packs the counter needs dead,
+        // and a scout-lagged tank is the wrong shape for a five-rider joust.
+        {650, 4},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

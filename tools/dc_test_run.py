@@ -94,6 +94,11 @@ SIGNALS = [
     ("death / rez", ["post-combat rez", "died", "wipe", "resurrect"]),
     ("event", ["event-step", "event fired", "event force", "TeleportParty"]),
     ("rest", ["smart rest", "drinking", "eating", "low mana"]),
+    # Trial of the Champion's driver. The progress line is the run's timeline
+    # (0 -> 9, with rewinds on a full wipe); a long dwell at 4 is the trample failing.
+    ("ToC progress", ["DcToc progress="]),
+    ("ToC click / pull", ["ToC — progress", "idle Argent soldier", "pulling it back"]),
+    ("ToC WARN", ["black knight evaded", "has been on foot for"]),
 ]
 
 

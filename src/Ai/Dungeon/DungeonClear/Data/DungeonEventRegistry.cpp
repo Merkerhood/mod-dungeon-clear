@@ -460,6 +460,7 @@ namespace
             RegisterPitOfSaronEvents(t);
             RegisterHallsOfReflectionEvents(t);
             RegisterCullingOfStratholmeEvents(t);
+            RegisterTrialOfTheChampionEvents(t);
             return t;
         }();
         return kEvents;

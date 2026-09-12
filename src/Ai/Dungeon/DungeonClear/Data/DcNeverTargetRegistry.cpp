@@ -291,6 +291,26 @@ namespace
         { 668, 37226 },  // Halls of Reflection — the intro Lich King (RP; immune and passive)
         { 668, 37225 },  // Halls of Reflection — Uther (RP ghost on the altar the party camps)
         { 668, 37014 },  // Halls of Reflection — Ice Wall Target (invisible world trigger)
+
+        // --- Trial of the Champion (650) ------------------------------------
+        //
+        // Both are summons that land in the middle of a fight, and neither passes
+        // the flag filters that hide a helper: checked against creature_template,
+        // not assumed.
+        //
+        // 35614 DESECRATION STALKER is the Novos Summon Target shape — a trigger
+        // by flags_extra (128) only, with unit_flags 0 and faction 14, so
+        // IsPossibleTarget accepts it. It spawns UNDER a player for 15 seconds, so
+        // to the clear's scans it is the nearest hostile on the map at 0yd. Killing
+        // it is not progress; leaving it is (see its hazard emitter).
+        //
+        // 35311 FOUNTAIN OF LIGHT, the Argent Priestess's healing fountain:
+        // unit_flags PACIFIED only, faction 16. Killing it is fine, and the stock
+        // combat engine still will if it comes to that — but it outlives the pack
+        // that summoned it, and the clear must not walk the party across the bowl
+        // after a fountain between soldier packs.
+        { 650, 35614 },  // Trial of the Champion — Desecration Stalker (the Black Knight's ground hazard)
+        { 650, 35311 },  // Trial of the Champion — Fountain of Light (the Priestess's summon)
     };
 }
 

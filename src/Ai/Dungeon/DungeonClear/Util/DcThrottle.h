@@ -47,6 +47,7 @@ enum class DcThrottle : uint8
     DtkCampIssue,        // the Drak'Tharon camp-return point move (time only)
     HosTravelIssue,      // HosTravelTo — the Halls of Stone Tribunal arena
     HorStayAheadIssue,   // the HoR escape's per-follower forward step
+    TocMoveIssue,        // the ToC driver's point move (the horse, or the tank on foot)
 
     // --- log throttles (time only) -----------------------------------------
     TransitLog,          // BwlTransitLog — one crossing telemetry line per 3s
@@ -78,6 +79,9 @@ enum class DcThrottle : uint8
                          //  which owns the TransitIssue floor above, so there is no
                          //  movement slot of its own here)
     EscortResumeGossipLog,  // "the resume gossip left his gossip flag up" WARN
+    TocTelemetryLog,     // the ToC driver's `DcToc progress=...` line
+    TocWarn,             // the ToC driver's never-mounted / Knight-strand WARNs
+    TocClick,            // the ToC driver's announcer click (and its log line)
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

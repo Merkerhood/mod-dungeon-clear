@@ -144,4 +144,10 @@ void RegisterHallsOfReflectionHooks(ObjectiveHookRegistry::HookTable& out);
 // kernel Util/DcCosWaveDecision.h.
 void RegisterCullingOfStratholmeHooks(ObjectiveHookRegistry::HookTable& out);
 
+// Trial of the Champion (map 650) — the arena driver: the muster, the three
+// announcer clicks (the first from horseback), and the Argent side-pack pulls.
+// See TrialOfTheChampionDriver.cpp. Id 37. Its decisions are the pure kernel
+// Util/DcTocDriverDecision.h; the joust itself is mod-playerbots' `wotlk-toc`.
+void RegisterTrialOfTheChampionHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif
