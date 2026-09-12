@@ -19,6 +19,7 @@
 
 #include "Creature.h"
 #include "DBCStores.h"
+#include "DisableMgr.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "Log.h"
@@ -299,6 +300,13 @@ namespace
     bool TryFarFromPolyRecovery(Player* bot)
     {
         if (!bot)
+            return false;
+        // No navmesh to land on: on a map the core runs without pathfinding
+        // PathGenerator answers every probe below with a straight shortcut, so
+        // the first offset always "works": a blind 5yd step along +X, repeated
+        // tick after tick, that walks the tank through walls
+        // (tr-20260910-233100-1, out of the Trial of the Champion arena).
+        if (!DisableMgr::IsPathfindingEnabled(bot->GetMap()))
             return false;
         float const x = bot->GetPositionX();
         float const y = bot->GetPositionY();

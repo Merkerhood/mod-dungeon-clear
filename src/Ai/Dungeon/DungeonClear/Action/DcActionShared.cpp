@@ -20,6 +20,7 @@
 
 #include "Creature.h"
 #include "DBCStores.h"
+#include "DisableMgr.h"
 #include "GameObject.h"
 #include "Group.h"
 #include "Log.h"
@@ -596,18 +597,24 @@ namespace DcActionShared
         // Anchor-route lookup is O(1)-ish and navmesh-only; a registered route
         // means the synchronous build is cheap (no A*), so there's nothing to
         // offload. Sync mode (toggle OFF) always builds inline.
+        // A map the core runs without pathfinding has no navmesh tile to offload
+        // a query against; its route is the builder's straight line, just as cheap.
         Map* map = bot->GetMap();
         bool hasAnchorRoute = false;
+        bool directRoute = false;
         if (map)
+        {
             hasAnchorRoute = DungeonClearRouteRegistry::Get(target.mapId, map->GetDifficulty(),
                                                             target.entry) != nullptr;
+            directRoute = !DisableMgr::IsPathfindingEnabled(map);
+        }
 
-        if (!asyncEnabled || hasAnchorRoute)
+        if (!asyncEnabled || hasAnchorRoute || directRoute)
         {
             ChunkedPathfinder::Result built =
                 ChunkedPathfinder::Build(bot, target.mapId, target.entry, target.x, target.y, target.z);
             InstallLongPath(bot, ctx, appr, target, std::move(built), now,
-                            !asyncEnabled ? "sync" : "sync (anchor route)");
+                            !asyncEnabled ? "sync" : directRoute ? "sync (no pathfinding)" : "sync (anchor route)");
             return;
         }
 

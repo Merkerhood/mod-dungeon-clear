@@ -4479,6 +4479,10 @@ namespace DcTrialOfTheChampion
     //
     // The arena floor is one open bowl around the centre (748.3, 619.4); every
     // anchor is inside it and route-probed by t/TestTrialOfTheChampionRouteProbe.cpp.
+    // That probe reads the mmtiles off disk — LIVE there is no navmesh: the core
+    // switches pathfinding off for map 650 (DisableMgr::IsPathfindingEnabled), so
+    // no tile ever loads and every move here, DC's routes included, is a straight
+    // line. That is only safe because nothing here leaves the bowl.
     constexpr float ARENA_X = 748.31f, ARENA_Y = 619.49f, ARENA_Z = 411.17f;  // announcer spawn
 
     // OBJ(1): 11yd south of the wave convergence point, the announcer 11yd north.
