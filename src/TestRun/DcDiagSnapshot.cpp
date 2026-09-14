@@ -20,6 +20,7 @@
 #include "Player.h"
 #include "SharedDefines.h"
 #include "Timer.h"
+#include "Vehicle.h"
 
 #include "PlayerbotAI.h"
 #include "Playerbots.h"
@@ -559,6 +560,19 @@ namespace DcDiag
                 m.z = member->GetPositionZ();
                 m.distToTank = (m.mapId == snap.mapId) ? tank->GetDistance(member) : -1.f;
                 m.floor = ProbeFloor(member);
+                if (Vehicle* const vehicle = member->GetVehicle())
+                {
+                    m.onVehicle = true;
+                    if (Unit* const base = vehicle->GetBase())
+                    {
+                        m.baseEntry = base->GetEntry();
+                        m.baseX = base->GetPositionX();
+                        m.baseY = base->GetPositionY();
+                        m.baseZ = base->GetPositionZ();
+                    }
+                    VehicleSeatEntry const* const seat = vehicle->GetSeatForPassenger(member);
+                    m.seatCanControl = seat && seat->CanControl();
+                }
                 m.alive = member->IsAlive();
                 m.healthPct = static_cast<std::uint32_t>(member->GetHealthPct());
                 if (member->getPowerType() == POWER_MANA)
@@ -804,6 +818,11 @@ namespace DcDiag
               << (m.dcTickSeen ? static_cast<std::int64_t>(m.dcTickAgeMs) : -1)
               << ",\"botState\":";
             AppendEscaped(s, m.botState);
+            // Emitted only for a rider, so every existing reader sees the same row.
+            if (m.onVehicle)
+                s << ",\"onVehicle\":true,\"baseEntry\":" << m.baseEntry
+                  << ",\"baseX\":" << m.baseX << ",\"baseY\":" << m.baseY << ",\"baseZ\":" << m.baseZ
+                  << ",\"seatCanControl\":" << (m.seatCanControl ? "true" : "false");
             // Emitted only for a flagged member, so an absent block means "was
             // not in combat" rather than "nothing was holding it" — the two
             // read identically if every member carries an empty array.
@@ -997,11 +1016,18 @@ namespace DcDiag
         if (offEngine)
             s << " FLAGGED-OFF-COMBAT-ENGINE=" << offEngine;
         std::uint32_t underMesh = 0;
+        std::uint32_t riders = 0;
         for (MemberSnapshot const& m : snap.members)
-            if (m.online && IsUnderMesh(m.floor, m.z))
+        {
+            if (m.onVehicle)
+                ++riders;  // airborne by design: its column's mesh is the ring below
+            else if (m.online && IsUnderMesh(m.floor, m.z))
                 ++underMesh;
+        }
         if (underMesh)
             s << " UNDER-MESH=" << underMesh;
+        if (riders)
+            s << " RIDERS=" << riders;
         // The escort driver's own view disagreeing with the map is the question
         // the Town Hall stall left open; say which way it disagrees.
         if (snap.escort.active && !snap.escort.driverSees)
@@ -1044,7 +1070,8 @@ namespace DcDiag
             if (!first)
                 s << " | ";
             first = false;
-            s << m.name << (IsUnderMesh(m.floor, m.z) ? " UNDER-MESH" : "")
+            s << m.name
+              << (m.onVehicle ? " ON-VEHICLE" : (IsUnderMesh(m.floor, m.z) ? " UNDER-MESH" : ""))
               << " [engine=" << (m.botState.empty() ? "?" : m.botState)
               << " attackers=" << m.attackerCount
               << " victim=" << (m.victim.empty() ? "-" : m.victim)

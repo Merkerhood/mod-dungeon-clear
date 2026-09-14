@@ -194,6 +194,12 @@ namespace
                 continue;
             if (!GET_PLAYERBOT_AI(member))  // only relocate bots, never a human
                 continue;
+            // Never a rider: NearTeleportTo ejects a passenger and leaves the vehicle
+            // where it stood. On The Oculus that is a bot dropped into the air above
+            // the landing, with no parachute inside an instance. Same guard as
+            // DcStrandedRecovery.
+            if (member->GetVehicle())
+                continue;
             if (member->GetExactDist(lx, ly, lz) <= DC_JUMP_STRANDED_DIST)
                 continue;                   // already across
 
@@ -1688,6 +1694,21 @@ bool DungeonEventExecutor::IsPullOwningEventDriving(Player* bot, AiObjectContext
         return false;
     DungeonEvent const* ev = FindDueConditionalEvent(bot, context, map->GetId());
     return ev && ev->ownsThePull;
+}
+
+bool DungeonEventExecutor::PullOwningEventHoldsTheApproach(Player* bot, AiObjectContext* context)
+{
+    if (!bot || !context)
+        return false;
+
+    if (IsPersistentAnchoredEventActive(context))
+        return true;
+
+    Map* map = bot->GetMap();
+    if (!map)
+        return false;
+    DungeonEvent const* ev = FindDueConditionalEvent(bot, context, map->GetId());
+    return ev && ev->ownsThePull && !ev->yieldsTheApproach;
 }
 
 bool DungeonEventExecutor::ActiveEngageStep(AiObjectContext* context, uint32& outEntry,

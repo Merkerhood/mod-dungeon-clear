@@ -823,6 +823,7 @@ namespace
             RegisterHallsOfReflectionHooks(t);
             RegisterCullingOfStratholmeHooks(t);
             RegisterTrialOfTheChampionHooks(t);
+            RegisterOculusHooks(t);
             return t;
         }();
         return kHooks;

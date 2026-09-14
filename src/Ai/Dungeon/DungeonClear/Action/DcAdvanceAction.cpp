@@ -2032,6 +2032,15 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
     // any map with no zones and no scripted-pull plan. See DcSocialQuarantine.h.
     DcSocialQuarantine::Update(bot, context);
 
+    // NEVER A RIDER. Everything below walks the BOT, and on a vehicle the bot is
+    // the passenger: a glide on it moves nothing, and the long-range pathfinder
+    // has no answer for a drake over open air. A mounted leader belongs to its
+    // map's vehicle driver (The Oculus's flight driver, Trial of the Champion's
+    // joust driver). On The Oculus stock OccFlyingMultiplier already zeroes this
+    // rung while mounted; this is the belt to that brace.
+    if (bot->GetVehicle())
+        return false;
+
     // Hard pause guard. The engine builds its action queue from the triggers
     // that fired at the START of the tick; on the tick the door-blocked action
     // auto-pauses, `advance` was already queued (paused was still false then) and
@@ -2358,7 +2367,13 @@ bool DungeonClearAdvanceAction::Execute(Event /*event*/)
         // i.e. the tick this rung would otherwise misfire in. Yield rather than
         // claim: the event is about to steer, and this rung has nothing useful to
         // contribute to a party whose route cursor is behind it.
-        if (DungeonEventExecutor::IsPullOwningEventDriving(bot, context))
+        //
+        // EXCEPT an event that yields the approach (DungeonEvent::yieldsTheApproach):
+        // it claims every tick it moves the party, so a tick that reaches this rung
+        // is one it handed back for Advance to finish. Held there, The Oculus's
+        // "on site" yield and this stand-down waited on each other for ten minutes
+        // 3yd outside the south pad's arrival (tr-20260913-003200-10).
+        if (DungeonEventExecutor::PullOwningEventHoldsTheApproach(bot, context))
         {
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] off-line {:.1f}yd -> NOT rejoining: a pull-owning event is "

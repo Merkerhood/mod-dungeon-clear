@@ -64,6 +64,12 @@ EventBuilder& EventBuilder::OwnsThePull()
     return *this;
 }
 
+EventBuilder& EventBuilder::YieldsTheApproach()
+{
+    _ev.yieldsTheApproach = true;
+    return *this;
+}
+
 EventBuilder& EventBuilder::DrivesInCombat()
 {
     _ev.drivesInCombat = true;
@@ -461,6 +467,7 @@ namespace
             RegisterHallsOfReflectionEvents(t);
             RegisterCullingOfStratholmeEvents(t);
             RegisterTrialOfTheChampionEvents(t);
+            RegisterOculusEvents(t);
             return t;
         }();
         return kEvents;

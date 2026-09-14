@@ -48,6 +48,7 @@ enum class DcThrottle : uint8
     HosTravelIssue,      // HosTravelTo — the Halls of Stone Tribunal arena
     HorStayAheadIssue,   // the HoR escape's per-follower forward step
     TocMoveIssue,        // the ToC driver's point move (the horse, or the tank on foot)
+    OcMoveIssue,         // the Oculus rider's drake move (the vehicle base) and its giver walk
 
     // --- log throttles (time only) -----------------------------------------
     TransitLog,          // BwlTransitLog — one crossing telemetry line per 3s
@@ -82,6 +83,10 @@ enum class DcThrottle : uint8
     TocTelemetryLog,     // the ToC driver's `DcToc progress=...` line
     TocWarn,             // the ToC driver's never-mounted / Knight-strand WARNs
     TocClick,            // the ToC driver's announcer click (and its log line)
+    OcTelemetryLog,      // the Oculus driver's `DcOc ring=...` line
+    OcWarn,              // the Oculus WARNs (blocked chord, stalled leg, fabricated essence)
+    OcGossip,            // the Oculus rider's giver click (and its log line)
+    OcEregosLog,         // the Oculus Eregos hold's per-fight line (hook 39)
 
     // --- action floors (time only) -----------------------------------------
     UpHarpoonFire,       // floor between two Harpoon Launcher clicks (its own

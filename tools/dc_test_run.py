@@ -99,6 +99,13 @@ SIGNALS = [
     ("ToC progress", ["DcToc progress="]),
     ("ToC click / pull", ["ToC — progress", "idle Argent soldier", "pulling it back"]),
     ("ToC WARN", ["black knight evaded", "has been on foot for"]),
+    # The Oculus's flight driver. The DcOc line is the ascent's timeline (site,
+    # cc=k/10, mounted, landed, phase); the rider rows are each member's essence,
+    # mount, leg and dismount. A "dropped ground target" WARN is the rider-kill
+    # trap being headed off; a rider death with killer == self is it firing.
+    ("Oculus ascent", ["DcOc ring="]),
+    ("Oculus rider", ["DcOc essence", "DcOc mount", "DcOc leg ", "DcOc dismount", "DcOc land"]),
+    ("Oculus WARN", ["DcOc WARN"]),
 ]
 
 

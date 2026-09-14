@@ -1708,6 +1708,8 @@ TEST(DungeonEventHallsOfReflectionTest, TheEscapeIsAConditionalInCombatDriverTha
     EXPECT_TRUE(ev->repeatable);
     EXPECT_TRUE(ev->persistent);
     EXPECT_TRUE(ev->ownsThePull);
+    EXPECT_FALSE(ev->yieldsTheApproach)
+        << "the off-line rejoin must stand down for the escape: its cursor points back at the throne";
     EXPECT_TRUE(ev->drivesInCombat)
         << "npc_hor_lich_kingAI SetInCombatWithZone()s every player once a second for the "
            "whole escape, so a non-combat-only rung would get exactly zero ticks";

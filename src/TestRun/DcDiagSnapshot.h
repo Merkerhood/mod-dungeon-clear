@@ -186,6 +186,14 @@ namespace DcDiag
         float x = 0.f, y = 0.f, z = 0.f;
         float distToTank = 0.f;   // -1 when on a different map (distance is meaningless)
         FloorProbe floor;         // probed for every online member
+        // ON A VEHICLE: the base carries the member, and its position is the seat's.
+        // A rider is AIRBORNE by design on The Oculus, so the under-the-floor
+        // verdict below is suppressed for it — a drake 50yd over a ring reads as
+        // "under the mesh" of the ring above, five times a tick, otherwise.
+        bool onVehicle = false;
+        std::uint32_t baseEntry = 0;
+        float baseX = 0.f, baseY = 0.f, baseZ = 0.f;
+        bool seatCanControl = false;
         bool alive = false;
         std::uint32_t healthPct = 0;
         std::uint32_t manaPct = 0;   // 0 for non-mana classes

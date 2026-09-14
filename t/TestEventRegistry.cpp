@@ -339,6 +339,17 @@ namespace
             // so an arrival step would add nothing, and Done is its yield.
             // Repeatable: it never completes; the predicate going false ends it.
             {650, 4},
+            // The Oculus "The Oculus ascent": OculusDriverDue is gated on
+            // GetData(DATA_DRAKOS) == DONE, and on this map that is a STRONGER
+            // near-gate than any distance. Drakos stands on an island reachable only
+            // through the Nexus Portal teleport, and nothing else on the map can set
+            // the slot — so the party is on his ring, beside the drake-givers who
+            // only walk out of their cages on that very death, when it flips. It
+            // stays due until Eregos dies and nobody is left in a saddle. Its lone
+            // step (hook 38, OcDriveAscent) owns the travel — the party flies island
+            // to island, which no arrival step can express — so Done is its yield.
+            // Repeatable: it never completes; the predicate going false ends it.
+            {578, 9},
         };
         for (Row const& r : kRows)
             if (r.mapId == mapId && r.eventId == eventId)
@@ -940,6 +951,13 @@ TEST(DungeonEventIntegrityTest, DrivesInCombatIsConfinedToVettedWaveEncounters)
         // progress counter moves mid-fight and the telemetry line reports it.
         // Its combat rung (61) is below `toc mounted` (66) regardless.
         {650, 4},
+        // The Oculus "The Oculus ascent". The ToC reason, not the wave reason: the
+        // driver never steers under fire — it NEVER lifts off while anyone is
+        // engaged, because a drake spell on a ground mob kills its rider — and every
+        // in-combat verdict on the ground is a yield. It needs combat ticks to SEE a
+        // Guardian picket hold riders mid-leg (a Hold, so the ladder stays off the
+        // mounted tank) and the Eregos fight, which is in combat from start to end.
+        {578, 9},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1406,6 +1424,13 @@ TEST(DungeonEventIntegrityTest, StepsOwnMovementIsConfinedToVettedEvents)
         // Done has to yield: the Argent soldiers, the Argent champion and the
         // Black Knight are all stock-engine fights.
         {650, 4},
+        // The Oculus "The Oculus ascent": hook 38 flies a drake — the vehicle base
+        // is the only thing that can move the party between rings, and the per-tick
+        // hold would pin the tank on the pad it has to take off from. (The moves
+        // themselves are each rider's own rung; the hook holds the ladder off the
+        // tank while they happen.) And Done has to yield: every island clear,
+        // Varos and Urom are ground fights for the objectives and the stock engine.
+        {578, 9},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())
@@ -1537,6 +1562,8 @@ TEST(DungeonEventIntegrityTest, EveryAuthoredObjectiveHookIdIsRegistered)
         { 10, "The Underbog — SendGhazanToPlatform" },
         { 12, "Black Morass — BmDriveWave (BlackMorassDriver.cpp)" },
         { 13, "Azjol-Nerub — HadronoxHasWebbedTheDoors" },
+        { 38, "The Oculus — OcDriveAscent (OculusDriver.cpp)" },
+        { 39, "The Oculus — OcEregosHold (OculusDriver.cpp)" },
     };
 
     for (Expected const& e : kHooks)
@@ -2301,6 +2328,11 @@ TEST(DungeonEventIntegrityTest, PullOwningEventsAreVetted)
         // ground) would walk the party away from the packs the counter needs dead,
         // and a scout-lagged tank is the wrong shape for a five-rider joust.
         {650, 4},
+        // The Oculus "The Oculus ascent". Every construct island is twenty to eighty
+        // yards across with nothing but air past the rim: the advanced pull's
+        // drag-back camp would be stamped off the edge or on another island, and a
+        // scout-lagged tank is fifteen yards of rim nobody can stand on.
+        {578, 9},
     };
 
     for (DungeonEvent const& ev : DungeonEventRegistry::AllEvents())

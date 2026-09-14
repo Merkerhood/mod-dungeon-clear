@@ -244,6 +244,26 @@ TEST(DungeonClearRelevanceTest, TheHorForwardStepOutranksTheRadialVacateItReplac
     EXPECT_GT(DcRel::HorStayAhead, DcRel::Advance);
 }
 
+// THE OCULUS rider rung flies every member's drake. It has to outrank every DC
+// rung a rider could otherwise be handed in either engine, and it sits half a rung
+// over the Hakkar suppressor rather than on it so the ladder carries no new tie.
+TEST(DungeonClearRelevanceTest, TheOculusRiderOutranksEveryLadderItFliesOver)
+{
+    EXPECT_GT(DcRel::OcRider, DcRel::HakkarSuppressorCombat) << "a tie with no partition test";
+    EXPECT_GT(DcRel::OcRider, DcRel::EventDueCombat);
+    EXPECT_GT(DcRel::OcRider, DcRel::PullManeuver);
+    EXPECT_GT(DcRel::OcRider, DcRel::StayAtCamp);
+    EXPECT_GT(DcRel::OcRider, DcRel::HazardVacate);
+    EXPECT_GT(DcRel::OcRider, DcRel::StrandedRecovery);
+    EXPECT_GT(DcRel::OcRider, DcRel::RezParty);
+    EXPECT_GT(DcRel::OcRider, DcRel::EventDue);
+    EXPECT_GT(DcRel::OcRider, DcRel::FollowTank);
+    EXPECT_GT(DcRel::OcRider, DcRel::Advance);
+    EXPECT_LT(DcRel::OcRider, DcRel::BreakStuckCombat);
+    EXPECT_LT(DcRel::OcRider, DcRel::PartyDied);
+    EXPECT_LT(DcRel::OcRider, DcRel::Chat);
+}
+
 // The pull maneuver is dual-engine for the same reason HazardVacate and
 // BreakStuckCombat are: stock `drop target` (99) can move a still-flagged bot onto
 // the NON-combat engine, and every watchdog the maneuver owns lives inside its

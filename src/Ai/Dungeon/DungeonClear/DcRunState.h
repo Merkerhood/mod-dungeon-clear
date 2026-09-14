@@ -416,6 +416,44 @@ struct DcRunState
     uint32 tocStrandSinceMs = 0;       // progress 8, no Knight and no announcer, since
     uint32 tocLastProgress = 0xFFFFFFFFu;  // the progress the telemetry last reported
 
+    // --- The Oculus: the party plan (map 578, on the RUN OWNER) ----------------
+    //
+    // The driver kernel's verdict, memoised for PLAN_MEMO_MS and read by every
+    // member's rider rung (DcOculusDriver::Decide). Plus the three "since when"
+    // clocks it round-trips. No latch: every field is re-derived from the
+    // encounter slots and the census each refresh.
+    uint32 ocPlanStampMs = 0;          // getMSTime() of the last refresh (0 = never)
+    uint8  ocPlanPhase = 0;            // DcOculusDriver::Phase
+    uint8  ocPlanDest = 0xFF;          // DcOculus::Site
+    bool   ocPlanHover = false;
+    uint8  ocPlanAction = 0;           // DcOculusDriver::Action
+    uint32 ocPlanLegSeq = 0;           // bumps when a new leg starts (phase or destination change)
+    bool   ocPlanTankOnFootOnDest = false;
+    bool   ocPlanEregosEngaged = false;
+    uint8  ocDriverState = 0xFF;       // DcOculusDriver::State last logged
+    uint32 ocDriverStateMs = 0;
+    uint32 ocMusterSinceMs = 0;
+    uint32 ocLandWaitSinceMs = 0;
+    uint32 ocLastRegroupMs = 0;
+
+    // --- The Oculus: this member's drake (map 578, on EVERY member) ------------
+    ObjectGuid ocBaseGuid;             // the drake PrepareBase last set up
+    uint32 ocMountIssuedMs = 0;        // the Call cast went out (the settle clock)
+    uint32 ocMasterWaitSinceMs = 0;    // a master holding its own mount for its members, since
+    uint32 ocEssenceWaitSinceMs = 0;   // on Drakos's ring without an essence, since (GIVER_WAIT_MS)
+    uint32 ocLegSeq = 0;               // the plan leg this member's cursor belongs to
+    uint8  ocLegDest = 0xFF;
+    uint8  ocLegPhase = 0;
+    bool   ocLegPadCentre = false;     // re-planned onto lane 0 after PAD_FALLBACK_MS
+    uint8  ocLegCount = 0;
+    uint8  ocLegCursor = 0;
+    float  ocLegWp[18]{};              // up to six waypoints, x y z
+    uint32 ocLegArrivedMs = 0;
+    uint32 ocProgressMs = 0;           // when the drake last moved LEG_PROGRESS_YD
+    float  ocProgressX = 0.0f, ocProgressY = 0.0f, ocProgressZ = 0.0f;
+    bool   ocStallReissued = false;
+    uint8  ocRiderAction = 0;          // DcOculusRider::Action last logged
+
     // --- per-bot throttles (see Util/DcThrottle.h) --------------------------
 
     DcThrottleSlot throttles[kDcThrottleCount]{};
@@ -544,6 +582,22 @@ struct DcRunState
         ClearThrottle(DcThrottle::TocMoveIssue);
         ClearThrottle(DcThrottle::TocWarn);
         ClearThrottle(DcThrottle::TocClick);
+    }
+
+    // Drop this member's drake leg: a new leg, a dismount, or a mount on a
+    // different drake all start from where the drake is, never from a stale cursor.
+    void ClearOcLeg()
+    {
+        ocLegSeq = 0;
+        ocLegDest = 0xFF;
+        ocLegPhase = 0;
+        ocLegPadCentre = false;
+        ocLegCount = 0;
+        ocLegCursor = 0;
+        ocLegArrivedMs = 0;
+        ocProgressMs = 0;
+        ocStallReissued = false;
+        ClearThrottle(DcThrottle::OcMoveIssue);
     }
 
     void ClearTransit()

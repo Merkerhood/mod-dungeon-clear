@@ -4572,6 +4572,453 @@ std::vector<uint32> const& TocSoldierEntries();
 // stands down (DcTocDriver::FollowerMountsItself has the why).
 bool TocFollowerMountsItself(Player* bot);
 
+// --- The Oculus (map 578) ---------------------------------------------------
+//
+// Four rings stacked in open air. Only the entrance floor is reachable on foot;
+// Drakos's ring is across the Nexus Portal (a teleport), and every ring above it
+// is reached by summoning a player-owned FLYING DRAKE from an essence item,
+// flying it there, landing on a platform and dismounting. The plan is
+// deployment-files/docs/mod-dungeon-clear_oculus_plan.md; the dossier is the
+// dc-oculus-dossier memory. Every coordinate below was probed against the live
+// map-578 navmesh (tools/probe_navmesh.py --column) on 2026-09-12 and is
+// re-checked by t/TestOculusRouteProbe.cpp.
+//
+// THE SHAPE: three derived boss rows (Drakos, and Varos / Urom re-anchored onto
+// the ground they are fought on), eight objectives (the portal crossing, three
+// construct islands, Urom's three platforms, Eregos), and ONE conditional driver
+// (hook 38) that decides when the party musters, flies and lands. The per-member
+// half — gossip for an essence, mount, fly a lane, land, dismount, station on
+// Eregos — is the rider rung (Action/DcOculusRiderAction.cpp), because every
+// member steers its OWN drake. The decisions are pure kernels:
+// Util/DcOculusDriverDecision.h and Util/DcOculusFlightDecision.h.
+//
+// THREE CORE TRAPS DECIDE THE DESIGN (oculus.cpp):
+//   * a drake bar spell that hits a hostile whose CanFly() is false KILLS THE
+//     RIDER (npc_oculus_drakeAI::SpellHitTarget) — so nobody lifts off while
+//     anyone is in combat, and nobody hovers over a ground fight;
+//   * a drake despawns 2s after its rider leaves and 5s after summon if nobody
+//     boards — every landing costs a fresh essence use (15s cooldown);
+//   * Vehicle::RemovePassenger casts no parachute inside an instance, and a
+//     clientless bot never falls — a mid-air dismount strands it. The rider only
+//     dismounts over snapped mesh.
+namespace DcOculus
+{
+    constexpr uint32 MAP_ID = 578;
+
+    // --- instance data -----------------------------------------------------------
+    //
+    // instance_oculus keeps its own m_auiEncounter and NEVER calls SetBossState:
+    // GetBossState reads TO_BE_DECIDED for all four and IsEncounterInProgress is
+    // always false. GetData is the only honest read.
+    constexpr uint32 DATA_DRAKOS   = 0;
+    constexpr uint32 DATA_VAROS    = 1;
+    constexpr uint32 DATA_UROM     = 2;
+    constexpr uint32 DATA_EREGOS   = 3;
+    constexpr uint32 DATA_CC_COUNT = 5;   // Centrifuge Constructs killed, 0..10, saved
+    constexpr uint32 STATE_IN_PROGRESS = 1;  // EncounterState
+    constexpr uint32 STATE_DONE        = 3;
+    constexpr uint32 CC_TOTAL          = 10;
+
+    // --- creatures -----------------------------------------------------------------
+    //
+    // Heroic spawns keep the NORMAL entry (difficulty_entry swaps the template, not
+    // GetEntry()), and all four instance_encounters rows credit the normal entry on
+    // both difficulties, so nothing below needs a heroic twin.
+    constexpr uint32 NPC_DRAKOS = 27654;
+    constexpr uint32 NPC_VAROS  = 27447;
+    constexpr uint32 NPC_UROM   = 27655;
+    constexpr uint32 NPC_EREGOS = 27656;
+
+    // The three drake-givers. Caged until Drakos dies; they walk out 3s later and
+    // gain their gossip flag on arrival. Resolve them by entry — their spawn rows
+    // are inside the cages.
+    constexpr uint32 NPC_VERDISA       = 27657;  // Emerald
+    constexpr uint32 NPC_BELGARISTRASZ = 27658;  // Ruby
+    constexpr uint32 NPC_ETERNOS       = 27659;  // Amber
+
+    constexpr uint32 NPC_RUBY_DRAKE    = 27756;
+    constexpr uint32 NPC_AMBER_DRAKE   = 27755;
+    constexpr uint32 NPC_EMERALD_DRAKE = 27692;
+
+    constexpr uint32 NPC_AZURE_RING_GUARDIAN  = 27638;  // 43 hovering pickets, CanFly
+    constexpr uint32 NPC_RING_LORD_SORCERESS  = 27639;
+    constexpr uint32 NPC_RING_LORD_CONJURER   = 27640;
+    constexpr uint32 NPC_CENTRIFUGE_CONSTRUCT = 27641;  // 10 of them gate Varos
+    constexpr uint32 NPC_UNSTABLE_SPHERE      = 28166;  // Drakos; NOT_SELECTABLE
+    constexpr uint32 NPC_CENTRIFUGE_CORE      = 28183;  // Varos; NOT_SELECTABLE
+    constexpr uint32 NPC_AZURE_RING_CAPTAIN   = 28236;  // Varos; NOT_SELECTABLE
+    constexpr uint32 NPC_ARCANE_BEAM          = 28239;  // Varos; NOT_SELECTABLE
+    constexpr uint32 NPC_GREATER_LEY_WHELP    = 28276;  // Eregos adds, CanFly
+    constexpr uint32 NPC_PLANAR_ANOMALY       = 30879;  // Eregos heroic; NOT_SELECTABLE
+
+    // Urom's three Summon Menagerie packs, one per outer platform.
+    constexpr uint32 NPC_PHANTASMAL_MAMMOTH      = 27642;
+    constexpr uint32 NPC_PHANTASMAL_WOLF         = 27644;
+    constexpr uint32 NPC_PHANTASMAL_CLOUDSCRAPER = 27645;
+    constexpr uint32 NPC_PHANTASMAL_OGRE         = 27647;
+    constexpr uint32 NPC_PHANTASMAL_NAGA         = 27648;
+    constexpr uint32 NPC_PHANTASMAL_MURLOC       = 27649;
+    constexpr uint32 NPC_PHANTASMAL_AIR          = 27650;
+    constexpr uint32 NPC_PHANTASMAL_FIRE         = 27651;
+    constexpr uint32 NPC_PHANTASMAL_WATER        = 27653;
+
+    // The ONLY hostiles a drake bar spell may hit without killing its rider: the
+    // three whose CanFly() is true. (The Planar Anomaly flies too but cannot be
+    // targeted.) Every boss, construct, Ring-Lord and Phantasmal add is lethal.
+    inline constexpr uint32 FLYING_SAFE_ENTRIES[] = {
+        NPC_AZURE_RING_GUARDIAN, NPC_EREGOS, NPC_GREATER_LEY_WHELP,
+    };
+
+    // --- essences, calls, saddles ----------------------------------------------------
+    constexpr uint32 ITEM_EMERALD_ESSENCE = 37815;
+    constexpr uint32 ITEM_AMBER_ESSENCE   = 37859;
+    constexpr uint32 ITEM_RUBY_ESSENCE    = 37860;
+
+    // The item use-spells: 500ms cast, 15s item cooldown, summon the drake 10yd
+    // ahead and 12yd up. The drake then casts its que aura on the summoner, and
+    // 2.5s later the aura makes the summoner cast the saddle (CONTROL_VEHICLE).
+    constexpr uint32 SPELL_CALL_EMERALD_DRAKE = 49345;
+    constexpr uint32 SPELL_CALL_AMBER_DRAKE   = 49461;
+    constexpr uint32 SPELL_CALL_RUBY_DRAKE    = 49462;
+    constexpr uint32 SPELL_RIDE_EMERALD_DRAKE = 49346;
+    constexpr uint32 SPELL_RIDE_AMBER_DRAKE   = 49460;
+    constexpr uint32 SPELL_RIDE_RUBY_DRAKE    = 49464;
+
+    // The bar, for the record: stock `occ drake attack` presses these, DC never does.
+    constexpr uint32 SPELL_SEARING_WRATH       = 50232;  // Ruby
+    constexpr uint32 SPELL_EVASIVE_MANEUVERS   = 50240;
+    constexpr uint32 SPELL_MARTYR              = 50253;  // Ruby slot 5, post-Urom
+    constexpr uint32 SPELL_SHOCK_LANCE         = 49840;  // Amber
+    constexpr uint32 SPELL_STOP_TIME           = 49838;
+    constexpr uint32 SPELL_TEMPORAL_RIFT       = 49592;  // Amber slot 5, channel
+    constexpr uint32 SPELL_LEECHING_POISON     = 50328;  // Emerald
+    constexpr uint32 SPELL_TOUCH_THE_NIGHTMARE = 50341;
+    constexpr uint32 SPELL_DREAM_FUNNEL        = 50344;  // Emerald slot 5, channel
+
+    // Eregos heroic: 18s immune, anomalies chase a random player. The scatter key.
+    constexpr uint32 SPELL_PLANAR_SHIFT = 51162;
+
+    // --- the givers' gossip ------------------------------------------------------------
+    //
+    // POSITIONAL options (SelectGossip maps them to the DB OptionID). Verdisa and
+    // Eternos: item 0 is lore, item 1 is whichever give/swap option the bot's bags
+    // allow (OptionID 1, 2 or 3 — all three store this giver's essence), item 2 is
+    // lore. Belgaristrasz: his only item opens submenu 9575, and SelectGossip's
+    // drill-down then selects that submenu's FIRST item — again the give/swap
+    // option whatever the bags hold. So one positional option per colour covers
+    // "no essence" and "the wrong essence" alike. Never gossip for the colour the
+    // bot already holds: that position is then the lore option.
+    constexpr uint32 GOSSIP_MENU_VERDISA       = 9573;
+    constexpr uint32 GOSSIP_MENU_ETERNOS       = 9574;
+    constexpr uint32 GOSSIP_MENU_BELGARISTRASZ = 9708;  // -> 9575
+    constexpr float  GIVER_REACH    = 4.5f;
+    constexpr float  GIVER_STANDOFF = 2.5f;
+    constexpr float  GIVER_SCAN     = 60.0f;
+
+    // A member on Drakos's ring still without its essence this long into the
+    // muster is handed it (FABRICATE_ESSENCE_OFF_RING's item). The on-foot tank's
+    // muster has no timeout of its own, so a giver that never answers must not be
+    // able to hold the whole party. Live tp-20260913-003200-1 (tr-…-3): the tank
+    // stood 63.9yd from Belgaristrasz, outside GIVER_SCAN, and four mounted riders
+    // waited on it for eleven minutes.
+    constexpr uint32 GIVER_WAIT_MS  = 45000;
+
+    enum class Colour : uint8
+    {
+        Ruby = 0,
+        Amber,
+        Emerald,
+    };
+
+    // post: where the giver stands once freed — oculus.h's *POS, the MovePoint
+    // npc_oculus_drakegiverAI walks it to 3s after Drakos dies. A member that
+    // cannot see its giver walks here rather than waiting where it stands.
+    struct ColourRow
+    {
+        uint32      giver;
+        int32       gossipOption;
+        uint32      essence;
+        uint32      callSpell;
+        uint32      drake;
+        char const* name;
+        float       postX;
+        float       postY;
+        float       postZ;
+    };
+
+    inline constexpr ColourRow COLOURS[3] = {
+        { NPC_BELGARISTRASZ, 0, ITEM_RUBY_ESSENCE,    SPELL_CALL_RUBY_DRAKE,    NPC_RUBY_DRAKE,    "Ruby",
+          941.355f, 1044.26f, 359.967f },
+        { NPC_ETERNOS,       1, ITEM_AMBER_ESSENCE,   SPELL_CALL_AMBER_DRAKE,   NPC_AMBER_DRAKE,   "Amber",
+          943.202f, 1059.35f, 359.967f },
+        { NPC_VERDISA,       1, ITEM_EMERALD_ESSENCE, SPELL_CALL_EMERALD_DRAKE, NPC_EMERALD_DRAKE, "Emerald",
+          949.056f, 1032.97f, 359.967f },
+    };
+
+    inline constexpr ColourRow const& RowFor(Colour c) { return COLOURS[static_cast<uint8>(c)]; }
+
+    // Tank -> Ruby (Evasive Maneuvers, Martyr), healer -> Emerald (Dream Funnel),
+    // everyone else -> Amber (Stop Time answers every Enraged Assault). Derived
+    // from the party, so every member reaches the same answer with no shared state.
+    inline constexpr Colour ColourForRole(bool isTank, bool isHealer)
+    {
+        return isTank ? Colour::Ruby : (isHealer ? Colour::Emerald : Colour::Amber);
+    }
+
+    // Essences come from gossip. A member that lacks one while it is NOT standing
+    // on Drakos's ring (the givers never leave it) is handed the item instead,
+    // loudly: walking it back is not possible from an island, and the item is
+    // exactly what the gossip would have produced.
+    constexpr bool FABRICATE_ESSENCE_OFF_RING = true;
+
+    // --- gameobjects -----------------------------------------------------------------
+    //
+    // The Nexus Portal is a SPELLCASTER GO whose spell 49305 teleports the clicker
+    // to a spell_target_position row on Drakos's ring — the only way across. The
+    // Orb of the Nexus 8yd from the entrance is the EXIT (48760 -> Coldarra).
+    constexpr uint32 GO_NEXUS_PORTAL       = 189985;
+    constexpr uint32 SPELL_NEXUS_PORTAL    = 49305;
+    constexpr uint32 GO_ORB_OF_THE_NEXUS   = 188715;
+    constexpr uint32 GO_CACHE_OF_EREGOS    = 191349;
+    constexpr uint32 GO_CACHE_OF_EREGOS_H  = 193603;
+    constexpr float PORTAL_X = 1045.57f, PORTAL_Y = 1104.24f, PORTAL_Z = 361.07f;
+    constexpr float PORTAL_LAND_X = 983.108f, PORTAL_LAND_Y = 1054.51f, PORTAL_LAND_Z = 359.967f;
+    constexpr float PORTAL_RADIUS = 6.0f;
+    constexpr float ORB_X = 1048.27f, ORB_Y = 991.31f, ORB_Z = 361.07f;
+    constexpr float ENTRANCE_X = 1055.93f, ENTRANCE_Y = 986.85f, ENTRANCE_Z = 361.07f;
+
+    // --- Urom ------------------------------------------------------------------------
+    struct Pt3
+    {
+        float x, y, z;
+    };
+    // boss_urom.cpp cords[]: the three outer platforms he summons a pack on and
+    // teleports between, then the inner arena where he is actually fought.
+    inline constexpr Pt3 UROM_CORDS[4] = {
+        { 1177.47f,  937.72f, 527.41f },
+        {  968.66f, 1042.53f, 527.32f },
+        { 1164.02f, 1170.85f, 527.32f },
+        { 1118.31f, 1080.38f, 508.36f },
+    };
+
+    // --- the site table ------------------------------------------------------------------
+    //
+    // One row per navmesh ISLAND the party stands on. `pad` is the landing point ON
+    // MESH (probed); `hover` is the altitude a leg to this site cruises at — above
+    // every platform of its ring and below the next ring's lowest floor. `island*`
+    // is a circle + vertical band that answers "is this unit on that island". A
+    // rider lands on a small circle of `landRadius` around the pad, never on the
+    // rim. `column` is where the leg changes altitude when the straight climb from
+    // wherever it stands is blocked — the central shaft at (1100, 1050) has no
+    // floor at any ring height.
+    //
+    // The two construct pads are ~90yd platforms with their whole pack (three
+    // constructs and a Ring-Lord) within 13yd of the middle. Their pads sit on the
+    // RIM, 31yd from the nearest mob (aggro is 21yd: detection 20, level 79 vs 80)
+    // with 9yd of floor behind them and 30yd from every hovering picket, so the
+    // party lands out of the fight and the clear pulls the pack to it. The island
+    // circle covers the whole platform, the clear only the pack.
+    enum Site : uint8
+    {
+        SITE_R1_GIVERS = 0,  // Drakos's ring (the portal landing, the givers)
+        SITE_R1_ENTRY,       // the entrance floor
+        SITE_R2C,            // Ring 2 central ring: 4 constructs + Ring-Lords
+        SITE_R2S,            // Ring 2 south pad: 3 constructs + a Conjurer
+        SITE_R2N,            // Ring 2 north pad: 3 constructs + a Sorceress
+        SITE_R2V,            // Ring 2 Varos's platform
+        SITE_R3P0,           // Urom platform 0
+        SITE_R3P1,           // Urom platform 1
+        SITE_R3P2,           // Urom platform 2
+        SITE_R3IN,           // Urom's inner arena
+        SITE_R4,             // the Ring 4 floor under Eregos
+        SITE_COUNT,
+        SITE_NONE = 0xFF,
+    };
+
+    struct OcSite
+    {
+        char const* name;
+        uint8       ring;
+        float       padX, padY, padZ;
+        float       hoverZ;
+        float       islandX, islandY, islandRadius, islandZBand;
+        float       landRadius;
+        float       columnX, columnY;
+        float       clearX, clearY, clearZ, clearRadius;  // 0 radius => no clear step
+    };
+
+    constexpr float SHAFT_X = 1100.0f, SHAFT_Y = 1050.0f;
+
+    inline constexpr OcSite SITES[SITE_COUNT] = {
+        // name                 ring  pad (x, y, z)                   hover   island (x, y, r, zBand)          land  column (x, y)         clear (x, y, z, r)
+        { "Drakos's ring",        1,  955.00f, 1046.00f, 360.06f,  372.0f,  961.0f, 1049.0f,  45.0f,  8.0f,  4.0f,  955.00f, 1046.00f,     0.0f,    0.0f,   0.0f,  0.0f },
+        { "the entrance floor",   1, 1055.93f,  986.85f, 361.13f,  372.0f, 1110.0f, 1045.0f, 110.0f,  8.0f,  4.0f, 1055.93f,  986.85f,     0.0f,    0.0f,   0.0f,  0.0f },
+        { "the central ring",     2, 1045.78f, 1067.77f, 432.51f,  465.0f, 1101.0f, 1052.0f,  80.0f, 10.0f,  5.0f, SHAFT_X,  SHAFT_Y,        0.0f,    0.0f,   0.0f,  0.0f },
+        { "the south pad",        2, 1014.00f,  862.00f, 439.45f,  465.0f, 1036.5f,  890.5f,  48.0f,  8.0f,  3.0f, 1014.00f,  862.00f,  1034.0f,  888.0f, 439.5f, 22.0f },
+        { "the north pad",        2,  997.00f, 1233.00f, 439.19f,  465.0f, 1017.0f, 1201.5f,  48.0f,  8.0f,  3.0f,  997.00f, 1233.00f,  1018.0f, 1202.0f, 439.5f, 24.0f },
+        { "Varos's platform",     2, 1250.00f, 1070.00f, 439.29f,  465.0f, 1285.0f, 1070.0f,  46.0f,  8.0f,  5.0f, 1250.00f, 1070.00f,     0.0f,    0.0f,   0.0f,  0.0f },
+        { "Urom's platform 0",    3, 1177.00f,  950.00f, 526.92f,  548.0f, 1177.0f,  945.0f,  25.0f,  8.0f,  3.0f, 1177.00f,  950.00f,  1177.5f,  937.7f, 527.4f, 30.0f },
+        { "Urom's platform 1",    3,  975.00f, 1050.00f, 527.06f,  548.0f,  969.0f, 1043.0f,  25.0f,  8.0f,  3.0f,  975.00f, 1050.00f,   968.7f, 1042.5f, 527.3f, 30.0f },
+        { "Urom's platform 2",    3, 1172.00f, 1164.00f, 527.03f,  548.0f, 1166.0f, 1168.0f,  25.0f,  8.0f,  3.0f, 1172.00f, 1164.00f,  1164.0f, 1170.9f, 527.3f, 30.0f },
+        // The arena is a ring round the shaft, and Urom waits at UROM_CORDS[3] on it:
+        // the pad is 31yd round the ring from him (aggro 21yd), 9yd from the rim.
+        { "Urom's inner arena",   3, 1088.00f, 1087.00f, 508.52f,  548.0f, 1110.0f, 1065.0f,  40.0f,  8.0f,  4.0f, SHAFT_X,  SHAFT_Y,        0.0f,    0.0f,   0.0f,  0.0f },
+        { "the Ring 4 floor",     4, 1066.00f, 1068.00f, 601.99f,  625.0f, 1066.0f, 1068.0f,  55.0f,  8.0f,  6.0f, SHAFT_X,  SHAFT_Y,        0.0f,    0.0f,   0.0f,  0.0f },
+    };
+
+    inline constexpr OcSite const& SiteRow(uint8 site) { return SITES[site < SITE_COUNT ? site : 0]; }
+
+    // Every ground hostile the construct islands hold. The clears are filtered to
+    // these so a hovering Azure Ring Guardian inside the volume is never the
+    // thing the party walks off the rim after.
+    inline constexpr uint32 RING2_CLEAR_ENTRIES[] = {
+        NPC_CENTRIFUGE_CONSTRUCT, NPC_RING_LORD_SORCERESS, NPC_RING_LORD_CONJURER,
+    };
+
+    // --- the central ring's sweep ----------------------------------------------------
+    //
+    // The central ring is a HORSESHOE: its floor breaks due south of the shaft
+    // (bearing ~175-190 below; the navmesh has no floor there, and a walk from one
+    // end of the break to the other goes ~320yd round the whole ring). The party
+    // lands on the break's west end, clear of all four hostile arcs (the old pad at
+    // (1100, 1000) sat inside the south-east one, so every landing was a fight), and
+    // walks the horseshoe to its other end clearing one arc at a time: south-west,
+    // north-west, north-east, south-east — the only way round from the landing.
+    // Bearing is atan2(y - SHAFT_Y, x - SHAFT_X) with +X north and +Y west; it FALLS
+    // along the sweep. The hop splits the one long walk, across the north.
+    //
+    // The arcs are centred on their spawns' centroids (the `creature` table), and
+    // 22yd holds every spawn of an arc with 7yd to spare. There is NO whole-ring
+    // clear: a ClearRadius only certifies "clear" from within 12yd of its centre,
+    // and this ring's centre is the shaft — live, that clear walked the tank off the
+    // rim.
+    struct OcRingStop
+    {
+        char const* name;
+        float       x, y, z;
+        float       radius;  // 0 => a MoveTo hop; else a ClearRadius of this radius
+    };
+
+    constexpr float  RING_ARC_RADIUS     = 22.0f;
+    constexpr float  RING_HOP_ARRIVE     = 6.0f;
+    constexpr uint32 RING_HOP_TIMEOUT_MS = 90000;
+
+    inline constexpr OcRingStop R2C_SWEEP[] = {
+        // name                  x         y        z       radius              bearing
+        { "south-west arc",    1074.6f, 1102.7f, 433.0f, RING_ARC_RADIUS },  // 116
+        { "north-west arc",    1124.1f, 1108.7f, 433.0f, RING_ARC_RADIUS },  //  68
+        { "ring hop (north)",  1160.0f, 1050.0f, 433.0f, 0.0f },             //   0
+        { "north-east arc",    1129.5f,  994.3f, 433.0f, RING_ARC_RADIUS },  // 298
+        { "south-east arc",    1074.9f,  996.3f, 433.0f, RING_ARC_RADIUS },  // 245
+    };
+
+    // --- flight tuning ---------------------------------------------------------------------
+    constexpr uint32 MOUNT_SETTLE_MS   = 4000;   // hold still after the Call cast
+    constexpr uint32 ESSENCE_CD_MS     = 15000;
+    constexpr float  LAND_TOLERANCE    = 2.5f;   // base may hover this far above the snap
+    constexpr float  LAND_SNAP_2D      = 2.5f;   // ...and this far beside it
+    constexpr float  LAND_HOVER        = 1.5f;   // the final waypoint sits this far above the pad
+    constexpr float  LANE_SPACING      = 6.0f;   // perpendicular spacing of the cruise lanes
+    constexpr float  LANE_Z            = 2.0f;   // ...and their vertical stagger
+    constexpr float  LEG_ARRIVE        = 4.0f;   // 3D waypoint arrival
+    constexpr float  LIFT_MIN          = 8.0f;   // first climb when the start has no hover row
+    constexpr float  COLUMN_SLIDE_Z    = 8.0f;   // slide to the column this far above the start
+    constexpr uint32 LEG_STALL_MS      = 20000;  // no base displacement for this long = stalled
+    constexpr float  LEG_PROGRESS_YD   = 2.0f;
+    constexpr uint32 LAND_WAIT_MS      = 30000;  // tank holds mounted for stragglers this long
+    constexpr uint32 PAD_FALLBACK_MS   = 30000;  // lane landing failing -> land at pad centre
+    constexpr uint32 MUSTER_QUORUM     = 5;
+    constexpr uint32 MUSTER_MIN_ON_TIMEOUT = 4;
+    constexpr uint32 MUSTER_TIMEOUT_MS = 120000;
+    // A playerbots master waits this long for the members it masters to mount
+    // before it takes its own saddle (see DcOculusRider::Inputs::mastersOthers).
+    constexpr uint32 MASTER_MOUNT_WAIT_MS = 60000;
+
+    // Eregos. Stations 50yd out on bearings 36 degrees apart; Planar Shift (heroic)
+    // scatters 45yd further out and 15 up until it drops.
+    constexpr float  EREGOS_STATION_RANGE = 50.0f;
+    // Nothing brings Eregos into the fight on its own: the tank's drake closes to
+    // this range with him as its current target, and stock `occ drake attack`
+    // (60yd bar spells) opens. SetInCombatWithZone does the rest.
+    constexpr float  EREGOS_PULL_RANGE    = 40.0f;
+    constexpr float  EREGOS_LANE_DEG      = 36.0f;
+    constexpr float  EREGOS_RESTATION     = 8.0f;
+    constexpr float  EREGOS_ENGAGE_RANGE  = 70.0f;
+    constexpr float  EREGOS_SCAN          = 200.0f;
+    constexpr float  PLANAR_SCATTER_OUT   = 45.0f;
+    constexpr float  PLANAR_SCATTER_UP    = 15.0f;
+    constexpr float  STAGE_ARRIVE         = 20.0f;
+
+    // Anything standing below this is in the basement under the rings: a fall.
+    constexpr float  BASEMENT_Z = 300.0f;
+
+    constexpr float  SNAP_RADIUS = 4.0f;
+    constexpr float  SNAP_VERT   = 10.0f;
+
+    constexpr uint32 MOVE_REISSUE_MS     = 1500;
+    constexpr uint32 GOSSIP_RETRY_MS     = 2000;
+    constexpr uint32 PLAN_MEMO_MS        = 200;    // the party plan is re-derived at most this often
+    constexpr uint32 REGROUP_COOLDOWN_MS = 60000;
+    constexpr uint32 TELEMETRY_MS        = 10000;
+    constexpr uint32 WARN_THROTTLE_MS    = 60000;
+
+    // --- step timeouts ---------------------------------------------------------------------
+    constexpr uint32 PORTAL_TIMEOUT_MS  = 600000;   // 10 min: 120yd of entrance trash
+    constexpr uint32 SITE_TIMEOUT_MS    = 900000;   // 15 min per construct island / pack
+    constexpr uint32 CC_HOLD_TIMEOUT_MS = 300000;
+    constexpr uint32 EREGOS_TIMEOUT_MS  = 1800000;
+    // The driver's Custom step. Repeatable + Optional, so a timeout RE-ARMS it.
+    constexpr uint32 DRIVER_TIMEOUT_MS  = 2400000;
+
+    // --- event / objective ids -----------------------------------------------------------
+    //
+    // OBJ(n) carries event n. The plan numbers the objectives from 0; here each
+    // objective's synthetic entry is OBJ(its event id), the Trial of the Champion
+    // convention.
+    constexpr uint32 EVENT_PORTAL  = 1;
+    constexpr uint32 EVENT_R2C     = 2;
+    constexpr uint32 EVENT_R2S     = 3;
+    constexpr uint32 EVENT_R2N     = 4;
+    constexpr uint32 EVENT_UROM_P0 = 5;
+    constexpr uint32 EVENT_UROM_P1 = 6;
+    constexpr uint32 EVENT_UROM_P2 = 7;
+    constexpr uint32 EVENT_EREGOS  = 8;
+    constexpr uint32 EVENT_DRIVER  = 9;   // conditional driver, no objective
+
+    constexpr int32 ORDER_PORTAL  = 1;
+    constexpr int32 ORDER_DRAKOS  = 2;
+    constexpr int32 ORDER_R2C     = 3;
+    constexpr int32 ORDER_R2S     = 4;
+    constexpr int32 ORDER_R2N     = 5;
+    constexpr int32 ORDER_VAROS   = 6;
+    constexpr int32 ORDER_UROM_P0 = 7;
+    constexpr int32 ORDER_UROM_P1 = 8;
+    constexpr int32 ORDER_UROM_P2 = 9;
+    constexpr int32 ORDER_UROM    = 10;
+    constexpr int32 ORDER_EREGOS  = 11;
+
+    constexpr float OBJ_ARRIVE    = 8.0f;
+    constexpr float EREGOS_ARRIVE = 12.0f;
+
+    // Urom's poke: the search that finds him from anywhere on his platform (he
+    // stands 10-13yd from each pad) and loses him once Summon Menagerie has
+    // teleported him on — 230yd to the next platform, ~100yd to the arena.
+    constexpr float UROM_POKE_RADIUS = 40.0f;
+
+    // ObjectiveHookRegistry ids. One flat space; 38 and 39 follow ToC's 37.
+    constexpr uint32 HOOK_OC_DRIVER = 38;
+    constexpr uint32 HOOK_OC_EREGOS = 39;
+}
+
+// The Oculus (578) — NINE events: the portal crossing, six anchored site clears
+// (three construct islands, Urom's three platforms), the Eregos hold, and the
+// conditional flight driver. See OculusEvents.cpp.
+void RegisterOculusEvents(std::vector<DungeonEvent>& out);
+
+// Is the Oculus flight driver due for `bot`'s map right now? Exposed for the rider
+// trigger, which runs on every member and must agree with the driver.
+bool OculusDriverDue(Player* bot);
+
 
 // Every TempSummon the siege can field — the trash, the elites, the three portal
 // keepers, Ichoron's globules, Xevozz's spheres and Cyanigosa. Probed by
@@ -4704,6 +5151,14 @@ void RegisterCullingOfStratholmeRoster(std::vector<BossRosterPatch>& t);
 // is a cast-spell), and a boss row would be wrong even if one could be joined:
 // two of the three never die, and the third does not exist until a gossip click.
 void RegisterTrialOfTheChampionRoster(std::vector<BossRosterPatch>& t);
+
+// The Oculus (578) — THREE boss rows and EIGHT objectives. The derivation is sound
+// (all four encounters are creditType 0 with real spawns); what it gets wrong is
+// WHERE. Eregos spawns 53.6yd above the highest mesh, so his row can never snap
+// and is replaced by an objective on the Ring 4 floor; Varos and Urom are
+// re-anchored onto the ground they are fought on; and the portal, the construct
+// islands and Urom's platforms are objectives the driver flies the party to.
+void RegisterOculusRoster(std::vector<BossRosterPatch>& t);
 
 // --- wing layouts (one appender per split map) ---------------------------
 // Records which boss credit-entries belong to which wing of a multi-wing map;

@@ -15,6 +15,16 @@
 
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src")
 
+# New files added: Data/Events/OculusEvents.cpp, Overrides/OculusDriver.cpp,
+#   Action/DcOculusRiderAction.cpp, Util/DcFlightLeg.{h,cpp}, Util/DcOculusPlan.h,
+#   Util/DcOculusDriverDecision.h, Util/DcOculusFlightDecision.h
+#   (The Oculus, map 578 — four rings of navmesh islands in open air, reached by
+#    player-owned flying drakes. A portal objective, six island clears and an
+#    Eregos objective; a conditional flight driver, hook 38, that musters, flies
+#    and lands the party; and a per-member rider rung that gets each bot its
+#    essence, mounts it, flies its drake on a lane and steps off over mesh. The
+#    first thing in the module that moves anything through the air.)
+
 # New files added: Data/Events/TrialOfTheChampionEvents.cpp,
 #   Overrides/TrialOfTheChampionDriver.cpp, Util/DcTocDriverDecision.h
 #   (Trial of the Champion, map 650 — greenfield before this: every run failed at

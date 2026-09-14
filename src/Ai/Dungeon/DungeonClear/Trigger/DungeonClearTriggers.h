@@ -646,6 +646,16 @@ public:
     bool IsActive() override;
 };
 
+// THE OCULUS ONLY: active for a member that sits on a drake, or whose party plan
+// (the flight driver's, DcOculusPlanView) has something for the riders to do.
+// Free on every other map — the first test is an integer compare on the map id.
+class DungeonClearOculusRiderTrigger : public Trigger
+{
+public:
+    DungeonClearOculusRiderTrigger(PlayerbotAI* botAI) : Trigger(botAI, "dungeon clear oc rider", 1) {}
+    bool IsActive() override;
+};
+
 // BLACKWING LAIR ONLY, and only for ONE member of the raid: the bot the leader's
 // Razorgore driver elected to take the Orb of Domination.
 //

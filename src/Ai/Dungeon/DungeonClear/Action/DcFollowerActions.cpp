@@ -386,6 +386,12 @@ bool DungeonClearFollowTankAction::Execute(Event /*event*/)
     // in-range early-out does.
     if (bot->GetVehicle())
     {
+        // THE OCULUS: every rider flies its own drake on its own lane (the rider
+        // rung), to a pad the tank may not even have reached yet. Following the
+        // tank here would pull the drake off its lane every tick.
+        if (bot->GetMapId() == DcOculus::MAP_ID)
+            return false;
+
         followedTank = tank->GetGUID();
         DcFollowerLifecycle::MarkFollowing(bot->GetGUID());
 
@@ -2144,6 +2150,23 @@ bool DungeonClearRezPartyAction::Execute(Event /*event*/)
     {
         DC_PULL_TRACE("[DC:{}] rez party: approaching {}'s body ({:.1f}yd)",
                       bot->GetName(), target->GetName(), dist);
+
+        // NOT FROM A SADDLE, AND NOT TO A BODY IN THE AIR. A rezzer on a vehicle
+        // cannot walk (its position is the seat's) and cannot cast; and on The
+        // Oculus a member who died on a drake hangs where the drake was, 50yd above
+        // the nearest floor, where no walk ends within cast range. Owning the tick
+        // there only spins until the recovery timeout — hand it back instead, and
+        // let the flight driver's regroup take the unreachable body.
+        if (bot->GetVehicle())
+            return false;
+        if (bot->GetMapId() == DcOculus::MAP_ID)
+        {
+            NavmeshSnap::Result const snap = NavmeshSnap::Snap(bot->GetMap(), target->GetPositionX(),
+                                                               target->GetPositionY(), target->GetPositionZ(),
+                                                               DcOculus::SNAP_RADIUS, DcOculus::SNAP_VERT);
+            if (!snap.ok)
+                return false;
+        }
         // Standing still with a walk owed means the recorded wait is stale — the
         // leg it was sized for is not running any more (cancelled by whatever last
         // stopped us, or refused outright). Drop it so the replacement leg can go

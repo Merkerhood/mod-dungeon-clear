@@ -266,8 +266,20 @@ namespace
     // aims at 14, outside the 11yd cylinder, so it always finds a spot it
     // accepts. It lands under someone mid-fight in an open bowl, and stepping
     // past it is all it asks.
-    constexpr std::array<DcHazardEmitter, 10> kEmitters = {{
+    //
+    // ---- The Oculus (578): Drakos's Unstable Spheres ------------------------
+    //
+    // Creature 28166, NOT_SELECTABLE | PACIFIED: two every 2s (four more after
+    // each Magic Pull), wandering 40yd around (961.29, 1049.0) for 10s, then
+    // sitting and pulsing 50757 every 2s for the rest of their 18. A moving
+    // creature emitter — the Blaze shape — rather than a ground pool, so it lives
+    // here. Vacate 8 aims the retreat at 14, well clear of the 6yd keep-out, and
+    // stock `wotlk-occ`'s `avoid unstable sphere` (12yd, sitting spheres only)
+    // runs alongside it. If a battery shows the vacate ping-ponging in a dense
+    // field, this row is the lever.
+    constexpr std::array<DcHazardEmitter, 11> kEmitters = {{
         //                    radius  zBand  vacate  hold  slack
+        { 578, 28166, /*Unstable Sphere    (leave once)  */  6.0f,  8.0f,  8.0f, 2.0f, 6.0f },
         { 668, 36954, /*Lich King, Remorseless Winter    */ 12.0f, 10.0f,  0.0f, 2.0f, 6.0f },
         { 650, 35614, /*Desecration stalker (leave once) */ 11.0f, 12.0f,  8.0f, 2.0f, 6.0f },
         { 552, 20869, /*Arcatraz Sentinel  (fought)      */ 22.0f, 12.0f,  0.0f, 2.0f, 6.0f },

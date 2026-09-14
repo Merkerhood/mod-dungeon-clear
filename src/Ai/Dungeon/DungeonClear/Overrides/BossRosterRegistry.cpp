@@ -71,6 +71,7 @@ namespace
             RegisterHallsOfReflectionRoster(t);
             RegisterCullingOfStratholmeRoster(t);
             RegisterTrialOfTheChampionRoster(t);
+            RegisterOculusRoster(t);
             return t;
         }();
         return kPatches;

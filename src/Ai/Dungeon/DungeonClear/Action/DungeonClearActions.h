@@ -938,6 +938,19 @@ public:
     bool Execute(Event event) override;
 };
 
+// THE OCULUS ONLY, every member, both engines: the rider rung — an essence from
+// the givers, the mount, this member's drake on its lane, the landing, the
+// dismount, and the stations on Eregos. A PLAIN Action on purpose: stock
+// `wotlk-occ`'s OccFlyingMultiplier zeroes every MovementAction on a mounted bot,
+// and this rung drives the drake's MotionMaster directly. See
+// DcOculusRiderAction.cpp. Driven by DungeonClearOculusRiderTrigger.
+class DungeonClearOculusRiderAction : public Action
+{
+public:
+    DungeonClearOculusRiderAction(PlayerbotAI* botAI) : Action(botAI, "dungeon clear oc rider") {}
+    bool Execute(Event event) override;
+};
+
 // Leader-only, non-combat engine. The tank's mirror of the follower assist: a
 // groupmate is fighting a pack the tank never saw, so rather than stalling on the
 // Advance rest gate, find what the party is fighting, force the tank into combat

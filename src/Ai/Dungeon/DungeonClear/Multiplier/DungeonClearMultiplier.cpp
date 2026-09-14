@@ -16,6 +16,8 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcBossStandDown.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcFlightLeg.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcOculusPlan.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcSmartRest.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearUtil.h"
 #include "Ai/Dungeon/DungeonClear/DcValueKeys.h"
@@ -84,6 +86,72 @@ static bool HorEscapeBackwardsBanned(Player* bot, std::string const& name)
            inst->GetBossState(DcHallsOfReflection::DATA_LICH_KING) == IN_PROGRESS;
 }
 
+// THE OCULUS: no ordinary mount for a bot that has a drake to board or sits on one.
+// Stock `check mount state` (timer 1 out of combat, 54 in, and the run-speed packet
+// handler) mounts every bot between fights on a map that allows it — and the
+// essence's Call spell is refused from a mount, so a mustering party never got a
+// single drake. The rider rung steps the bot off (LeaveMount); this keeps stock from
+// putting it straight back on for the muster, the settle and the whole flight.
+// Both multipliers ask it: the action is registered in both engines.
+//
+// AND NO STOCK DRAKE STEERING WHILE A DC RUN FLIES THE DRAKES. Stock `wotlk-occ`'s
+// master-gated drake actions fire as soon as the bot's playerbots master rides a
+// drake — which in a run with a party member as master is every leg:
+//   * `occ fly drake` MoveFollows each drake onto the master's at 15yd, dragging it
+//     off its lane and off its pad every tick. Live, first flight: 46-185 successful
+//     executions per bot in five minutes, the tank's drake pinned 15.7yd from the
+//     pad, the landing check flickering, nobody ever dismounting.
+//   * `dismount drake` is a bare ExitVehicle the moment the master is on foot —
+//     in mid-air for a rider still on its leg, with no parachute in an instance.
+// `mount drake` is deliberately NOT here: while a mounted master's
+// MountingDrakeMultiplier zeroes everything else on a bot left on foot, it is the
+// only action that bot has. The rider rung avoids that state instead (the master
+// mounts last and steps off first).
+static bool OculusMountBanned(Player* bot, std::string const& name)
+{
+    bool const mountState = name == "check mount state";
+    bool const stockDrake = name == "occ fly drake" || name == "dismount drake";
+    if ((!mountState && !stockDrake) || bot->GetMapId() != DcOculus::MAP_ID)
+        return false;
+    if (mountState && bot->GetVehicle())
+        return true;
+    DcOculusPlanView const plan = OculusPlanFor(bot);
+    if (!plan.valid)
+        return false;
+    if (stockDrake)
+        return true;
+    return plan.phase == DcOculusDriver::Phase::Muster || plan.phase == DcOculusDriver::Phase::Fly ||
+           plan.phase == DcOculusDriver::Phase::Eregos;
+}
+
+// THE RIDER-KILL GUARD, stock half. `occ drake attack` shoots its current target
+// or, with none, the FIRST in-combat possible target — and a drake bar spell on a
+// creature that cannot fly kills its rider (npc_oculus_drakeAI::SpellHitTarget).
+// The rider rung keeps the current target flying-safe; the fallback is the hole,
+// and a drake landing under ground fire is exactly when it would pick a Ring-Lord.
+// So the action is zeroed whenever the target stock would choose, chosen the same
+// way, is not flying-safe.
+static bool OculusDrakeAttackUnsafe(Player* bot, PlayerbotAI* botAI, AiObjectContext* context,
+                                    std::string const& name)
+{
+    if (name != "occ drake attack" || bot->GetMapId() != DcOculus::MAP_ID || !DcFlightLeg::OculusDrakeOf(bot))
+        return false;
+    Unit* target = context->GetValue<Unit*>(DcKey::Stock::CurrentTarget)->Get();
+    if (!target)
+    {
+        for (ObjectGuid const& guid : context->GetValue<GuidVector>(DcKey::Stock::PossibleTargets)->Get())
+        {
+            Unit* const unit = botAI->GetUnit(guid);
+            if (unit && unit->IsInCombat())
+            {
+                target = unit;
+                break;
+            }
+        }
+    }
+    return target && !DcFlightLeg::IsFlyingSafe(target);
+}
+
 float DungeonClearMultiplier::GetValue(Action* action)
 {
     if (!action || !botAI || !bot)
@@ -97,6 +165,11 @@ float DungeonClearMultiplier::GetValue(Action* action)
     // Halls of Reflection's escape: no backwards movement, ever. See
     // HorEscapeBackwardsBanned above.
     if (HorEscapeBackwardsBanned(bot, name))
+        return 0.0f;
+
+    if (OculusMountBanned(bot, name))
+        return 0.0f;
+    if (OculusDrakeAttackUnsafe(bot, botAI, context, name))
         return 0.0f;
 
     // Rest-target cap. Applies to EVERY bot in an active DC run — the leader tank
@@ -261,6 +334,13 @@ float DungeonClearCombatMultiplier::GetValue(Action* action)
     // and that path returns 1.0 for everything that is not a DC action or
     // `drop target`. See HorEscapeBackwardsBanned above.
     if (HorEscapeBackwardsBanned(bot, name))
+        return 0.0f;
+
+    // Above the fast path for the same reason: `check mount state` and `occ drake
+    // attack` are stock actions.
+    if (OculusMountBanned(bot, name))
+        return 0.0f;
+    if (OculusDrakeAttackUnsafe(bot, botAI, context, name))
         return 0.0f;
 
     // RAID BOSS STAND-DOWN — the one shared check that makes every DC combat

@@ -502,6 +502,21 @@ struct DungeonEvent
     // and over. See DcSuppressionTransitDecision.h.
     bool ownsThePull{false};
 
+    // Conditional ownsThePull events only. While a pull-owning event drives, the
+    // Advance ladder's off-line route rejoin stands down: an event that stepped
+    // its own movement has left the route cursor somewhere the party no longer
+    // is, and rejoining it walks the party backwards (Halls of Reflection's
+    // escape, see DcAdvanceAction's OffLineRejoin rung). Set this for a driver
+    // that CLAIMS every tick in which it moves the party, and yields only once
+    // the party stands where the ordinary approach should take over — then a
+    // yield means the approach is Advance's to finish, rejoin included.
+    //
+    // The Oculus ascent is the case. Live tr-20260913-003200-10: the tank stepped
+    // off its drake under fire 12.5yd from the south pad's 8yd arrival, fought to
+    // 11yd, and the driver said "on site" and yielded while the rejoin stood down
+    // for it — 1372 ticks, ten minutes, nobody walked the last three yards.
+    bool yieldsTheApproach{false};
+
     // Conditional events only, panel cosmetics. By default an off-path
     // conditional event renders last in the `dc bosses` panel (index 99). When
     // this names a boss entry, the event instead sorts just BEFORE that boss —
@@ -548,6 +563,9 @@ public:
     // event drives — see DungeonEvent::ownsThePull. Conditional events only; the
     // anchored path already infers it from Persistent().
     EventBuilder& OwnsThePull();
+    // A pull-owning driver whose yield hands the approach — off-line rejoin
+    // included — back to Advance (see DungeonEvent::yieldsTheApproach).
+    EventBuilder& YieldsTheApproach();
     // Keep driving this conditional event while the party is IN COMBAT (see
     // DungeonEvent::drivesInCombat). For continuous wave encounters only.
     EventBuilder& DrivesInCombat();

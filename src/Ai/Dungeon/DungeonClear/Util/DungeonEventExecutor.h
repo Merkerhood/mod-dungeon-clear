@@ -267,6 +267,11 @@ public:
     // activation predicates, which are written against a Player.
     static bool IsPullOwningEventDriving(Player* bot, AiObjectContext* context);
 
+    // IsPullOwningEventDriving, minus a conditional event whose row carries
+    // DungeonEvent::yieldsTheApproach. The question the off-line route rejoin
+    // asks: "has an event taken the party's movement away from the route?"
+    static bool PullOwningEventHoldsTheApproach(Player* bot, AiObjectContext* context);
+
     // If `context`'s current objective drives an event with a KillCreature ENGAGE
     // step (KillCreatureEngage — .engage set), report true and fill `outEntry` /
     // `outSearchRadius` with the creature entry to seek and the radius to seek it

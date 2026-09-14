@@ -150,4 +150,10 @@ void RegisterCullingOfStratholmeHooks(ObjectiveHookRegistry::HookTable& out);
 // Util/DcTocDriverDecision.h; the joust itself is mod-playerbots' `wotlk-toc`.
 void RegisterTrialOfTheChampionHooks(ObjectiveHookRegistry::HookTable& out);
 
+// The Oculus (map 578) — the flight driver (38: muster, fly, land, Eregos) and the
+// Eregos hold's telemetry (39). See OculusDriver.cpp. Its decisions are the pure
+// kernel Util/DcOculusDriverDecision.h; each member flies its own drake from the
+// rider rung (Action/DcOculusRiderAction.cpp).
+void RegisterOculusHooks(ObjectiveHookRegistry::HookTable& out);
+
 #endif
