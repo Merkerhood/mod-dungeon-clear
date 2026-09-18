@@ -36,9 +36,10 @@ class DungeonClearWorldMock : public WorldMock
 {
 public:
     MOCK_METHOD(SQLQueryHolderCallback&, AddQueryHolderCallback, (SQLQueryHolderCallback&& callback), (override));
-#ifdef MOD_PLAYERBOTS
-    MOCK_METHOD(char const*, GetPlayerbotsDBRevision, (), (const, override));
-#endif
+    // GetPlayerbotsDBRevision is gone: the core stopped carrying a playerbots
+    // database (core PR #253, 2026-09-18). mod-playerbots now opens its own via
+    // the generic OnModuleDatabasesLoading hook and reports its revision through
+    // OnDatabaseGetDBRevision, so IWorld no longer declares anything to override.
 };
 
 class DungeonClearTestBase : public ::testing::Test
